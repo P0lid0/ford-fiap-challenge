@@ -8,7 +8,7 @@ import { requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 import { AVAILABLE_MODELS, clearKeyCache, getApiKey, type Provider } from '../lib/ai.js';
 
-const PROVIDERS = ['openai', 'anthropic', 'gemini'] as const;
+const PROVIDERS = ['openai', 'anthropic', 'gemini', 'fipe'] as const;
 
 export async function aiConfigRoutes(app: FastifyInstance) {
   // === Status das chaves (não retorna os valores!) ===
@@ -20,10 +20,23 @@ export async function aiConfigRoutes(app: FastifyInstance) {
 
     const status: Record<string, { configured: boolean; source: 'env' | 'db' | 'none'; preview?: string }> = {};
     for (const p of PROVIDERS) {
-      const k = await getApiKey(p);
-      const fromEnv = p === 'openai' ? !!process.env.OPENAI_API_KEY
-                   : p === 'anthropic' ? !!process.env.ANTHROPIC_API_KEY
-                   : !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+      let k = '';
+      let fromEnv = false;
+      if (p === 'fipe') {
+        // FIPE não usa getApiKey (não é IA); checa direto
+        const { adminClient } = await import('../lib/supabase.js');
+        const envTok = process.env.FIPE_API_TOKEN || '';
+        if (envTok) { k = envTok; fromEnv = true; }
+        else {
+          const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', 'fipe').maybeSingle();
+          k = data?.api_key ?? '';
+        }
+      } else {
+        k = await getApiKey(p as 'openai' | 'anthropic' | 'gemini');
+        fromEnv = p === 'openai' ? !!process.env.OPENAI_API_KEY
+                : p === 'anthropic' ? !!process.env.ANTHROPIC_API_KEY
+                : !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+      }
       status[p] = {
         configured: !!k,
         source: fromEnv ? 'env' : (k ? 'db' : 'none'),
@@ -51,6 +64,10 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     });
     if (error) { reply.code(400); return { error: error.message }; }
     clearKeyCache();
+    if (provider === 'fipe') {
+      const { clearFipeTokenCache } = await import('../lib/data-sources/fipe.js');
+      clearFipeTokenCache();
+    }
     return { ok: true, provider, preview: `${api_key.slice(0, 7)}…${api_key.slice(-4)}` };
   });
 

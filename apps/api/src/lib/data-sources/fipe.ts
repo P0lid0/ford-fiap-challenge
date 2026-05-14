@@ -1,71 +1,97 @@
 /**
- * Cliente FIPE (Fundação Instituto de Pesquisas Econômicas).
+ * Cliente FIPE — API v2 (fipe.parallelum.com.br/api/v2).
  *
- * Tabela FIPE é a referência OFICIAL de preços de veículos no Brasil,
- * atualizada mensalmente. Wrapper público gratuito: parallelum.com.br
+ * Vantagens da v2 sobre v1:
+ *   - 1000 req/dia com token (vs 500 sem)
+ *   - Suporta carros + motos + caminhões
+ *   - Endpoints em inglês padronizados
+ *   - Mesma fonte de dados (fipe.org.br)
  *
- * O que a FIPE entrega:
- *   - Marca, Modelo, Versão (texto)
- *   - Ano + combustível
- *   - Valor (preço médio de mercado)
- *   - Código FIPE (referência oficial)
- *   - Mês de referência
- *
- * O que NÃO entrega: specs técnicos (potência, torque, dimensões, equipamentos).
- * Esses vêm de NHTSA / OpenAI com flag de fonte.
+ * Token: env FIPE_API_TOKEN > tabela ai_keys (provider='fipe').
+ * Sem token, API ainda funciona até 500 req/dia.
  */
 import { fetchWithTimeout } from './_http.js';
+import { adminClient } from '../supabase.js';
 
-const FIPE_BASE = 'https://parallelum.com.br/fipe/api/v1/carros';
+const FIPE_BASE = 'https://fipe.parallelum.com.br/api/v2';
 
-export type FipeMarca = { codigo: string; nome: string };
-export type FipeModelo = { codigo: number; nome: string };
-export type FipeAno = { codigo: string; nome: string };
-export type FipePreco = {
-  TipoVeiculo: number;
-  Valor: string;
-  Marca: string;
-  Modelo: string;
-  AnoModelo: number;
-  Combustivel: string;
-  CodigoFipe: string;
-  MesReferencia: string;
-  SiglaCombustivel: string;
+// v2 retorna camelCase em inglês
+type FipeMarcaV2 = { code: string; name: string };
+type FipeModeloV2 = { code: string; name: string };
+type FipeAnoV2 = { code: string; name: string };
+type FipePrecoV2 = {
+  vehicleType: number; price: string; brand: string; model: string;
+  modelYear: number; fuel: string; codeFipe: string;
+  referenceMonth: string; fuelAcronym: string;
 };
 
+// Tipos públicos mantém compat com chamadores (PT)
+export type FipeAno = { codigo: string; nome: string };
+export type FipePreco = {
+  TipoVeiculo: number; Valor: string; Marca: string; Modelo: string;
+  AnoModelo: number; Combustivel: string; CodigoFipe: string;
+  MesReferencia: string; SiglaCombustivel: string;
+};
+
+function v2ToV1(p: FipePrecoV2): FipePreco {
+  return {
+    TipoVeiculo: p.vehicleType, Valor: p.price, Marca: p.brand,
+    Modelo: p.model, AnoModelo: p.modelYear, Combustivel: p.fuel,
+    CodigoFipe: p.codeFipe, MesReferencia: p.referenceMonth,
+    SiglaCombustivel: p.fuelAcronym,
+  };
+}
+
+// === Token cache 30s ===
+let _tokenCache: { token: string | null; expires: number } | null = null;
+const TOKEN_TTL = 30_000;
+
+async function getFipeToken(): Promise<string | null> {
+  if (process.env.FIPE_API_TOKEN) return process.env.FIPE_API_TOKEN;
+  if (_tokenCache && _tokenCache.expires > Date.now()) return _tokenCache.token;
+  try {
+    const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', 'fipe').maybeSingle();
+    const tok = data?.api_key ?? null;
+    _tokenCache = { token: tok, expires: Date.now() + TOKEN_TTL };
+    return tok;
+  } catch {
+    return null;
+  }
+}
+
+export function clearFipeTokenCache() { _tokenCache = null; }
+
 async function jget<T>(path: string): Promise<T> {
-  const r = await fetchWithTimeout(`${FIPE_BASE}${path}`, {}, 15_000);
+  const tok = await getFipeToken();
+  const headers: Record<string, string> = {};
+  if (tok) headers['X-Subscription-Token'] = tok;
+  const r = await fetchWithTimeout(`${FIPE_BASE}${path}`, { headers }, 15_000);
   if (!r.ok) throw new Error(`FIPE ${r.status} ${path}`);
   return r.json() as Promise<T>;
 }
 
 export const fipe = {
-  async marcas(): Promise<FipeMarca[]> {
-    return jget('/marcas');
+  async marcas(): Promise<{ codigo: string; nome: string }[]> {
+    const arr = await jget<FipeMarcaV2[]>('/cars/brands');
+    return arr.map(m => ({ codigo: m.code, nome: m.name }));
   },
 
-  async modelos(marcaCodigo: string): Promise<FipeModelo[]> {
-    const r = await jget<{ modelos: FipeModelo[] }>(`/marcas/${marcaCodigo}/modelos`);
-    return r.modelos;
+  async modelos(marcaCodigo: string): Promise<{ codigo: number; nome: string }[]> {
+    const arr = await jget<FipeModeloV2[]>(`/cars/brands/${marcaCodigo}/models`);
+    return arr.map(m => ({ codigo: Number(m.code), nome: m.name }));
   },
 
   async anos(marcaCodigo: string, modeloCodigo: string | number): Promise<FipeAno[]> {
-    return jget(`/marcas/${marcaCodigo}/modelos/${modeloCodigo}/anos`);
+    const arr = await jget<FipeAnoV2[]>(`/cars/brands/${marcaCodigo}/models/${modeloCodigo}/years`);
+    return arr.map(a => ({ codigo: a.code, nome: a.name }));
   },
 
   async preco(marcaCodigo: string, modeloCodigo: string | number, anoCodigo: string): Promise<FipePreco> {
-    return jget(`/marcas/${marcaCodigo}/modelos/${modeloCodigo}/anos/${anoCodigo}`);
+    const v2 = await jget<FipePrecoV2>(`/cars/brands/${marcaCodigo}/models/${modeloCodigo}/years/${anoCodigo}`);
+    return v2ToV1(v2);
   },
 
-  /**
-   * Busca completa por (marca, modelo, ano).
-   * Estratégia:
-   *  1. Tokeniza a query (ex: "Civic Touring 2024" → ["civic", "touring"])
-   *  2. Filtra modelos que contêm TODOS os tokens (AND, não OR)
-   *  3. Para cada candidato, busca anos disponíveis
-   *  4. Se ano informado, EXIGE que o modelo tenha aquele ano
-   *  5. Ordena candidatos por (tem o ano correto, score de match, comprimento do nome)
-   */
+  /** Busca completa por (marca, modelo, ano). Tokeniza, faz AND match. */
   async findVehicle(marcaNome: string, modeloQuery: string, ano?: number): Promise<FipePreco | null> {
     const marcas = await this.marcas();
     const marca = marcas.find(m => m.nome.toLowerCase() === marcaNome.toLowerCase());
@@ -74,7 +100,6 @@ export const fipe = {
     const modelos = await this.modelos(marca.codigo);
     const tokens = modeloQuery.toLowerCase().split(/\s+/).filter(t => t.length >= 2 && !/^\d{4}$/.test(t));
 
-    // Score = quantos tokens da query aparecem no nome do modelo
     const scored = modelos
       .map(m => {
         const name = m.nome.toLowerCase();
@@ -86,7 +111,6 @@ export const fipe = {
 
     if (scored.length === 0) return null;
 
-    // Tenta até 8 candidatos (modelos brasileiros costumam ter variações longas)
     const candidates: { preco: FipePreco; modelMatchScore: number }[] = [];
     for (const { modelo, score } of scored.slice(0, 8)) {
       try {
@@ -95,13 +119,11 @@ export const fipe = {
         if (reais.length === 0) continue;
 
         if (ano) {
-          // EXIGE o ano informado
           const anoMatch = reais.find(a => a.codigo.startsWith(`${ano}-`));
           if (!anoMatch) continue;
           const preco = await this.preco(marca.codigo, modelo.codigo, anoMatch.codigo);
           candidates.push({ preco, modelMatchScore: score });
         } else {
-          // Pega o mais recente
           const mostRecent = reais.sort((a, b) => b.codigo.localeCompare(a.codigo))[0]!;
           const preco = await this.preco(marca.codigo, modelo.codigo, mostRecent.codigo);
           candidates.push({ preco, modelMatchScore: score });
@@ -110,17 +132,11 @@ export const fipe = {
     }
 
     if (candidates.length === 0) return null;
-    // Retorna o de maior match score (já está pré-ordenado)
     return candidates.sort((a, b) => b.modelMatchScore - a.modelMatchScore)[0]!.preco;
   },
 
-  /**
-   * Converte "R$ 415.842,00" → 41584200 (centavos)
-   * ou para BRL inteiro: 415842
-   */
   parseValor(valor: string): number {
     const clean = valor.replace(/[^0-9,]/g, '').replace(',', '.');
-    const n = parseFloat(clean);
-    return Math.round(n);
+    return Math.round(parseFloat(clean));
   },
 };

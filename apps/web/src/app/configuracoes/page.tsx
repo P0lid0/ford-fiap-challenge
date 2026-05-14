@@ -7,10 +7,12 @@ import {
 import { Shell } from '@/components/Shell';
 import { api, type AiFunction } from '@/lib/api';
 
-const PROVIDERS: { id: 'openai' | 'anthropic' | 'gemini'; name: string; url: string }[] = [
+const PROVIDERS: { id: 'openai' | 'anthropic' | 'gemini' | 'fipe'; name: string; url: string; desc?: string }[] = [
   { id: 'openai',    name: 'OpenAI',        url: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', name: 'Anthropic',     url: 'https://console.anthropic.com/settings/keys' },
   { id: 'gemini',    name: 'Google Gemini', url: 'https://aistudio.google.com/apikey' },
+  { id: 'fipe',      name: 'FIPE.online',   url: 'https://fipe.online/sign-up',
+    desc: 'Token aumenta o rate limit de 500 → 1000 req/dia. Cobre carros, motos e caminhões.' },
 ];
 
 const FUNCTIONS: { id: AiFunction; label: string; desc: string; tier: 'fast' | 'smart' }[] = [
@@ -58,7 +60,7 @@ export default function Configuracoes() {
 
   useEffect(() => { reloadKeys(); reloadModels(); }, []);
 
-  async function saveKey(provider: 'openai' | 'anthropic' | 'gemini') {
+  async function saveKey(provider: 'openai' | 'anthropic' | 'gemini' | 'fipe') {
     const key = keyInputs[provider]?.trim();
     if (!key) return;
     setSavingKey(provider); setKeyErr(null);
