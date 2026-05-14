@@ -119,6 +119,14 @@ export async function vehicleRoutes(app: FastifyInstance) {
     return COMPARABLE_FIELDS.map(([label, path, criterion]) => ({ label, path, criterion }));
   });
 
+  // Helper: pega modelo de IA preferido do user para uma função
+  async function getFunctionAiModel(userId: string, fn: string): Promise<string | undefined> {
+    const { adminClient } = await import('../lib/supabase.js');
+    const { data } = await adminClient().from('ai_function_models')
+      .select('model_id').eq('user_id', userId).eq('function_name', fn).maybeSingle();
+    return data?.model_id ?? undefined;
+  }
+
   // === BUSCA com fontes verificáveis (FIPE + NHTSA + OpenAI) ===
   app.post('/competitive/search', {
     schema: {
@@ -150,7 +158,9 @@ export async function vehicleRoutes(app: FastifyInstance) {
 
     // 2. Agrega de fontes externas
     req.log.info({ marca, modelo, versao, ano }, '[search] aggregating from external sources');
-    const aggregated = await aggregateVehicle({ marca, modelo, versao, ano });
+    const aiModel = (req.headers['x-ai-model'] as string) ?? await getFunctionAiModel(u.id, 'vehicle_search');
+    const manufacturerAiModel = await getFunctionAiModel(u.id, 'manufacturer_extract');
+    const aggregated = await aggregateVehicle({ marca, modelo, versao, ano, aiModel, manufacturerAiModel });
     if (!aggregated) {
       reply.code(404);
       return { error: 'not_found', message: 'veículo não encontrado em nenhuma fonte (FIPE, NHTSA, IA)' };
@@ -252,7 +262,8 @@ Em 3-5 frases curtas, explique a razão competitiva REAL — não slogan. Consid
 
 SEJA OBJETIVO. Sem "depende", sem "talvez". Posicione.`;
 
-    const aiModel = req.headers['x-ai-model'] as string | undefined;
+    let aiModel = req.headers['x-ai-model'] as string | undefined;
+    if (!aiModel) aiModel = await getFunctionAiModel(requireUser(req).id, 'compare_analysis');
     const r = await chat(prompt, 'smart', {
       systemOverride: 'Você é um analista sênior de inteligência competitiva da indústria automotiva brasileira. ' +
         'Tem acesso a dados de vendas Fenabrave 2024-2025 e conhece bem o comportamento do consumidor BR.',

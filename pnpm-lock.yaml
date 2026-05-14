@@ -48,6 +48,9 @@ importers:
       '@ford/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@google/generative-ai':
+        specifier: ^0.24.1
+        version: 0.24.1
       '@scalar/fastify-api-reference':
         specifier: 1.25.96
         version: 1.25.96
@@ -1421,6 +1424,10 @@ packages:
 
   '@fastify/swagger@9.4.0':
     resolution: {integrity: sha512-3hF7asqyNfu41aeDA/ATlIG0RY4XizgaDqPR0nc1Unt3EiXWjkVMiELLaH5WZKNvB4BA/5Wovxdin7N4ii7YHw==}
+
+  '@google/generative-ai@0.24.1':
+    resolution: {integrity: sha512-MqO+MLfM6kjxcKoy0p1wRzG3b4ZZXtPI+z2IE26UogS2Cm/XHO+7gGRBh6gcJsOiIVoH93UwKvW4HdgiOZCy9Q==}
+    engines: {node: '>=18.0.0'}
 
   '@img/sharp-darwin-arm64@0.33.5':
     resolution: {integrity: sha512-UT4p+iz/2H4twwAoLCqfA9UH5pI6DggwKEGuaPy7nCVQ8ZsiY5PIcrRvD1DzuY3qYL07NtIQcWnBSY/heikIFQ==}
@@ -6805,6 +6812,8 @@ snapshots:
       yaml: 2.9.0
     transitivePeerDependencies:
       - supports-color
+
+  '@google/generative-ai@0.24.1': {}
 
   '@img/sharp-darwin-arm64@0.33.5':
     optionalDependencies:

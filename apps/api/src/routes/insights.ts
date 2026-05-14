@@ -57,7 +57,13 @@ export async function insightRoutes(app: FastifyInstance) {
       return { source: 'fresh', model: 'rule-based-fallback', output: fallbackClientText(client, pred) };
     }
 
-    const aiModel = req.headers['x-ai-model'] as string | undefined;
+    let aiModel = req.headers['x-ai-model'] as string | undefined;
+    if (!aiModel) {
+      const { adminClient } = await import('../lib/supabase.js');
+      const { data: pref } = await adminClient().from('ai_function_models')
+        .select('model_id').eq('user_id', u.id).eq('function_name', 'client_insight').maybeSingle();
+      aiModel = pref?.model_id;
+    }
     const r = await chat(buildClientPrompt(client, pred), 'fast', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', model: 'rule-based-fallback', output: fallbackClientText(client, pred) };
@@ -98,7 +104,13 @@ export async function insightRoutes(app: FastifyInstance) {
     if (!aiAvailable()) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };
     }
-    const aiModel = req.headers['x-ai-model'] as string | undefined;
+    let aiModel = req.headers['x-ai-model'] as string | undefined;
+    if (!aiModel) {
+      const { adminClient } = await import('../lib/supabase.js');
+      const { data: pref } = await adminClient().from('ai_function_models')
+        .select('model_id').eq('user_id', u.id).eq('function_name', 'portfolio_insight').maybeSingle();
+      aiModel = pref?.model_id;
+    }
     const r = await chat(buildPortfolioPrompt(totalClients, perfilCounts, avgRisco), 'smart', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };

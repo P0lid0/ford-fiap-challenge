@@ -210,8 +210,18 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     if (existing) return { source: 'cache', vehicle: existing };
 
     // 3. Roda agregador com dados FIPE já em mãos (manufacturer + IA pra gaps)
+    const u = requireUser(req);
+    let aiModel = req.headers['x-ai-model'] as string | undefined;
+    if (!aiModel) {
+      const { data: pref } = await sb.from('ai_function_models')
+        .select('model_id').eq('user_id', u.id).eq('function_name', 'vehicle_search').maybeSingle();
+      aiModel = pref?.model_id;
+    }
+    const { data: prefExtract } = await sb.from('ai_function_models')
+      .select('model_id').eq('user_id', u.id).eq('function_name', 'manufacturer_extract').maybeSingle();
     const aggregated = await aggregateVehicle({
       marca: fipeData.Marca, modelo: modeloBase, versao, ano: anoInt,
+      aiModel, manufacturerAiModel: prefExtract?.model_id,
     });
     if (!aggregated) {
       reply.code(404); return { error: 'no_data' };

@@ -14,11 +14,8 @@
  * Os bloqueados caem no fallback de IA pura no aggregator.
  */
 import * as cheerio from 'cheerio';
-import OpenAI from 'openai';
-import { env } from '../../config.js';
+import { chat as aiChat, aiAvailable } from '../ai.js';
 import { fetchWithTimeout } from './_http.js';
-
-const openai = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
@@ -145,6 +142,7 @@ export async function fetchManufacturerSpecs(
   marca: string,
   modelo: string,
   versao?: string,
+  aiModel?: string,
 ): Promise<ManufacturerExtraction | null> {
   const url = resolveManufacturerUrl(marca, modelo, versao);
   if (!url) return null;
@@ -168,22 +166,17 @@ export async function fetchManufacturerSpecs(
   const mainText = extractMainText(html);
   if (mainText.length < 500) return null;
 
-  if (!openai) return null;
+  if (!(await aiAvailable())) return null;
 
   try {
     const userMsg = `Marca: ${marca}\nModelo: ${modelo}${versao ? ` ${versao}` : ''}\n\nTEXTO DA PÁGINA OFICIAL:\n\n${mainText}`;
-    const r = await openai.chat.completions.create({
-      model: env.OPENAI_MODEL_FAST,
-      response_format: { type: 'json_object' },
-      temperature: 0.0,
-      messages: [
-        { role: 'system', content: EXTRACTOR_SYSTEM },
-        { role: 'user', content: userMsg },
-      ],
+    const r = await aiChat(userMsg, 'fast', {
+      systemOverride: EXTRACTOR_SYSTEM,
+      modelOverride: aiModel,
+      jsonObjectMode: true,
     });
-    const text = r.choices[0]?.message?.content?.trim();
-    if (!text) return null;
-    const data = JSON.parse(text);
+    if (!r.output) return null;
+    const data = JSON.parse(r.output);
     return {
       data,
       source_url: url,

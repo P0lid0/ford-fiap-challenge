@@ -13,13 +13,10 @@
  *   "preço: FIPE oficial maio/2026"
  *   "potência: AI estimado, verificar com fabricante"
  */
-import OpenAI from 'openai';
-import { env } from '../../config.js';
 import { fipe, type FipePreco } from './fipe.js';
 import { nhtsa } from './nhtsa.js';
 import { fetchManufacturerSpecs } from './manufacturer.js';
-
-const openai = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
+import { chat as aiChat, aiAvailable } from '../ai.js';
 
 const SYSTEM = `Você é um analista técnico automotivo brasileiro. Preencha specs técnicos de um veículo
 para o mercado BR, baseado em SEU CONHECIMENTO REAL (treinado até janeiro/2026).
@@ -81,6 +78,8 @@ export async function aggregateVehicle(input: {
   modelo: string;
   versao?: string;
   ano?: number;
+  aiModel?: string;  // override do modelo de IA para este chamado
+  manufacturerAiModel?: string; // override pro extract manufacturer
 }): Promise<AggregatedVehicle | null> {
   const sources: string[] = [];
   const fieldSources: Record<string, string> = {};
@@ -125,7 +124,7 @@ export async function aggregateVehicle(input: {
   let manufacturerData: any = {};
   let manufacturerUrl: string | null = null;
   try {
-    const m = await fetchManufacturerSpecs(input.marca, input.modelo, input.versao);
+    const m = await fetchManufacturerSpecs(input.marca, input.modelo, input.versao, input.manufacturerAiModel);
     if (m) {
       manufacturerData = m.data ?? {};
       manufacturerUrl = m.source_url;
@@ -154,41 +153,40 @@ export async function aggregateVehicle(input: {
     !manufacturerData.motor?.torque_nm ||
     !manufacturerData.dimensoes?.comprimento_mm;
 
-  if (needsLlm && openai) {
+  if (needsLlm && await aiAvailable()) {
     try {
-      const r = await openai.chat.completions.create({
-        model: env.OPENAI_MODEL_FAST,
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-        messages: [
-          { role: 'system', content: SYSTEM },
-          {
-            role: 'user',
-            content: `Preencha specs técnicos de: ${marcaFinal} ${modeloVersaoFinal} ${anoFinal}.` +
-              (fipeData ? `\n\nDado já confirmado pela FIPE:\n- Combustível: ${fipeData.Combustivel}\n- Preço médio: ${fipeData.Valor}` : '') +
-              (manufacturerUrl ? `\n\nDados já extraídos do site oficial (não duplique, complete gaps): ${JSON.stringify(manufacturerData)}` : ''),
-          },
-        ],
+      const userPrompt = `Preencha specs técnicos de: ${marcaFinal} ${modeloVersaoFinal} ${anoFinal}.` +
+        (fipeData ? `\n\nDado já confirmado pela FIPE:\n- Combustível: ${fipeData.Combustivel}\n- Preço FIPE: ${fipeData.Valor}` : '\n\nA FIPE NÃO trouxe preço. Estime "preco_brl_estimado".') +
+        (manufacturerUrl ? `\n\nDados já extraídos do site oficial (não duplique, complete gaps): ${JSON.stringify(manufacturerData)}` : '');
+      const r = await aiChat(userPrompt, 'fast', {
+        systemOverride: SYSTEM,
+        modelOverride: input.aiModel,
+        jsonObjectMode: true,
       });
-      const text = r.choices[0]?.message?.content?.trim();
+      const text = r.output;
       if (text) {
         llmData = JSON.parse(text);
-        sources.push(`openai:${env.OPENAI_MODEL_FAST}`);
+        const modelLabel = `${r.provider}:${r.model}`;
+        sources.push(modelLabel);
         // SÓ marca como ai_inferred os campos que o manufacturer NÃO preencheu.
         for (const k of ['motor', 'dimensoes', 'transmissao', 'desempenho']) {
           for (const subkey of Object.keys(llmData[k] ?? {})) {
             const v = llmData[k][subkey];
             const path = `${k}.${subkey}`;
             if (v !== null && v !== undefined && !fieldSources[path]) {
-              fieldSources[path] = `ai:${env.OPENAI_MODEL_FAST}`;
+              fieldSources[path] = `ai:${modelLabel}`;
             }
           }
         }
         if (llmData.equipamentos?.length && !fieldSources['equipamentos']) {
-          fieldSources['equipamentos'] = `ai:${env.OPENAI_MODEL_FAST}`;
+          fieldSources['equipamentos'] = `ai:${modelLabel}`;
         }
-        if (llmData.categoria && !fieldSources['categoria']) fieldSources['categoria'] = `ai:${env.OPENAI_MODEL_FAST}`;
-        if (llmData.pais_origem && !fieldSources['pais_origem']) fieldSources['pais_origem'] = `ai:${env.OPENAI_MODEL_FAST}`;
+        if (llmData.categoria && !fieldSources['categoria']) fieldSources['categoria'] = `ai:${modelLabel}`;
+        if (llmData.pais_origem && !fieldSources['pais_origem']) fieldSources['pais_origem'] = `ai:${modelLabel}`;
+        // preço estimado pela IA (quando FIPE não tem)
+        if (!fipeData && llmData.preco_brl_estimado) {
+          fieldSources['preco_brl'] = `ai:${modelLabel}`;
+        }
       }
     } catch (err: any) {
       console.error('[aggregator] OpenAI failed:', err?.message);
