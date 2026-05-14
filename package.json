@@ -1,0 +1,33 @@
+{
+  "name": "ford-fiap-challenge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ford FIAP Challenge 2026 — 3am IT",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @ford/api dev",
+    "dev:mobile": "pnpm --filter @ford/mobile start",
+    "dev:ml": "cd services/ml && python -m uvicorn src.main:app --reload --port 8001",
+    "build": "pnpm -r --filter './apps/*' --filter './packages/*' build",
+    "lint": "pnpm -r --filter './apps/*' --filter './packages/*' lint",
+    "typecheck": "pnpm -r --filter './apps/*' --filter './packages/*' typecheck",
+    "test": "pnpm -r --filter './apps/*' test",
+    "ml:train": "cd services/ml && python -m src.scripts.train_models",
+    "ml:test": "cd services/ml && python -m pytest",
+    "db:migrate": "node scripts/run-migrations.mjs",
+    "db:seed": "node scripts/seed-vehicles.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.47.10",
+    "postgres": "3.4.5"
+  },
+  "devDependencies": {
+    "typescript": "5.7.2",
+    "@types/node": "22.10.2",
+    "tsx": "4.19.2"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

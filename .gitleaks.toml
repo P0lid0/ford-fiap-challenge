@@ -1,0 +1,14 @@
+title = "Ford FIAP — gitleaks"
+[allowlist]
+description = "Permitir placeholders no .env.example"
+paths = [
+  ".env.example",
+  "README.md",
+  "DECISIONS.md",
+]
+
+[[rules]]
+id = "supabase-service-role"
+description = "Supabase service_role JWT"
+regex = '''eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'''
+tags = ["jwt", "supabase"]

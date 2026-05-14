@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Ford Retenção FIAP",
+    "slug": "ford-retencao-fiap",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "fordretencao",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#003478",
+      "resizeMode": "contain"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.3amit.fordretencao"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#003478"
+      },
+      "package": "com.threeamit.fordretencao"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      }
+    }
+  }
+}
