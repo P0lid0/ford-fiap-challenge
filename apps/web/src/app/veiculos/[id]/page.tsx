@@ -66,6 +66,27 @@ export default function VeiculoDetalhe() {
     });
   }
 
+  async function refresh() {
+    setRefreshing(true); setErr(null);
+    try {
+      const updated = await api.refreshVehicle(v.id);
+      setV(updated); setDraft(updated);
+    } catch (e: any) {
+      setErr(e.message ?? String(e));
+    } finally { setRefreshing(false); }
+  }
+
+  async function remove() {
+    setDeleting(true); setErr(null);
+    try {
+      await api.deleteVehicle(v.id);
+      router.push('/veiculos');
+    } catch (e: any) {
+      setErr(e.message ?? String(e));
+      setDeleting(false);
+    }
+  }
+
   async function save() {
     setSaving(true); setErr(null);
     try {
