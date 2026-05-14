@@ -57,8 +57,24 @@ export const api = {
   getVehicle: (id: string) => get<any>(`/competitive/vehicles/${id}`),
   createVehicle: (v: any) => post<any>('/competitive/vehicles', v),
   updateVehicle: (id: string, patch: any) => jpatch<any>(`/competitive/vehicles/${id}`, patch),
+  deleteVehicle: async (id: string) => {
+    const r = await fetch(`${API_URL}/competitive/vehicles/${id}`, {
+      method: 'DELETE', headers: await authedHeaders(),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  },
+  refreshVehicle: (id: string) => post<any>(`/competitive/vehicles/${id}/refresh`, {}),
   importVehicles: (format: 'json' | 'csv', content: string) =>
     post<any>('/competitive/vehicles/import', { format, content }),
+  // FIPE drilldown
+  fipeModelosAgrupados: (marcaCodigo: string) =>
+    get<{ base: string; versoes: { codigo: number; nome: string }[]; count: number }[]>(
+      `/competitive/fipe/modelos-agrupados/${marcaCodigo}`),
+  fipeAnos: (marcaCodigo: string, modeloCodigo: string | number) =>
+    get<{ codigo: string; nome: string }[]>(
+      `/competitive/fipe/anos?marcaCodigo=${marcaCodigo}&modeloCodigo=${modeloCodigo}`),
+  searchByFipe: (b: { marca_codigo: string; modelo_codigo: string | number; ano_codigo: string }) =>
+    post<{ source: 'cache' | 'fresh'; vehicle: any }>('/competitive/search/fipe', b),
   listFields: () => get<{ label: string; path: string; criterion: string }[]>('/competitive/fields'),
   listClients: () => get<{ total: number; results: any[] }>('/clients'),
   getClient: (id: string) => get<any>(`/clients/${id}`),

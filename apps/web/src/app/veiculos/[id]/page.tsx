@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Pencil, Save, X, Check, Trash2 } from 'lucide-react';
+import { ArrowLeft, Pencil, Save, X, Check, Trash2, RefreshCw } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { ConfianceBadge, SourceBadge } from '@/components/SourceBadge';
 import { api } from '@/lib/api';
@@ -49,6 +49,9 @@ export default function VeiculoDetalhe() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -110,10 +113,22 @@ export default function VeiculoDetalhe() {
                 </span>
               )}
               {!editing ? (
-                <button onClick={() => setEditing(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition">
-                  <Pencil className="w-4 h-4" /> Editar
-                </button>
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <button onClick={refresh} disabled={refreshing}
+                    title="Re-busca em FIPE + site oficial + IA"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition disabled:opacity-50">
+                    <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    {refreshing ? 'Reanalisando…' : 'Reanalisar'}
+                  </button>
+                  <button onClick={() => setEditing(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition">
+                    <Pencil className="w-4 h-4" /> Editar
+                  </button>
+                  <button onClick={() => setConfirmDel(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-red-500/30 hover:bg-red-500/50 border border-red-300/50 rounded-xl text-sm transition">
+                    <Trash2 className="w-4 h-4" /> Excluir
+                  </button>
+                </div>
               ) : (
                 <div className="flex gap-2">
                   <button onClick={() => { setEditing(false); setDraft(v); }}
@@ -131,6 +146,25 @@ export default function VeiculoDetalhe() {
         </div>
 
         {err && <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-xl mb-4">{err}</div>}
+
+        {confirmDel && (
+          <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-5 mb-4 flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h3 className="font-bold text-red-800">Excluir este veículo?</h3>
+              <p className="text-sm text-red-700">Esta ação é permanente. Comparações futuras não vão mais incluí-lo.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmDel(false)} disabled={deleting}
+                className="px-4 py-2 border border-gray-300 rounded-xl text-sm hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button onClick={remove} disabled={deleting}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white font-bold rounded-xl text-sm hover:bg-red-700 transition disabled:opacity-50">
+                <Trash2 className="w-4 h-4" /> {deleting ? 'Excluindo…' : 'Confirmar exclusão'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {v.fontes?.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-300 p-5 mb-6">

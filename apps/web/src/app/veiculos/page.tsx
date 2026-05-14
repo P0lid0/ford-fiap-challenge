@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Shell } from '@/components/Shell';
 import { BrandCombo } from '@/components/BrandCombo';
 import { ConfianceBadge } from '@/components/SourceBadge';
+import { SearchWizard } from '@/components/SearchWizard';
 import { api } from '@/lib/api';
 
 export default function Veiculos() {
@@ -87,37 +88,13 @@ export default function Veiculos() {
         </div>
 
         {searchOpen && (
-          <form onSubmit={doSearch} className="bg-white border-2 border-ford-blue rounded-2xl p-6 mb-6 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-              <div className="md:col-span-1">
-                <BrandCombo value={searchForm.marca} onChange={v => setSearchForm({ ...searchForm, marca: v })} />
-              </div>
-              <input required placeholder="Modelo (Ranger, Hilux...)"
-                value={searchForm.modelo} onChange={e => setSearchForm({ ...searchForm, modelo: e.target.value })}
-                className="md:col-span-2 px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue" />
-              <input placeholder="Versão (opcional)"
-                value={searchForm.versao} onChange={e => setSearchForm({ ...searchForm, versao: e.target.value })}
-                className="md:col-span-1 px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue" />
-              <input type="number" placeholder="Ano" min={1990} max={2030}
-                value={searchForm.ano} onChange={e => setSearchForm({ ...searchForm, ano: Number(e.target.value) })}
-                className="md:col-span-1 px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue" />
-            </div>
-            <div className="flex items-center gap-3">
-              <button type="submit" disabled={searching}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-ford-blue text-white font-medium rounded-xl hover:bg-ford-blue-dark transition disabled:opacity-50">
-                {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                {searching ? 'Buscando em FIPE + site oficial + IA...' : 'Buscar com fontes confiáveis'}
-              </button>
-              <button type="button" onClick={() => setSearchOpen(false)}
-                className="px-4 py-2.5 text-gray-600 hover:text-gray-900 transition">
-                Cancelar
-              </button>
-              {searchErr && <span className="text-red-600 text-sm">{searchErr}</span>}
-            </div>
-            <p className="text-xs text-gray-500">
-              Cobertura testada: Toyota, VW, RAM, Chevrolet, Renault têm site scraping. Outros caem em FIPE + IA estimada (campo a campo marcado).
-            </p>
-          </form>
+          <SearchWizard
+            onComplete={(v) => {
+              setVehicles(vs => [v, ...vs.filter((x: any) => x.id !== v.id)]);
+              setSearchOpen(false);
+            }}
+            onCancel={() => setSearchOpen(false)}
+          />
         )}
 
         <div className="relative mb-6">

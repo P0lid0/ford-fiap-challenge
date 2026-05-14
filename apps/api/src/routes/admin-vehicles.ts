@@ -11,7 +11,8 @@ import { z } from 'zod';
 import { requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 import { fipe } from '../lib/data-sources/fipe.js';
-import { SUPPORTED_MANUFACTURER_BRANDS } from '../lib/data-sources/manufacturer.js';
+import { SUPPORTED_MANUFACTURER_BRANDS, fetchManufacturerSpecs } from '../lib/data-sources/manufacturer.js';
+import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
 
 const VehicleUpdateSchema = z.object({
   marca: z.string().optional(),
@@ -52,6 +53,184 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const { data, error } = await adminClient().from('vehicles').select('*').eq('id', id).single();
     if (error || !data) { reply.code(404); return { error: 'not_found' }; }
     return data;
+  });
+
+  // === DELETE veículo ===
+  app.delete('/competitive/vehicles/:id', {
+    schema: {
+      tags: ['Desafio 1 — Inteligência Competitiva'],
+      summary: 'Remove veículo do catálogo (apenas admin/gestor)',
+      params: z.object({ id: z.string().uuid() }),
+    },
+  }, async (req, reply) => {
+    const u = requireUser(req);
+    if (u.role !== 'admin' && u.role !== 'gestor') {
+      reply.code(403); return { error: 'forbidden', message: 'apenas admin/gestor pode excluir' };
+    }
+    const { id } = req.params as any;
+    const { error } = await adminClient().from('vehicles').delete().eq('id', id);
+    if (error) { reply.code(400); return { error: 'delete_failed', message: error.message }; }
+    reply.code(204);
+  });
+
+  // === REFRESH: re-roda agregador, atualiza tudo no banco ===
+  app.post('/competitive/vehicles/:id/refresh', {
+    schema: {
+      tags: ['Desafio 1 — Inteligência Competitiva'],
+      summary: 'Reanalisa o veículo (re-busca FIPE + site oficial + IA)',
+      params: z.object({ id: z.string().uuid() }),
+    },
+  }, async (req, reply) => {
+    requireUser(req);
+    const { id } = req.params as any;
+    const sb = adminClient();
+    const { data: existing } = await sb.from('vehicles').select('*').eq('id', id).single();
+    if (!existing) { reply.code(404); return { error: 'not_found' }; }
+
+    const aggregated = await aggregateVehicle({
+      marca: existing.marca, modelo: existing.modelo,
+      versao: existing.versao, ano: existing.ano,
+    });
+    if (!aggregated) { reply.code(404); return { error: 'no_data', message: 'nenhuma fonte retornou dados' }; }
+
+    // Mantém verificações manuais — só sobrescreve campos NÃO marcados como manual.
+    const oldSources = (existing.data_sources ?? {}) as Record<string, string>;
+    const keepManual = (path: string) => oldSources[path] === 'manual';
+
+    const mergeKeep = (oldVal: any, newVal: any, group: string, key: string) =>
+      keepManual(`${group}.${key}`) ? oldVal : newVal;
+
+    const motor = Object.fromEntries(
+      Object.entries(aggregated.motor).map(([k, v]) => [k, mergeKeep(existing.motor?.[k], v, 'motor', k)])
+    );
+    const dimensoes = Object.fromEntries(
+      Object.entries(aggregated.dimensoes).map(([k, v]) => [k, mergeKeep(existing.dimensoes?.[k], v, 'dimensoes', k)])
+    );
+    const transmissao = Object.fromEntries(
+      Object.entries(aggregated.transmissao).map(([k, v]) => [k, mergeKeep(existing.transmissao?.[k], v, 'transmissao', k)])
+    );
+    const desempenho = Object.fromEntries(
+      Object.entries(aggregated.desempenho).map(([k, v]) => [k, mergeKeep(existing.desempenho?.[k], v, 'desempenho', k)])
+    );
+
+    // Preserva data_sources manuais
+    const newSources = { ...aggregated.data_sources };
+    for (const [k, v] of Object.entries(oldSources)) if (v === 'manual') newSources[k] = 'manual';
+
+    const { data, error } = await sb.from('vehicles').update({
+      categoria: aggregated.categoria,
+      motor, dimensoes, transmissao, desempenho,
+      equipamentos: aggregated.equipamentos,
+      preco_brl: aggregated.preco_brl,
+      pais_origem: aggregated.pais_origem,
+      fontes: aggregated.fontes,
+      data_sources: newSources,
+      fipe_codigo: aggregated.fipe_codigo,
+      fipe_mes_referencia: aggregated.fipe_mes_referencia,
+      confianca_geral: aggregated.confianca_geral,
+    }).eq('id', id).select().single();
+
+    if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
+    return data;
+  });
+
+  // === FIPE DRILLDOWN — escolha em cascata ===
+  app.get('/competitive/fipe/modelos-agrupados/:marcaCodigo', {
+    schema: {
+      tags: ['Desafio 1 — Inteligência Competitiva'],
+      summary: 'Lista modelos FIPE agrupados por nome base (Ranger, Corolla, etc.)',
+      params: z.object({ marcaCodigo: z.string() }),
+    },
+  }, async (req) => {
+    requireUser(req);
+    const { marcaCodigo } = req.params as any;
+    const modelos = await fipe.modelos(marcaCodigo);
+    // Agrupa por primeira palavra do nome (ex: "Ranger Raptor 3.0..." → "Ranger")
+    const groups = new Map<string, { base: string; versoes: { codigo: number; nome: string }[] }>();
+    for (const m of modelos) {
+      const base = m.nome.split(/\s+/)[0]!.trim();
+      const existing = groups.get(base.toLowerCase()) ?? { base, versoes: [] };
+      existing.versoes.push(m);
+      groups.set(base.toLowerCase(), existing);
+    }
+    return Array.from(groups.values())
+      .map(g => ({ ...g, count: g.versoes.length }))
+      .sort((a, b) => a.base.localeCompare(b.base));
+  });
+
+  app.get('/competitive/fipe/anos', {
+    schema: {
+      tags: ['Desafio 1 — Inteligência Competitiva'],
+      summary: 'Lista anos disponíveis para um modelo FIPE específico (>= 2010)',
+      querystring: z.object({ marcaCodigo: z.string(), modeloCodigo: z.string() }),
+    },
+  }, async (req) => {
+    requireUser(req);
+    const { marcaCodigo, modeloCodigo } = req.query as any;
+    const anos = await fipe.anos(marcaCodigo, modeloCodigo);
+    return anos
+      .filter(a => /^\d{4}-\d$/.test(a.codigo))
+      .filter(a => parseInt(a.codigo.slice(0, 4)) >= 2010)
+      .sort((a, b) => b.codigo.localeCompare(a.codigo));
+  });
+
+  // === SEARCH via códigos FIPE diretos — confiabilidade máxima ===
+  app.post('/competitive/search/fipe', {
+    schema: {
+      tags: ['Desafio 1 — Inteligência Competitiva'],
+      summary: 'Busca com códigos FIPE específicos (sem fuzzy match)',
+      body: z.object({
+        marca_codigo: z.string(),
+        modelo_codigo: z.coerce.string(),
+        ano_codigo: z.string().regex(/^\d{4}-\d$/),
+      }),
+    },
+  }, async (req, reply) => {
+    requireUser(req);
+    const { marca_codigo, modelo_codigo, ano_codigo } = req.body as any;
+    const sb = adminClient();
+
+    // 1. Busca preço FIPE direto pelos códigos (100% determinístico)
+    let fipeData;
+    try {
+      fipeData = await fipe.preco(marca_codigo, modelo_codigo, ano_codigo);
+    } catch (e: any) {
+      reply.code(404); return { error: 'fipe_failed', message: e.message };
+    }
+
+    const anoInt = parseInt(ano_codigo.slice(0, 4));
+    // Parse modelo: "Ranger Raptor 3.0 V6 Bi-Turbo 4WD AUT." → modelo="Ranger", versao="Raptor 3.0 V6 Bi-Turbo 4WD AUT."
+    const modeloPartes = fipeData.Modelo.split(/\s+/);
+    const modeloBase = modeloPartes[0];
+    const versao = modeloPartes.slice(1).join(' ') || 'Padrão';
+
+    // 2. Verifica cache
+    const { data: existing } = await sb.from('vehicles').select('*')
+      .eq('fipe_codigo', fipeData.CodigoFipe).eq('ano', anoInt).maybeSingle();
+    if (existing) return { source: 'cache', vehicle: existing };
+
+    // 3. Roda agregador com dados FIPE já em mãos (manufacturer + IA pra gaps)
+    const aggregated = await aggregateVehicle({
+      marca: fipeData.Marca, modelo: modeloBase, versao, ano: anoInt,
+    });
+    if (!aggregated) {
+      reply.code(404); return { error: 'no_data' };
+    }
+
+    const { data, error } = await sb.from('vehicles').upsert({
+      marca: aggregated.marca, modelo: aggregated.modelo, versao: aggregated.versao,
+      ano: aggregated.ano, categoria: aggregated.categoria,
+      motor: aggregated.motor, dimensoes: aggregated.dimensoes,
+      transmissao: aggregated.transmissao, desempenho: aggregated.desempenho,
+      equipamentos: aggregated.equipamentos,
+      preco_brl: aggregated.preco_brl, pais_origem: aggregated.pais_origem,
+      fontes: aggregated.fontes, data_sources: aggregated.data_sources,
+      fipe_codigo: aggregated.fipe_codigo, fipe_mes_referencia: aggregated.fipe_mes_referencia,
+      confianca_geral: aggregated.confianca_geral,
+    }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
+
+    if (error) { reply.code(400); return { error: 'upsert_failed', message: error.message }; }
+    return { source: 'fresh', vehicle: data };
   });
 
   // === Combobox de marcas — FIPE é fonte autoritativa ===
