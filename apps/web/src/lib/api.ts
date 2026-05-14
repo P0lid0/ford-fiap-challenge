@@ -34,6 +34,10 @@ export const api = {
     return get<any[]>(`/competitive/lookup?${new URLSearchParams(p)}`);
   },
   compareVehicles: (ids: string[]) => post<any>('/competitive/compare', { vehicle_ids: ids }),
+  searchVehicle: (b: { marca: string; modelo: string; versao?: string; ano?: number; force_refresh?: boolean }) =>
+    post<{ source: 'cache' | 'fresh'; vehicle: any }>('/competitive/search', b),
+  analyzeComparison: (ids: string[]) =>
+    post<{ vehicles: any[]; model: string; analise: string }>('/competitive/compare/analyze', { vehicle_ids: ids }),
   listFields: () => get<{ label: string; path: string; criterion: string }[]>('/competitive/fields'),
   listClients: () => get<{ total: number; results: any[] }>('/clients'),
   getClient: (id: string) => get<any>(`/clients/${id}`),

@@ -21,6 +21,7 @@
     "@ford/types": "workspace:*",
     "@scalar/fastify-api-reference": "1.25.96",
     "@supabase/supabase-js": "2.47.10",
+    "cheerio": "^1.2.0",
     "dotenv": "16.4.7",
     "fastify": "5.2.0",
     "fastify-plugin": "^5.1.0",

@@ -24,17 +24,18 @@ export function aiAvailable(): boolean {
   return !!openai || !!anthropic;
 }
 
-export async function chat(prompt: string, tier: AiTier = 'fast'): Promise<AiResult> {
+export async function chat(prompt: string, tier: AiTier = 'fast', systemOverride?: string): Promise<AiResult> {
+  const system = systemOverride ?? 'Você é um analista sênior de retenção da rede Ford. Responda sempre em português brasileiro, claro e objetivo. Sem floreio.';
   if (openai) {
     const model = tier === 'fast' ? env.OPENAI_MODEL_FAST : env.OPENAI_MODEL_SMART;
     try {
       const r = await openai.chat.completions.create({
         model,
         messages: [
-          { role: 'system', content: 'Você é um analista sênior de retenção da rede Ford. Responda sempre em português brasileiro, claro e objetivo. Sem floreio.' },
+          { role: 'system', content: system },
           { role: 'user', content: prompt },
         ],
-        max_tokens: tier === 'fast' ? 400 : 600,
+        max_tokens: tier === 'fast' ? 400 : 900,
         temperature: 0.4,
       });
       const output = r.choices[0]?.message?.content?.trim() ?? '';
