@@ -13,10 +13,10 @@
  *
  * Os bloqueados caem no fallback de IA pura no aggregator.
  */
-import { fetch } from 'undici';
 import * as cheerio from 'cheerio';
 import OpenAI from 'openai';
 import { env } from '../../config.js';
+import { fetchWithTimeout } from './_http.js';
 
 const openai = env.OPENAI_API_KEY ? new OpenAI({ apiKey: env.OPENAI_API_KEY }) : null;
 
@@ -151,18 +151,18 @@ export async function fetchManufacturerSpecs(
 
   let html: string;
   try {
-    const r = await fetch(url, {
+    const r = await fetchWithTimeout(url, {
       headers: {
         'User-Agent': UA,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'pt-BR,pt;q=0.9',
       },
-    });
+    }, 8_000); // 8s: WAF blocks tend to hang silently
     if (!r.ok) return null;
     html = await r.text();
     if (html.length < 2000) return null; // página vazia/SPA
   } catch {
-    return null;
+    return null; // timeout ou erro → caímos no fallback IA
   }
 
   const mainText = extractMainText(html);

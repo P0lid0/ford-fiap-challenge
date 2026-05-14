@@ -14,7 +14,7 @@
  * O que NÃO entrega: specs técnicos (potência, torque, dimensões, equipamentos).
  * Esses vêm de NHTSA / OpenAI com flag de fonte.
  */
-import { fetch } from 'undici';
+import { fetchWithTimeout } from './_http.js';
 
 const FIPE_BASE = 'https://parallelum.com.br/fipe/api/v1/carros';
 
@@ -34,7 +34,7 @@ export type FipePreco = {
 };
 
 async function jget<T>(path: string): Promise<T> {
-  const r = await fetch(`${FIPE_BASE}${path}`);
+  const r = await fetchWithTimeout(`${FIPE_BASE}${path}`, {}, 15_000);
   if (!r.ok) throw new Error(`FIPE ${r.status} ${path}`);
   return r.json() as Promise<T>;
 }

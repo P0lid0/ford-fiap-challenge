@@ -9,7 +9,7 @@
  * tipo de combustível, transmissão, body class, drive type.
  * Não tem preço BR nem versões BR-específicas.
  */
-import { fetch } from 'undici';
+import { fetchWithTimeout } from './_http.js';
 
 const NHTSA = 'https://vpic.nhtsa.dot.gov/api';
 
@@ -19,7 +19,7 @@ export type NhtsaSpec = {
 };
 
 async function jget<T>(path: string): Promise<T> {
-  const r = await fetch(`${NHTSA}${path}${path.includes('?') ? '&' : '?'}format=json`);
+  const r = await fetchWithTimeout(`${NHTSA}${path}${path.includes('?') ? '&' : '?'}format=json`, {}, 10_000);
   if (!r.ok) throw new Error(`NHTSA ${r.status}`);
   return r.json() as Promise<T>;
 }
