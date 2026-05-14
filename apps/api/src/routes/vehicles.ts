@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { publicClient } from '../lib/supabase.js';
 import { compareVehicles, type Vehicle, COMPARABLE_FIELDS } from '../modules/competitive/compare.js';
@@ -26,7 +27,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     const { marca, modelo, categoria, limit } = req.query as any;
 
     let q = publicClient(u.jwt).from('vehicles').select('*').order('marca').limit(limit);
@@ -55,7 +56,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req, reply) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     const { marca, modelo, versao, ano, fields } = req.query as any;
 
     let q = publicClient(u.jwt)
@@ -90,7 +91,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req, reply) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     const { vehicle_ids, fields } = req.body as any;
 
     const { data, error } = await publicClient(u.jwt)

@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import { requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { publicClient } from '../lib/supabase.js';
+import { adminClient, publicClient } from '../lib/supabase.js';
 import { logAudit } from '../lib/audit.js';
 import { predict } from '../modules/retention/ml-client.js';
 
@@ -39,7 +40,7 @@ export async function clientRoutes(app: FastifyInstance) {
       body: CreateClientBody,
     },
   }, async (req, reply) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     if (!u.dealership_id) {
       reply.code(400);
       return { error: 'no_dealership', message: 'usuário não está vinculado a uma concessionária' };
@@ -68,7 +69,8 @@ export async function clientRoutes(app: FastifyInstance) {
       test_drive_realizado: rest.test_drive_realizado, dealership_id: u.dealership_id,
     });
 
-    const { data: predRow } = await sb.from('predictions').insert({
+    // predictions é insert-only pelo service_role (RLS bloqueia user).
+    const { data: predRow, error: predErr } = await adminClient().from('predictions').insert({
       client_id: client.id,
       model_version: prediction.model_version,
       perfil_predito: prediction.perfil_predito,
@@ -80,6 +82,7 @@ export async function clientRoutes(app: FastifyInstance) {
       confianca: prediction.confianca,
       recomendacoes_acao: prediction.recomendacoes_acao,
     }).select().single();
+    if (predErr) req.log.error({ predErr }, 'failed to insert prediction');
 
     await logAudit({
       actor_id: u.id, action: 'client.created', entity: 'clients',
@@ -104,7 +107,7 @@ export async function clientRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     const { perfil, risco_min, limit, offset } = req.query as any;
     const sb = publicClient(u.jwt);
 
@@ -136,7 +139,7 @@ export async function clientRoutes(app: FastifyInstance) {
       params: z.object({ id: z.string().uuid() }),
     },
   }, async (req, reply) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     const { id } = req.params as any;
     const sb = publicClient(u.jwt);
     const { data: client, error } = await sb.from('clients').select('*').eq('id', id).single();
@@ -161,7 +164,7 @@ export async function clientRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     const { risco_min, limit } = req.query as any;
     const sb = publicClient(u.jwt);
     const { data, error } = await sb

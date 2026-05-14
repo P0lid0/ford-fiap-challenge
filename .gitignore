@@ -48,3 +48,7 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
+
+# Supabase CLI binary (baixado por dev local)
+supabase.exe
+supabase/.temp/

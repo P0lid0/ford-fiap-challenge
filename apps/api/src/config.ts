@@ -15,13 +15,17 @@ if (existsSync(rootEnv)) {
 
 const Env = z.object({
   SUPABASE_URL: z.string().url(),
-  SUPABASE_ANON_KEY: z.string().min(1).optional().default(''),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  SUPABASE_JWT_SECRET: z.string().min(1).optional().default(''),
+  SUPABASE_ANON_KEY: z.string().optional().default(''),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  SUPABASE_JWT_SECRET: z.string().optional().default(''),
 
   ANTHROPIC_API_KEY: z.string().optional().default(''),
   CLAUDE_MODEL_FAST: z.string().default('claude-haiku-4-5-20251001'),
   CLAUDE_MODEL_SMART: z.string().default('claude-sonnet-4-6'),
+
+  OPENAI_API_KEY: z.string().optional().default(''),
+  OPENAI_MODEL_FAST: z.string().default('gpt-4o-mini'),
+  OPENAI_MODEL_SMART: z.string().default('gpt-4o'),
 
   API_PORT: z.coerce.number().default(3333),
   API_HOST: z.string().default('127.0.0.1'),
@@ -31,7 +35,7 @@ const Env = z.object({
   RATE_LIMIT_WINDOW: z.string().default('1 minute'),
 
   ML_SERVICE_URL: z.string().url().default('http://127.0.0.1:8001'),
-  ML_SERVICE_TOKEN: z.string().min(8),
+  ML_SERVICE_TOKEN: z.string().min(8).default('local-dev-shared-secret-please-change'),
 
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 });

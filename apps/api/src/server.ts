@@ -6,7 +6,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { serializerCompiler, validatorCompiler, jsonSchemaTransform, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { env, allowedOrigins } from './config.js';
-import { authPlugin } from './plugins/auth.js';
+import { authPlugin, requireUser } from './plugins/auth.js';
 import { vehicleRoutes } from './routes/vehicles.ts';
 import { clientRoutes } from './routes/clients.ts';
 import { insightRoutes } from './routes/insights.ts';
@@ -90,7 +90,7 @@ app.get('/health', { schema: { tags: ['meta'] } }, async () => ({
 }));
 
 app.get('/me', { schema: { tags: ['meta'] } }, async (req) => {
-  const u = req.requireUser();
+  const u = requireUser(req);
   return { id: u.id, email: u.email, role: u.role, dealership_id: u.dealership_id };
 });
 

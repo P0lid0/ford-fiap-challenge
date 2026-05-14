@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 
 /**
@@ -14,7 +15,7 @@ export async function metricRoutes(app: FastifyInstance) {
       summary: 'KPIs da concessionária (ou rede, se admin)',
     },
   }, async (req) => {
-    const u = req.requireUser();
+    const u = requireUser(req);
     const sb = adminClient();
     const dealershipFilter = u.role === 'admin' || u.role === 'gestor' ? null : u.dealership_id;
 

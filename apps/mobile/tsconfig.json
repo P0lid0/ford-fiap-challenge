@@ -3,10 +3,19 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": ["./*"],
-      "@ford/types": ["../../packages/types/src"],
-      "@ford/ui": ["../../packages/ui/src"]
+      "@/*": [
+        "./*"
+      ],
+      "@ford/types": [
+        "../../packages/types/src"
+      ],
+      "@ford/ui": [
+        "../../packages/ui/src"
+      ]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ]
 }
