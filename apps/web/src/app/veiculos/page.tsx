@@ -1,8 +1,10 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Search, GitCompare, Loader2, Sparkles } from 'lucide-react';
+import { Check, Search, GitCompare, Loader2, Sparkles, Eye, Plus } from 'lucide-react';
+import Link from 'next/link';
 import { Shell } from '@/components/Shell';
+import { BrandCombo } from '@/components/BrandCombo';
 import { ConfianceBadge } from '@/components/SourceBadge';
 import { api } from '@/lib/api';
 
@@ -72,18 +74,24 @@ export default function Veiculos() {
               Busca em FIPE oficial + site da fabricante + IA · selecione 2-5 para comparar
             </p>
           </div>
-          <button onClick={() => setSearchOpen(s => !s)}
-            className="inline-flex items-center gap-2 px-5 py-3 bg-ford-blue text-white font-medium rounded-2xl hover:bg-ford-blue-dark transition">
-            <Search className="w-4 h-4" /> Buscar carro
-          </button>
+          <div className="flex gap-2">
+            <Link href="/veiculos/adicionar"
+              className="inline-flex items-center gap-2 px-4 py-3 bg-white border border-gray-300 text-gray-800 font-medium rounded-2xl hover:border-ford-blue hover:text-ford-blue transition">
+              <Plus className="w-4 h-4" /> Adicionar manual
+            </Link>
+            <button onClick={() => setSearchOpen(s => !s)}
+              className="inline-flex items-center gap-2 px-5 py-3 bg-ford-blue text-white font-medium rounded-2xl hover:bg-ford-blue-dark transition">
+              <Search className="w-4 h-4" /> Buscar carro
+            </button>
+          </div>
         </div>
 
         {searchOpen && (
           <form onSubmit={doSearch} className="bg-white border-2 border-ford-blue rounded-2xl p-6 mb-6 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-              <input required placeholder="Marca (Ford, Toyota...)"
-                value={searchForm.marca} onChange={e => setSearchForm({ ...searchForm, marca: e.target.value })}
-                className="md:col-span-1 px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue" />
+              <div className="md:col-span-1">
+                <BrandCombo value={searchForm.marca} onChange={v => setSearchForm({ ...searchForm, marca: v })} />
+              </div>
               <input required placeholder="Modelo (Ranger, Hilux...)"
                 value={searchForm.modelo} onChange={e => setSearchForm({ ...searchForm, modelo: e.target.value })}
                 className="md:col-span-2 px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue" />
@@ -125,30 +133,37 @@ export default function Veiculos() {
             {filtered.map((v: any) => {
               const sel = selected.includes(v.id);
               return (
-                <button key={v.id} onClick={() => toggle(v.id)}
-                  className={`text-left bg-white rounded-2xl border-2 p-5 transition relative ${
+                <div key={v.id}
+                  className={`bg-white rounded-2xl border-2 p-5 transition relative ${
                     sel ? 'border-ford-blue ring-4 ring-ford-blue/10' : 'border-gray-300 hover:border-gray-400'
                   }`}>
+                  <button onClick={() => toggle(v.id)} className="absolute inset-0 z-0" aria-label="Selecionar para comparar" />
                   {sel && (
-                    <div className="absolute top-3 right-3 w-7 h-7 rounded-full bg-ford-blue text-white flex items-center justify-center">
+                    <div className="absolute top-3 right-3 w-7 h-7 rounded-full bg-ford-blue text-white flex items-center justify-center z-10">
                       <Check className="w-4 h-4" />
                     </div>
                   )}
-                  <div className="text-xs uppercase tracking-wider text-gray-600">{v.marca}</div>
-                  <div className="text-xl font-bold text-gray-900 mt-1">{v.modelo} {v.versao}</div>
-                  <div className="text-sm text-gray-500 mb-3">{v.ano}</div>
-                  {v.confianca_geral && (
-                    <div className="mb-3">
-                      <ConfianceBadge confianca={v.confianca_geral} />
+                  <div className="relative z-10 pointer-events-none">
+                    <div className="text-xs uppercase tracking-wider text-gray-600">{v.marca}</div>
+                    <div className="text-xl font-bold text-gray-900 mt-1">{v.modelo} {v.versao}</div>
+                    <div className="text-sm text-gray-500 mb-3">{v.ano}</div>
+                    {v.confianca_geral && (
+                      <div className="mb-3">
+                        <ConfianceBadge confianca={v.confianca_geral} />
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3 text-sm pt-3 border-t border-gray-100">
+                      <Spec label="Potência" value={v.motor?.potencia_cv ? `${v.motor.potencia_cv} cv` : '—'} />
+                      <Spec label="Torque" value={v.motor?.torque_nm ? `${v.motor.torque_nm} Nm` : '—'} />
+                      <Spec label="0-100" value={v.desempenho?.aceleracao_0_100_s ? `${v.desempenho.aceleracao_0_100_s}s` : '—'} />
+                      <Spec label="Preço FIPE" value={v.preco_brl ? `R$ ${(v.preco_brl/1000).toFixed(0)}k` : '—'} />
                     </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-3 text-sm pt-3 border-t border-gray-100">
-                    <Spec label="Potência" value={v.motor?.potencia_cv ? `${v.motor.potencia_cv} cv` : '—'} />
-                    <Spec label="Torque" value={v.motor?.torque_nm ? `${v.motor.torque_nm} Nm` : '—'} />
-                    <Spec label="0-100" value={v.desempenho?.aceleracao_0_100_s ? `${v.desempenho.aceleracao_0_100_s}s` : '—'} />
-                    <Spec label="Preço FIPE" value={v.preco_brl ? `R$ ${(v.preco_brl/1000).toFixed(0)}k` : '—'} />
                   </div>
-                </button>
+                  <Link href={`/veiculos/${v.id}`} onClick={e => e.stopPropagation()}
+                    className="relative z-20 mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-ford-blue hover:underline">
+                    <Eye className="w-3.5 h-3.5" /> Ver detalhes / editar
+                  </Link>
+                </div>
               );
             })}
           </div>

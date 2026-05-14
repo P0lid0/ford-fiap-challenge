@@ -252,9 +252,12 @@ Em 3-5 frases curtas, explique a razão competitiva REAL — não slogan. Consid
 
 SEJA OBJETIVO. Sem "depende", sem "talvez". Posicione.`;
 
-    const r = await chat(prompt, 'smart',
-      'Você é um analista sênior de inteligência competitiva da indústria automotiva brasileira. ' +
-      'Tem acesso a dados de vendas Fenabrave 2024-2025 e conhece bem o comportamento do consumidor BR.');
+    const aiModel = req.headers['x-ai-model'] as string | undefined;
+    const r = await chat(prompt, 'smart', {
+      systemOverride: 'Você é um analista sênior de inteligência competitiva da indústria automotiva brasileira. ' +
+        'Tem acesso a dados de vendas Fenabrave 2024-2025 e conhece bem o comportamento do consumidor BR.',
+      modelOverride: aiModel,
+    });
 
     return {
       vehicles: vehicles.map((v: any) => ({ id: v.id, marca: v.marca, modelo: v.modelo, versao: v.versao })),

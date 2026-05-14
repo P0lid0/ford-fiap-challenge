@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { LogOut, BarChart3, Users, AlertTriangle, Car, Sparkles } from 'lucide-react';
+import { LogOut, BarChart3, Users, AlertTriangle, Car, Sparkles, Settings, Plus } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 const NAV = [
@@ -10,7 +10,9 @@ const NAV = [
   { href: '/leads',    label: 'Leads',    icon: AlertTriangle },
   { href: '/clientes', label: 'Clientes', icon: Users },
   { href: '/veiculos', label: 'Concorrência', icon: Car },
+  { href: '/veiculos/adicionar', label: 'Adicionar carro', icon: Plus },
   { href: '/insights', label: 'Insights IA', icon: Sparkles },
+  { href: '/configuracoes', label: 'Configurações', icon: Settings },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

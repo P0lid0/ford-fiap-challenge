@@ -8,6 +8,7 @@ import { serializerCompiler, validatorCompiler, jsonSchemaTransform, ZodTypeProv
 import { env, allowedOrigins } from './config.js';
 import { authPlugin, requireUser } from './plugins/auth.js';
 import { vehicleRoutes } from './routes/vehicles.ts';
+import { adminVehicleRoutes } from './routes/admin-vehicles.ts';
 import { clientRoutes } from './routes/clients.ts';
 import { insightRoutes } from './routes/insights.ts';
 import { metricRoutes } from './routes/metrics.ts';
@@ -95,6 +96,7 @@ app.get('/me', { schema: { tags: ['meta'] } }, async (req) => {
 });
 
 await app.register(vehicleRoutes);
+await app.register(adminVehicleRoutes);
 await app.register(clientRoutes);
 await app.register(insightRoutes);
 await app.register(metricRoutes);

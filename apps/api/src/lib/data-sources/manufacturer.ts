@@ -31,27 +31,48 @@ export function resolveManufacturerUrl(marca: string, modelo: string, versao?: s
   // Mapas validados em 14/05/2026
   switch (m) {
     case 'toyota':
-      // Hilux → hilux-cabine-dupla. Outros: corolla, yaris, etc.
       if (mod.includes('hilux')) return 'https://www.toyota.com.br/modelos/hilux-cabine-dupla';
       return `https://www.toyota.com.br/modelos/${mod}`;
     case 'volkswagen':
     case 'vw':
       return `https://www.vw.com.br/pt/carros/${mod}.html`;
     case 'ram':
-      // RAM: 1500, 2500, 3000, Rampage, Dakota
       return `https://www.ram.com.br/picapes/${mod}.html`;
     case 'chevrolet':
     case 'gm':
-      // S10, Tracker, Onix, Cruze, Spin
       if (['s10', 'silverado', 'montana'].includes(mod)) return `https://www.chevrolet.com.br/picapes/${mod}`;
       if (['tracker', 'equinox', 'trailblazer'].includes(mod)) return `https://www.chevrolet.com.br/suvs/${mod}`;
       return `https://www.chevrolet.com.br/carros/${mod}`;
     case 'renault':
       return `https://www.renault.com.br/veiculos/${mod}.html`;
+    case 'jeep':
+      return `https://www.jeep.com.br/${mod}.html`;
+    case 'chery':
+    case 'caoa chery':
+      return `https://www.chery.com.br/${mod}`;
+    case 'kia':
+      return `https://www.kia.com.br/${mod}`;
+    case 'mitsubishi':
+      if (mod.includes('triton') || mod.includes('l200')) {
+        const sub = mod.includes('nova') ? 'nova-triton' : mod.includes('terra') ? 'triton-terra' : 'nova-triton';
+        return `https://www.mitsubishimotors.com.br/picapes/${sub}`;
+      }
+      if (mod.includes('outlander') || mod.includes('eclipse') || mod.includes('asx') || mod.includes('pajero')) {
+        return `https://www.mitsubishimotors.com.br/suv-e-crossovers/${mod}`;
+      }
+      return null;
+    case 'peugeot':
+      return `https://www.peugeot.com.br/gama/peugeot-${mod}.html`;
     default:
       return null;
   }
 }
+
+/** Lista de marcas com cobertura de scraping de site oficial (alta confiança). */
+export const SUPPORTED_MANUFACTURER_BRANDS = [
+  'Toyota', 'Volkswagen', 'RAM', 'Chevrolet', 'Renault',
+  'Jeep', 'Chery', 'Kia', 'Mitsubishi', 'Peugeot',
+];
 
 /**
  * Extrai texto principal de um HTML, removendo nav/footer/scripts.

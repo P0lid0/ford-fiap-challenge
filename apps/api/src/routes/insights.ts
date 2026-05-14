@@ -57,7 +57,8 @@ export async function insightRoutes(app: FastifyInstance) {
       return { source: 'fresh', model: 'rule-based-fallback', output: fallbackClientText(client, pred) };
     }
 
-    const r = await chat(buildClientPrompt(client, pred), 'fast');
+    const aiModel = req.headers['x-ai-model'] as string | undefined;
+    const r = await chat(buildClientPrompt(client, pred), 'fast', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', model: 'rule-based-fallback', output: fallbackClientText(client, pred) };
     }
@@ -97,7 +98,8 @@ export async function insightRoutes(app: FastifyInstance) {
     if (!aiAvailable()) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };
     }
-    const r = await chat(buildPortfolioPrompt(totalClients, perfilCounts, avgRisco), 'smart');
+    const aiModel = req.headers['x-ai-model'] as string | undefined;
+    const r = await chat(buildPortfolioPrompt(totalClients, perfilCounts, avgRisco), 'smart', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };
     }
