@@ -19,6 +19,13 @@ async function authedHeaders(): Promise<HeadersInit> {
   };
 }
 
+// Pra multipart uploads: NÃO setar Content-Type (browser põe boundary).
+async function authedHeadersNoJson(): Promise<HeadersInit> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function get<T>(path: string, fn?: AiFunction): Promise<T> {
   const r = await fetch(`${API_URL}${path}`, { headers: await authedHeaders(fn), cache: 'no-store' });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
@@ -32,7 +39,8 @@ async function post<T>(path: string, body: unknown, fn?: AiFunction): Promise<T>
   return r.json();
 }
 async function jdelete(path: string): Promise<void> {
-  const r = await fetch(`${API_URL}${path}`, { method: 'DELETE', headers: await authedHeaders() });
+  // DELETE não tem body — Fastify rejeita Content-Type: application/json sem body.
+  const r = await fetch(`${API_URL}${path}`, { method: 'DELETE', headers: await authedHeadersNoJson() });
   if (!r.ok && r.status !== 204) throw new Error(`${r.status} ${await r.text()}`);
 }
 async function jpatch<T>(path: string, body: unknown): Promise<T> {
@@ -63,13 +71,36 @@ export const api = {
   updateVehicle: (id: string, patch: any) => jpatch<any>(`/competitive/vehicles/${id}`, patch),
   deleteVehicle: async (id: string) => {
     const r = await fetch(`${API_URL}/competitive/vehicles/${id}`, {
-      method: 'DELETE', headers: await authedHeaders(),
+      method: 'DELETE', headers: await authedHeadersNoJson(), // sem Content-Type — Fastify recusa JSON sem body
     });
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    if (!r.ok) {
+      let detail = '';
+      try {
+        const body = await r.json();
+        detail = body?.message ?? body?.error ?? '';
+      } catch { detail = await r.text(); }
+      throw new Error(`Falha ao excluir (HTTP ${r.status}): ${detail}`);
+    }
+    return r.json().catch(() => ({ ok: true }));
   },
-  refreshVehicle: (id: string) => post<any>(`/competitive/vehicles/${id}/refresh`, {}),
+  refreshVehicle: (id: string, opts?: { ebook_url?: string; skip_ebook?: boolean }) =>
+    post<any>(`/competitive/vehicles/${id}/refresh`, opts ?? {}),
   importVehicles: (format: 'json' | 'csv', content: string) =>
     post<any>('/competitive/vehicles/import', { format, content }),
+  importVehiclesFromFile: async (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch(`${API_URL}/competitive/import/file`, {
+      method: 'POST',
+      headers: await authedHeadersNoJson(),
+      body: fd,
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json() as Promise<{
+      filename: string; mime: string; size_bytes: number;
+      extracted_by: string; count: number; veiculos: any[];
+    }>;
+  },
   // FIPE drilldown
   fipeModelosAgrupados: (marcaCodigo: string) =>
     get<{ base: string; versoes: { codigo: number; nome: string }[]; count: number }[]>(
@@ -81,7 +112,7 @@ export const api = {
     post<{ source: 'cache' | 'fresh'; vehicle: any }>('/competitive/search/fipe', b, 'vehicle_search'),
   // AI config (admin)
   getAiKeys: () => get<Record<string, { configured: boolean; source: string; preview?: string }>>('/admin/ai-keys'),
-  setAiKey: async (provider: 'openai' | 'anthropic' | 'gemini', api_key: string) => {
+  setAiKey: async (provider: 'openai' | 'anthropic' | 'gemini' | 'fipe' | 'vehicle411', api_key: string) => {
     const r = await fetch(`${API_URL}/admin/ai-keys/${provider}`, {
       method: 'PUT', headers: await authedHeaders(), body: JSON.stringify({ api_key }),
     });
@@ -107,4 +138,24 @@ export const api = {
   metrics: () => get<any>('/metrics/dealership'),
   insightClient: (id: string) => get<any>(`/insights/client/${id}`),
   insightPortfolio: () => get<any>('/insights/portfolio'),
+
+  // Ações de retenção (D2)
+  listAcoes: (filters: { client_id?: string; status?: string; tipo?: string; perfil_alvo?: string; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) if (v != null && v !== '') qs.append(k, String(v));
+    return get<{ total: number; results: any[] }>(`/acoes?${qs.toString()}`);
+  },
+  createAcao: (b: any) => post<any>('/acoes', b),
+  updateAcao: (id: string, patch: any) => jpatch<any>(`/acoes/${id}`, patch),
+  campanha: (b: { perfil: string; tipo: string; titulo: string; descricao?: string; risco_min?: number; limit?: number }) =>
+    post<{ ok: boolean; campaign_id: string | null; created: number; message?: string }>('/acoes/campanha', b),
+  acoesKpis: () => get<{
+    total: number;
+    por_status: Record<string, number>;
+    por_tipo: Record<string, number>;
+    por_perfil: Record<string, number>;
+    taxa_conclusao: number;
+    taxa_sucesso: number;
+    lead_time_horas_medio: number | null;
+  }>('/acoes/kpis'),
 };

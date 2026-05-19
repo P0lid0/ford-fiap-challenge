@@ -99,19 +99,32 @@ function extractMainText(html: string): string {
     .slice(0, 18000);
 }
 
-const EXTRACTOR_SYSTEM = `Você é um EXTRATOR de specs técnicos. Sua única tarefa é PARSEAR o texto fornecido
-e devolver JSON estruturado com os specs que ESTÃO LITERALMENTE no texto.
+const EXTRACTOR_SYSTEM = `Você é um EXTRATOR de specs e equipamentos a partir do TEXTO da página oficial.
 
-REGRAS ABSOLUTAS:
-- Responda APENAS com JSON válido. Sem markdown.
-- Se um spec NÃO aparece no texto, use null. JAMAIS infira.
-- NÃO use seu conhecimento prévio do modelo — extraia somente o que está no texto.
-- Unidades: cc, cv, Nm, mm, kg, km/h, km/l, L.
+REGRAS PARA NÚMEROS (motor, dimensões, etc.):
+- Só preencha valor se aparecer EXPLICITAMENTE no texto. Em dúvida = null.
+- Unidades padronizadas: cc, cv, Nm, mm, kg, km/h, km/l, L.
+- Conversões diretas aceitas: "2.4L" → 2400 cc; "190 hp" → 190 cv (aprox válida).
 - combustivel ∈ [gasolina, etanol, flex, diesel, diesel_s10, eletrico, hibrido, hibrido_plugin, gnv]
 - categoria ∈ [hatch, sedan, suv, picape_compacta, picape_media, picape_grande, minivan, cupe, conversivel, comercial]
-- equipamentos: lista snake_case dos itens listados no texto (max 15).
 
-Formato:
+REGRAS PARA EQUIPAMENTOS — TENTE TRAZER UMA LISTA SUBSTANCIAL:
+- Liste TODO equipamento que aparece no texto. Não tenha medo de listar muitos.
+- Se o texto tem seção "equipamentos de série" / "destaques" / "tecnologia" / "conforto",
+  extraia TODOS os itens dessas seções.
+- Itens marcados como "opcional", "pacote opcional", "exclusivo da versão X" → fora.
+- Quando há múltiplos trims na mesma página e o usuário pediu UM específico:
+  → priorize os equipamentos atribuídos àquele trim
+  → se a separação não está clara, inclua os itens que claramente são de SÉRIE em todos os trims
+- Lista vazia é PIOR que lista boa — esforce-se pra extrair pelo menos 10-15 itens.
+- Mas: itens 100% inventados (sem base no texto) → fora.
+
+Responda APENAS com JSON válido (sem markdown).
+
+EQUIPAMENTOS — formato "categoria:item_snake_case".
+Categorias: seguranca, conforto, tecnologia, assistencia, interior, exterior, cargo, offroad.
+
+Formato JSON:
 {
   "categoria": str|null,
   "motor": { "cilindrada_cc": int|null, "potencia_cv": int|null, "torque_nm": int|null,
@@ -124,7 +137,7 @@ Formato:
   "desempenho": { "aceleracao_0_100_s": float|null, "velocidade_max_kmh": int|null,
                   "consumo_cidade_kml": float|null, "consumo_estrada_kml": float|null,
                   "autonomia_km": int|null },
-  "equipamentos": [str]
+  "equipamentos": ["categoria:item", ...]
 }`;
 
 export type ManufacturerExtraction = {
@@ -169,14 +182,38 @@ export async function fetchManufacturerSpecs(
   if (!(await aiAvailable())) return null;
 
   try {
-    const userMsg = `Marca: ${marca}\nModelo: ${modelo}${versao ? ` ${versao}` : ''}\n\nTEXTO DA PÁGINA OFICIAL:\n\n${mainText}`;
+    const versaoHint = versao
+      ? `\n\nVERSÃO PEDIDA PELO USUÁRIO: "${versao}"
+  → Se o texto lista MÚLTIPLAS versões, extraia APENAS dados desta versão específica.
+  → Equipamentos exclusivos de OUTRAS versões NÃO PODEM aparecer.
+  → Se não está claro qual versão o texto descreve, prefira null e poucos equipamentos.`
+      : '\n\nO usuário NÃO especificou versão. Extraia somente dados COMUNS A TODAS as versões mencionadas.';
+
+    const userMsg = `Marca: ${marca}
+Modelo: ${modelo}${versao ? ` ${versao}` : ''}
+${versaoHint}
+
+LEMBRE: dado errado quebra a confiança do cliente. Em dúvida = null.
+
+TEXTO DA PÁGINA OFICIAL:
+
+${mainText}`;
     const r = await aiChat(userMsg, 'fast', {
       systemOverride: EXTRACTOR_SYSTEM,
       modelOverride: aiModel,
       jsonObjectMode: true,
+      maxTokens: 2500,
     });
     if (!r.output) return null;
-    const data = JSON.parse(r.output);
+    const cleaned = r.output.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    const data = JSON.parse(cleaned);
+
+    // Validação literal: remove equipamentos cuja maioria das palavras-chave
+    // NÃO aparece no texto fonte. Previne alucinação tipo "android_auto" sendo
+    // listado quando a página só falava em "rádio AM/FM".
+    if (Array.isArray(data.equipamentos)) {
+      data.equipamentos = filterEquipamentosBySource(data.equipamentos, mainText);
+    }
     return {
       data,
       source_url: url,
@@ -187,4 +224,96 @@ export async function fetchManufacturerSpecs(
     console.error('[manufacturer] extraction failed:', err?.message);
     return null;
   }
+}
+
+/**
+ * Remove acentos + lower pra match tolerante.
+ */
+function normalize(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/**
+ * Mapa de sinônimos: o item snake_case → termos que provavelmente aparecem no texto
+ * original. Permite match liberal (ex: "carplay" no texto vale pra "apple_carplay").
+ */
+const EQUIP_SYNONYMS: Record<string, string[]> = {
+  airbag: ['airbag', 'air bag', 'air-bag'],
+  abs: ['abs', 'antiblocante', 'antitravamento'],
+  esp: ['esp', 'controle de estabilidade'],
+  ebd: ['ebd', 'distribuicao de frenagem'],
+  isofix: ['isofix'],
+  carplay: ['carplay', 'apple car'],
+  android: ['android auto'],
+  bluetooth: ['bluetooth'],
+  multimidia: ['multimidia', 'central multimidia', 'sistema multimidia', 'infotainment'],
+  cruise: ['cruise', 'piloto automatico'],
+  hill_descent: ['hill descent', 'descida controlada'],
+  hill_start: ['hill start', 'assistente de partida em rampa'],
+  bloqueio: ['bloqueio', 'diferencial blocante', 'blocante'],
+  reducao: ['reducao', 'caixa de reducao', 'modo 4l'],
+  led: ['led'],
+  halogen: ['halogen', 'halogeno'],
+  teto_solar: ['teto solar', 'sunroof', 'panoramico'],
+  ar_condicionado: ['ar condicionado', 'ar-condicionado', 'climatizador'],
+  bancos_couro: ['bancos de couro', 'banco em couro', 'couro nos bancos', 'revestimento em couro'],
+  volante_couro: ['volante em couro', 'volante de couro'],
+  partida_botao: ['partida sem chave', 'botao de partida', 'start stop', 'partida por botao'],
+  camera_re: ['camera de re', 'camera traseira'],
+  camera_360: ['camera 360', 'visao 360', 'panoramica'],
+  sensor_estacionamento: ['sensor de estacionamento', 'sensor traseiro', 'sensor de re'],
+  sensor_chuva: ['sensor de chuva'],
+  sensor_luminosidade: ['sensor de luminosidade', 'sensor crepuscular'],
+  rodas_aluminio: ['rodas de aluminio', 'rodas em liga', 'liga leve'],
+  rodas_aco: ['rodas de aco'],
+  estribos: ['estribos', 'estribo lateral'],
+  capota: ['capota', 'tampa de cacamba'],
+  cacamba_revestida: ['revestimento da cacamba', 'bedliner', 'forro da cacamba'],
+  ganchos_amarracao: ['gancho de amarracao', 'ganchos de carga'],
+  tomada_220v: ['tomada 220', 'tomada 110', 'tomada da cacamba'],
+  frenagem_autonoma: ['frenagem autonoma', 'aeb', 'frenagem de emergencia'],
+  lane_keep: ['lane keep', 'manutencao de faixa', 'assistente de faixa'],
+  pre_colisao: ['pre colisao', 'alerta de colisao'],
+  banco_eletrico: ['banco eletrico', 'banco com regulagem eletrica'],
+  ventilacao_banco: ['banco ventilado', 'ventilacao do banco'],
+  start_stop: ['start stop', 'start-stop'],
+};
+
+/**
+ * Filtro permissivo: só descarta equipamentos cujos TOKENS principais não aparecem
+ * NEM 1x no texto fonte. Itens com pelo menos 1 hit OU sinônimo casando ficam.
+ * Preferimos passar item duvidoso (UI sinaliza fonte) a perder item válido.
+ */
+export function filterEquipamentosBySource(items: string[], sourceText: string): string[] {
+  const src = normalize(sourceText);
+  const kept: string[] = [];
+  const dropped: string[] = [];
+
+  for (const raw of items) {
+    if (typeof raw !== 'string') continue;
+    const item = raw.replace(/^[a-z_]+:/, '');
+    const tokens = normalize(item.replace(/_/g, ' '))
+      .split(/\s+/)
+      .filter(t => t.length >= 3);
+
+    // 1) Sinônimos curados (match liberal)
+    let synHit = false;
+    for (const [key, syns] of Object.entries(EQUIP_SYNONYMS)) {
+      if (item.includes(key) || tokens.some(t => key.includes(t))) {
+        if (syns.some(s => src.includes(normalize(s)))) { synHit = true; break; }
+      }
+    }
+    if (synHit) { kept.push(raw); continue; }
+
+    // 2) Pelo menos 1 token significativo no texto = mantém (permissivo)
+    if (tokens.length === 0) { kept.push(raw); continue; } // sem tokens, mantém por padrão
+    const hits = tokens.filter(t => src.includes(t)).length;
+    if (hits >= 1) kept.push(raw);
+    else dropped.push(raw);
+  }
+
+  if (dropped.length > 0) {
+    console.log(`[manufacturer] descartou ${dropped.length} equipamentos sem nenhuma evidência: ${dropped.slice(0, 5).join(', ')}${dropped.length > 5 ? '...' : ''}`);
+  }
+  return kept;
 }

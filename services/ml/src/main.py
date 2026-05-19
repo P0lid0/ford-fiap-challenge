@@ -8,7 +8,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+import hashlib
+import hmac
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -52,9 +55,29 @@ def auth_token(authorization: str | None = Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
-    if token != settings.ml_service_token:
+    if not hmac.compare_digest(token, settings.ml_service_token):
         raise HTTPException(403, "invalid token")
     return True
+
+
+async def verify_payload_signature(request: Request, x_payload_signature: str | None = Header(default=None)) -> None:
+    """Integridade: HMAC-SHA256 do body com ML_SERVICE_TOKEN.
+    Se header ausente em dev → tolera. Em prod, configurar header obrigatório.
+    """
+    if not x_payload_signature:
+        if settings.ml_service_token in ("", "change-me"):
+            return
+        # Header ausente em prod: log mas não bloqueia (compat com clients antigos).
+        log.warning("missing X-Payload-Signature on /predict")
+        return
+    body = await request.body()
+    expected = hmac.new(
+        settings.ml_service_token.encode(),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected, x_payload_signature):
+        raise HTTPException(400, "invalid payload signature")
 
 
 # ============== Schemas ==============
@@ -107,7 +130,11 @@ def health():
     }
 
 
-@app.post("/predict", response_model=PredictResponse, dependencies=[Depends(auth_token)])
+@app.post(
+    "/predict",
+    response_model=PredictResponse,
+    dependencies=[Depends(auth_token), Depends(verify_payload_signature)],
+)
 def predict_endpoint(req: PredictRequest) -> PredictResponse:
     pipe, metrics, version = _get_classifier()
     out = run_predict(pipe, req.model_dump())

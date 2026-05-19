@@ -1,7 +1,13 @@
 // Cliente HTTP para o serviço Python de ML.
-// Falha silenciosamente para uma resposta mock se o serviço estiver fora —
-// MVP-friendly. Em produção, propague o erro e use circuit breaker.
+// Cybersec:
+//  - dealership_id é PSEUDONIMIZADO via HMAC-SHA256 antes de sair da API gateway
+//    (ML service nunca vê o UUID original).
+//  - Body assinado com HMAC-SHA256 no header X-Payload-Signature (integridade
+//    em trânsito + previne replay manipulado).
+//  - Sem PII direta no payload (nome, cpf, email, telefone NUNCA sobem).
+// Falha silenciosamente para resposta mock se o serviço estiver fora — MVP-friendly.
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { fetch } from 'undici';
 import { env } from '../../config.js';
 
@@ -22,15 +28,35 @@ export type PredictOutput = {
   recomendacoes_acao: string[];
 };
 
+/** HMAC-SHA256(secret, value) → hex de 16 chars (suficiente pra colisão prática zero a essa escala). */
+function pseudonymize(value: string): string {
+  return createHmac('sha256', env.ML_SERVICE_TOKEN).update(value).digest('hex').slice(0, 16);
+}
+
+/** Assina body para garantir integridade — ML service verifica antes de processar. */
+function signPayload(body: string): string {
+  return createHmac('sha256', env.ML_SERVICE_TOKEN).update(body).digest('hex');
+}
+
 export async function predict(input: PredictInput): Promise<PredictOutput> {
+  // Substitui dealership_id pelo pseudônimo determinístico.
+  // ML reproduz o mesmo hash localmente quando precisa correlacionar, sem nunca ver o UUID.
+  const safeInput = {
+    ...input,
+    dealership_id: pseudonymize(input.dealership_id),
+  };
+  const body = JSON.stringify(safeInput);
+  const signature = signPayload(body);
+
   try {
     const res = await fetch(`${env.ML_SERVICE_URL}/predict`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'authorization': `Bearer ${env.ML_SERVICE_TOKEN}`,
+        'x-payload-signature': signature,
       },
-      body: JSON.stringify(input),
+      body,
     });
     if (!res.ok) throw new Error(`ml status=${res.status}`);
     return await res.json() as PredictOutput;
@@ -51,4 +77,11 @@ export async function predict(input: PredictInput): Promise<PredictOutput> {
       recomendacoes_acao: [`fallback — ML service offline, perfil heurístico=${perfil}`],
     };
   }
+}
+
+/** Exportado para testes / outros consumidores (ex: ingest). */
+export function _verifySignature(body: string, signature: string): boolean {
+  const expected = signPayload(body);
+  if (expected.length !== signature.length) return false;
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'));
 }

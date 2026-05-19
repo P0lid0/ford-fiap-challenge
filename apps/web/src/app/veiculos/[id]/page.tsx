@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Pencil, Save, X, Check, Trash2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Pencil, Save, X, Check, Trash2, RefreshCw, FileText, Sparkles } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { ConfianceBadge, SourceBadge } from '@/components/SourceBadge';
 import { api } from '@/lib/api';
@@ -53,6 +53,8 @@ export default function VeiculoDetalhe() {
   const [deleting, setDeleting] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showEbookInput, setShowEbookInput] = useState(false);
+  const [ebookUrl, setEbookUrl] = useState('');
 
   useEffect(() => {
     if (!params.id) return;
@@ -66,11 +68,12 @@ export default function VeiculoDetalhe() {
     });
   }
 
-  async function refresh() {
+  async function refresh(opts?: { ebook_url?: string; skip_ebook?: boolean }) {
     setRefreshing(true); setErr(null);
     try {
-      const updated = await api.refreshVehicle(v.id);
+      const updated = await api.refreshVehicle(v.id, opts);
       setV(updated); setDraft(updated);
+      setShowEbookInput(false); setEbookUrl('');
     } catch (e: any) {
       setErr(e.message ?? String(e));
     } finally { setRefreshing(false); }
@@ -135,11 +138,17 @@ export default function VeiculoDetalhe() {
               )}
               {!editing ? (
                 <div className="flex flex-wrap gap-2 justify-end">
-                  <button onClick={refresh} disabled={refreshing}
-                    title="Re-busca em FIPE + site oficial + IA"
+                  <button onClick={() => refresh()} disabled={refreshing}
+                    title="Re-busca FIPE + e-book oficial + site + IA"
                     className="inline-flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition disabled:opacity-50">
                     <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
                     {refreshing ? 'Reanalisando…' : 'Reanalisar'}
+                  </button>
+                  <button onClick={() => setShowEbookInput(s => !s)} disabled={refreshing}
+                    title="Reanalisar usando URL custom do PDF do e-book oficial"
+                    className="inline-flex items-center gap-2 px-3 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition disabled:opacity-50">
+                    <FileText className="w-4 h-4" />
+                    <span className="hidden md:inline">E-book PDF</span>
                   </button>
                   <button onClick={() => setEditing(true)}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition">
@@ -168,6 +177,37 @@ export default function VeiculoDetalhe() {
 
         {err && <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-xl mb-4">{err}</div>}
 
+        {showEbookInput && !editing && (
+          <div className="bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-blue-200 rounded-2xl p-5 mb-4">
+            <div className="flex items-start gap-3 mb-3">
+              <Sparkles className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-900 mb-1">Reanalisar usando e-book oficial (PDF)</h3>
+                <p className="text-sm text-gray-700">
+                  Cole a URL do PDF do e-book/catálogo do site da fabricante. A IA vai extrair specs e
+                  equipamentos completos por trim — fonte mais autoritativa que o HTML. Custo: ~$0.50-1.00 (Anthropic).
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Ex Ford: <code className="bg-white/60 px-1 rounded">https://www.ford.com.br/.../fbr-f-150-e-book.pdf</code>
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <input type="url" value={ebookUrl} onChange={e => setEbookUrl(e.target.value)}
+                placeholder="https://www.{marca}.com.br/.../catalogo.pdf"
+                className="flex-1 min-w-[280px] px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue text-sm font-mono" />
+              <button onClick={() => refresh({ ebook_url: ebookUrl })} disabled={refreshing || !ebookUrl}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-ford-blue to-ford-blue-light text-white font-bold rounded-xl hover:opacity-90 disabled:opacity-50 text-sm">
+                <Sparkles className="w-4 h-4" /> {refreshing ? 'Analisando…' : 'Reanalisar do PDF'}
+              </button>
+              <button onClick={() => { setShowEbookInput(false); setEbookUrl(''); }}
+                className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm hover:bg-white">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+
         {confirmDel && (
           <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-5 mb-4 flex items-start justify-between gap-4 flex-wrap">
             <div>
@@ -187,22 +227,46 @@ export default function VeiculoDetalhe() {
           </div>
         )}
 
-        {v.fontes?.length > 0 && (
+        {v.fontes?.length > 0 && (() => {
+          const webCitations: string[] = v.fontes.filter((f: string) => f.startsWith('web:')).map((f: string) => f.slice(4));
+          const otherFontes: string[] = v.fontes.filter((f: string) => !f.startsWith('web:'));
+          return (
           <div className="bg-white rounded-2xl border border-gray-300 p-5 mb-6">
             <h3 className="text-xs font-bold uppercase tracking-wider text-gray-600 mb-3">Fontes consultadas</h3>
             <ul className="space-y-1 text-sm text-gray-700">
-              {v.fontes.map((f: string, i: number) => (
+              {otherFontes.map((f: string, i: number) => (
                 <li key={i} className="flex items-start gap-2">
                   <span className="text-success">•</span>
                   <code className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{f}</code>
                 </li>
               ))}
             </ul>
+            {webCitations.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-dashed border-gray-200">
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-2">
+                  ⚡ Páginas consultadas pela IA via web search ({webCitations.length})
+                </h4>
+                <ul className="space-y-1">
+                  {webCitations.slice(0, 10).map((url: string, i: number) => (
+                    <li key={i} className="text-xs">
+                      <a href={url} target="_blank" rel="noreferrer"
+                        className="text-blue-600 hover:underline truncate inline-block max-w-full">
+                        {url.replace(/^https?:\/\//, '').slice(0, 80)}
+                      </a>
+                    </li>
+                  ))}
+                  {webCitations.length > 10 && (
+                    <li className="text-xs text-gray-500">+ {webCitations.length - 10} outras</li>
+                  )}
+                </ul>
+              </div>
+            )}
             {v.fipe_codigo && (
               <p className="text-xs text-gray-500 mt-3">FIPE: {v.fipe_codigo} · {v.fipe_mes_referencia}</p>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {SPEC_GROUPS.map(([title, group, fields]) => (
           <div key={group} className="bg-white rounded-2xl border border-gray-300 p-6 mb-4">
@@ -243,12 +307,45 @@ export default function VeiculoDetalhe() {
               placeholder="Um equipamento por linha (snake_case)"
               className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue font-mono text-sm" />
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {(v.equipamentos ?? []).map((e: string, i: number) => (
-                <span key={i} className="px-3 py-1 bg-gray-100 rounded-md text-sm text-gray-800">{e}</span>
-              ))}
-              {(v.equipamentos ?? []).length === 0 && <span className="text-gray-500 text-sm">Nenhum equipamento cadastrado.</span>}
-            </div>
+            (() => {
+              const grouped: Record<string, string[]> = {};
+              for (const raw of (v.equipamentos ?? [])) {
+                const m = String(raw).match(/^([a-z_]+):(.+)$/);
+                if (m) (grouped[m[1]!] ??= []).push(m[2]!);
+                else (grouped['geral'] ??= []).push(raw);
+              }
+              const catStyle: Record<string, string> = {
+                seguranca: 'bg-red-100 text-red-700',
+                conforto: 'bg-blue-100 text-blue-700',
+                tecnologia: 'bg-purple-100 text-purple-700',
+                assistencia: 'bg-cyan-100 text-cyan-700',
+                interior: 'bg-amber-100 text-amber-700',
+                exterior: 'bg-emerald-100 text-emerald-700',
+                cargo: 'bg-orange-100 text-orange-700',
+                offroad: 'bg-stone-200 text-stone-700',
+                geral: 'bg-gray-100 text-gray-700',
+              };
+              const keys = Object.keys(grouped).sort();
+              if (keys.length === 0) return <span className="text-gray-500 text-sm">Nenhum equipamento cadastrado.</span>;
+              return (
+                <div className="space-y-4">
+                  {keys.map(cat => (
+                    <div key={cat}>
+                      <div className={`inline-block text-xs font-bold uppercase tracking-wider px-2 py-1 rounded mb-2 ${catStyle[cat] ?? catStyle.geral}`}>
+                        {cat.replace(/_/g, ' ')} · {grouped[cat]!.length}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {grouped[cat]!.map((item, i) => (
+                          <span key={i} className="px-3 py-1 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-800">
+                            {item.replace(/_/g, ' ')}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()
           )}
         </div>
 

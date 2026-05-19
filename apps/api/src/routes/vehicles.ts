@@ -211,11 +211,26 @@ export async function vehicleRoutes(app: FastifyInstance) {
       return { error: 'bad_request', message: 'mínimo 2 veículos válidos' };
     }
 
-    const ficha = vehicles.map((v: any) => {
+    // Agrupa equipamentos por categoria pra apresentar diff estruturado
+    const eqByCat = (items: string[]) => {
+      const out: Record<string, string[]> = {};
+      for (const raw of items ?? []) {
+        const m = raw.match(/^([a-z_]+):(.+)$/);
+        if (m) (out[m[1]!] ??= []).push(m[2]!);
+        else (out['geral'] ??= []).push(raw);
+      }
+      return out;
+    };
+
+    const fichas = vehicles.map((v: any) => {
       const motor = v.motor ?? {};
       const dim = v.dimensoes ?? {};
       const trans = v.transmissao ?? {};
       const desemp = v.desempenho ?? {};
+      const grouped = eqByCat(v.equipamentos);
+      const eqList = Object.entries(grouped)
+        .map(([cat, items]) => `  • ${cat}: ${items.join(', ')}`)
+        .join('\n') || '  • —';
       return `**${v.marca} ${v.modelo} ${v.versao} ${v.ano}**
 - Categoria: ${v.categoria}
 - Motor: ${motor.cilindrada_cc ?? '?'} cc, ${motor.potencia_cv ?? '?'} cv, ${motor.torque_nm ?? '?'} Nm, ${motor.combustivel ?? '?'}, aspiração ${motor.aspiracao ?? '?'}
@@ -225,49 +240,64 @@ export async function vehicleRoutes(app: FastifyInstance) {
 - Dimensões: ${dim.comprimento_mm ?? '?'} x ${dim.largura_mm ?? '?'} x ${dim.altura_mm ?? '?'} mm, entre-eixos ${dim.entre_eixos_mm ?? '?'} mm, vão livre ${dim.vao_livre_mm ?? '?'} mm
 - Capacidade reboque: ${dim.capacidade_reboque_kg ?? '?'} kg | carga: ${dim.capacidade_carga_kg ?? '?'} kg
 - Preço FIPE (BR): ${v.preco_brl ? `R$ ${v.preco_brl.toLocaleString('pt-BR')}` : '—'} ${v.fipe_mes_referencia ? `(ref ${v.fipe_mes_referencia})` : ''}
-- Equipamentos: ${(v.equipamentos ?? []).slice(0, 10).join(', ') || '—'}
+- Equipamentos (por categoria):
+${eqList}
 - Fontes: ${(v.fontes ?? []).join(' + ')}`;
     }).join('\n\n');
 
-    const prompt = `Analise o COMPARATIVO COMPETITIVO destes veículos no mercado BRASILEIRO.
-Use SEU CONHECIMENTO SOBRE O MERCADO AUTOMOTIVO BR (vendas Fenabrave, posicionamento, percepção do consumidor brasileiro).
+    const prompt = `Você está fazendo uma análise COMPETITIVA focada em **EQUIPAMENTOS E DIFERENCIAIS** —
+o que cada um TEM e o outro NÃO TEM. O cliente Ford quer saber: "se eu comprar X em vez de Y,
+o que eu ganho e o que eu perco no dia a dia?"
 
 Veículos:
 
-${ficha}
+${fichas}
 
-Produza uma análise EXECUTIVA em PT-BR estruturada exatamente assim (use Markdown):
+Estruture a análise em PT-BR Markdown EXATAMENTE assim:
 
-## Vencedores por dimensão
-- **Desempenho**: <vencedor> e por quê
-- **Custo-benefício**: <vencedor> e por quê
-- **Off-road / robustez**: <vencedor> e por quê
-- **Conforto / equipamentos**: <vencedor> e por quê
-- **Eficiência / consumo**: <vencedor> e por quê
+## 🎯 Diferenciais EXCLUSIVOS por veículo
+Para CADA veículo, liste em bullets concretos o que ELE TEM e os concorrentes NÃO TÊM:
 
-## Ranking estimado de vendas no Brasil
-Liste os veículos da maior para a menor venda anual no BR (use seu conhecimento de Fenabrave 2024-2025).
-Inclua VOLUME ESTIMADO de unidades/ano e POSIÇÃO no segmento.
+### {Marca Modelo Versão}
+- **Conforto/Conveniência**: <item> — *por que importa pro dia a dia*
+- **Segurança/Assistência**: <item> — *valor real, não marketing*
+- **Tecnologia**: <item> — *o que muda na experiência*
+- **Robustez/Cargo/Off-road** (se aplicável): <item> — *uso prático*
+- **Exterior/Design**: <item> — *percepção de valor*
 
-## Por que um vende mais que o outro
-Em 3-5 frases curtas, explique a razão competitiva REAL — não slogan. Considere:
-- Preço-base e financiamento típico
-- Rede de pós-venda no Brasil
-- Confiabilidade percebida da marca
-- Valor de revenda
-- Custo de manutenção/peças
+NÃO ESCREVA item que esteja em mais de um veículo nessa seção. Foque no que é EXCLUSIVO.
 
-## Recomendação Ford
-1 parágrafo curto: qual posicionamento a Ford deveria adotar para ganhar share contra os concorrentes listados.
+## ⚖️ Onde empatam (commodities)
+Lista curta dos itens que TODOS têm de série — pra mostrar que nesses pontos não há diferencial.
 
-SEJA OBJETIVO. Sem "depende", sem "talvez". Posicione.`;
+## 💸 Custo do diferencial
+Compare o preço FIPE com o pacote de equipamentos. Quem entrega MAIS feature por real?
+Em 2-3 frases: tem um claro "campeão custo-feature"? Quem? Por quê?
+
+## 🚨 Pontos cegos por veículo
+Em 1 bullet por veículo: qual feature CRÍTICA pro segmento ELE NÃO TEM e os outros têm?
+Ex: "Ranger XL: sem apoio de braço dianteiro central — desconforto em viagem".
+
+## 🎬 Recomendação ao vendedor Ford
+2-3 frases bem objetivas: contra esse comparativo específico, o que o vendedor Ford deve
+DESTACAR no pitch, e o que deve EVITAR (porque o concorrente ganha)?
+
+REGRAS DE OURO:
+- Cite NOMES específicos de equipamentos, não generalidades ("multimídia 10\"" e não "boa tela")
+- Use PT-BR informal de showroom, não academiquês
+- Sem "talvez", "depende", "em alguns casos" — POSICIONE
+- Se um veículo tem dado faltando (—), assuma que NÃO TEM e mencione isso no Pontos cegos
+- Quando o item é genérico ("ar condicionado"), pergunte-se: "é digital? dual zone? automático?" Se a versão SR tem só "ar condicionado" e a Limited tem "ar dual zone climatizado", esse É o diferencial.`;
 
     let aiModel = req.headers['x-ai-model'] as string | undefined;
     if (!aiModel) aiModel = await getFunctionAiModel(requireUser(req).id, 'compare_analysis');
     const r = await chat(prompt, 'smart', {
-      systemOverride: 'Você é um analista sênior de inteligência competitiva da indústria automotiva brasileira. ' +
-        'Tem acesso a dados de vendas Fenabrave 2024-2025 e conhece bem o comportamento do consumidor BR.',
+      systemOverride: 'Você é um analista de inteligência competitiva da Ford. Foca em ' +
+        'DIFERENÇAS DE EQUIPAMENTO entre versões base/intermediárias/topo, escreve em PT-BR ' +
+        'objetivo de showroom, e sempre transforma especificação técnica em valor prático ' +
+        'pro cliente final.',
       modelOverride: aiModel,
+      maxTokens: 2500, // análise estruturada precisa de espaço
     });
 
     return {

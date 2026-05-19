@@ -13,6 +13,7 @@ import { adminClient } from '../lib/supabase.js';
 import { fipe } from '../lib/data-sources/fipe.js';
 import { SUPPORTED_MANUFACTURER_BRANDS, fetchManufacturerSpecs } from '../lib/data-sources/manufacturer.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
+import { extractFromFile } from '../lib/ai-vision.js';
 
 const VehicleUpdateSchema = z.object({
   marca: z.string().optional(),
@@ -65,24 +66,39 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     if (u.role !== 'admin' && u.role !== 'gestor') {
-      reply.code(403); return { error: 'forbidden', message: 'apenas admin/gestor pode excluir' };
+      reply.code(403);
+      return { error: 'forbidden', message: `role '${u.role}' não pode excluir (precisa admin ou gestor)` };
     }
     const { id } = req.params as any;
-    const { error } = await adminClient().from('vehicles').delete().eq('id', id);
-    if (error) { reply.code(400); return { error: 'delete_failed', message: error.message }; }
-    reply.code(204);
+    const { error, count } = await adminClient()
+      .from('vehicles').delete({ count: 'exact' }).eq('id', id);
+    if (error) {
+      req.log.error({ err: error }, '[delete vehicle] supabase error');
+      reply.code(400);
+      return { error: 'delete_failed', message: error.message, hint: (error as any).hint, code: (error as any).code };
+    }
+    if (count === 0) {
+      reply.code(404);
+      return { error: 'not_found', message: 'veículo já não existe' };
+    }
+    return { ok: true, deleted: id };
   });
 
   // === REFRESH: re-roda agregador, atualiza tudo no banco ===
   app.post('/competitive/vehicles/:id/refresh', {
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
-      summary: 'Reanalisa o veículo (re-busca FIPE + site oficial + IA)',
+      summary: 'Reanalisa o veículo (re-busca FIPE + e-book + site oficial + IA)',
       params: z.object({ id: z.string().uuid() }),
+      body: z.object({
+        ebook_url: z.string().url().optional(), // URL custom do PDF do e-book oficial
+        skip_ebook: z.boolean().optional(),     // pula extração ($) mesmo se houver registry
+      }).optional(),
     },
   }, async (req, reply) => {
     requireUser(req);
     const { id } = req.params as any;
+    const body = (req.body ?? {}) as any;
     const sb = adminClient();
     const { data: existing } = await sb.from('vehicles').select('*').eq('id', id).single();
     if (!existing) { reply.code(404); return { error: 'not_found' }; }
@@ -90,6 +106,8 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const aggregated = await aggregateVehicle({
       marca: existing.marca, modelo: existing.modelo,
       versao: existing.versao, ano: existing.ano,
+      ebookUrl: body.ebook_url,
+      skipEbook: body.skip_ebook,
     });
     if (!aggregated) { reply.code(404); return { error: 'no_data', message: 'nenhuma fonte retornou dados' }; }
 
@@ -436,5 +454,124 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       return { error: 'import_failed', message: error.message };
     }
     return { inserted: data?.length ?? 0, vehicles: data ?? [] };
+  });
+
+  // === EXTRAÇÃO de PDF/imagem via IA multimodal (e-books, brochuras, fichas) ===
+  // Aceita multipart upload de PDF/PNG/JPG, manda pro Anthropic/OpenAI vision,
+  // retorna preview de veículos detectados. Front decide quais persistir.
+  app.post('/competitive/import/file', {
+    schema: {
+      tags: ['Desafio 1 — Inteligência Competitiva'],
+      summary: 'Upload PDF/imagem (e-book de carro) → IA extrai veículos + specs',
+      consumes: ['multipart/form-data'],
+    },
+  }, async (req, reply) => {
+    requireUser(req);
+    const file = await (req as any).file();
+    if (!file) {
+      reply.code(400);
+      return { error: 'no_file', message: 'envie um arquivo via multipart/form-data' };
+    }
+
+    const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+    if (!allowed.includes(file.mimetype)) {
+      reply.code(400);
+      return { error: 'unsupported_type', message: `tipo ${file.mimetype} não suportado. Use PDF, PNG, JPG ou WEBP.` };
+    }
+
+    const buf = await file.toBuffer();
+    if (buf.length === 0) {
+      reply.code(400);
+      return { error: 'empty_file', message: 'arquivo vazio' };
+    }
+
+    const EXTRACT_SYSTEM = `Você é EXTRATOR LITERAL de specs automotivos a partir de e-books, brochuras
+e fichas técnicas em PT-BR ou EN. Os dados vão pro cliente final tomar DECISÃO DE COMPRA —
+informação errada quebra a confiança e custa venda.
+
+REGRA DE OURO: **PREFIRA null A CHUTAR.** Se não vê literalmente no documento, valor = null.
+
+REGRAS:
+- Responda APENAS com JSON válido. Sem markdown.
+- Múltiplas versões/trims (ex: F-150 XL, XLT, Lariat) → UM ITEM POR VERSÃO no array.
+- Para cada versão: SÓ equipamentos de SÉRIE. Marcações "opcional" → fora.
+- Itens listados pra OUTRA versão → não atribua a esta versão.
+- NÃO use conhecimento prévio do modelo. Você é PARSER, não analista.
+- Equipamentos: liste APENAS o que está literalmente mencionado pra essa versão.
+  Quantidade = o que tiver no documento. 10 reais > 30 inventados.
+- Unidades: cc, cv, Nm, mm, kg, km/h, km/l, L.
+- combustivel ∈ [gasolina, etanol, flex, diesel, diesel_s10, eletrico, hibrido, hibrido_plugin, gnv]
+- categoria ∈ [hatch, sedan, suv, picape_compacta, picape_media, picape_grande, minivan, cupe, conversivel, comercial]
+
+EQUIPAMENTOS — formato "categoria:item_snake_case":
+Categorias: seguranca, conforto, tecnologia, assistencia, interior, exterior, cargo (picape), offroad (4x4)
+
+Formato da resposta:
+{
+  "veiculos": [
+    {
+      "marca": str,
+      "modelo": str,
+      "versao": str,
+      "ano": int|null,
+      "categoria": str|null,
+      "motor": { "cilindrada_cc": int|null, "potencia_cv": int|null, "torque_nm": int|null,
+                 "combustivel": str|null, "aspiracao": str|null, "cilindros": int|null },
+      "dimensoes": { "comprimento_mm": int|null, "largura_mm": int|null, "altura_mm": int|null,
+                     "entre_eixos_mm": int|null, "vao_livre_mm": int|null, "peso_kg": int|null,
+                     "capacidade_porta_malas_l": int|null, "capacidade_cacamba_l": int|null,
+                     "capacidade_carga_kg": int|null, "capacidade_reboque_kg": int|null },
+      "transmissao": { "tipo": str|null, "marchas": int|null, "tracao": str|null },
+      "desempenho": { "aceleracao_0_100_s": float|null, "velocidade_max_kmh": int|null,
+                      "consumo_cidade_kml": float|null, "consumo_estrada_kml": float|null,
+                      "autonomia_km": int|null },
+      "equipamentos": ["categoria:item_snake_case", ...],
+      "preco_brl": int|null,
+      "pais_origem": str|null
+    }
+  ]
+}`;
+
+    const userPrompt = `Analise este documento e extraia TODAS as versões/trims presentes.
+- 1 item por versão em "veiculos[]"
+- Equipamentos: SÓ os que aparecem listados pra essa versão como SÉRIE
+- "Opcional" → fora
+- Dúvida → null ou lista vazia
+- O cliente vai usar isso pra DECIDIR COMPRA: dado inventado quebra a confiança`;
+
+    let extracted: any;
+    let provider: string;
+    let model: string;
+    try {
+      const r = await extractFromFile(
+        { mediaType: file.mimetype as any, data: buf, filename: file.filename },
+        EXTRACT_SYSTEM,
+        userPrompt,
+        { maxTokens: 8000 }, // documentos com muitas versões precisam de espaço
+      );
+      provider = r.provider;
+      model = r.model;
+      const cleaned = r.output.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      extracted = JSON.parse(cleaned);
+    } catch (e: any) {
+      req.log.error({ err: e }, '[import/file] extraction failed');
+      reply.code(502);
+      return { error: 'extraction_failed', message: e.message };
+    }
+
+    const veiculos = Array.isArray(extracted?.veiculos) ? extracted.veiculos : [];
+    if (veiculos.length === 0) {
+      reply.code(422);
+      return { error: 'no_vehicles_found', message: 'A IA não encontrou veículos no documento.' };
+    }
+
+    return {
+      filename: file.filename,
+      mime: file.mimetype,
+      size_bytes: buf.length,
+      extracted_by: `${provider}:${model}`,
+      count: veiculos.length,
+      veiculos, // o front mostra preview e o user escolhe quais persistir via /competitive/vehicles/import
+    };
   });
 }

@@ -1,0 +1,504 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:archimate="http://www.archimatetool.com/archimate"
+                 name="FordIQ — Inteligência Competitiva + Retenção VIN Share"
+                 id="id-ford-fiap-2026"
+                 version="5.0.0">
+  <metadata>
+    <schema>Dublin Core</schema>
+    <schemaversion>1.1</schemaversion>
+    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">FordIQ Architecture</dc:title>
+    <dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Equipe FIAP — Guilherme (554962), Pedro (555556), Fabrício (558216), Vitor (554893), Matheus (555447)</dc:creator>
+    <dc:date xmlns:dc="http://purl.org/dc/elements/1.1/">2026-05-15</dc:date>
+    <dc:description xmlns:dc="http://purl.org/dc/elements/1.1/">Modelo TOGAF/ArchiMate 3.1 da solução FordIQ para o Ford × FIAP Challenge 2026.</dc:description>
+  </metadata>
+
+  <purpose>Arquitetura completa do FordIQ: visão estratégica, negócio, sistema e tecnologia. Modela a entrega da Sprint Única (24/05/2026).</purpose>
+
+  <!-- ================== FOLDER: STRATEGY ================== -->
+  <folder name="Strategy" id="folder-strategy" type="strategy">
+    <element xsi:type="archimate:Goal" id="goal-vin-share" name="Aumentar VIN Share da rede oficial Ford">
+      <documentation>Reter clientes na rede autorizada Ford ao longo do ciclo de vida do veículo, aumentando a fatia (VIN Share) de manutenções feitas na rede oficial vs. paralelas.</documentation>
+    </element>
+    <element xsi:type="archimate:Goal" id="goal-competitive" name="Inteligência Competitiva acionável">
+      <documentation>Catálogo confiável e auditável de veículos próprios e concorrentes, com comparação imediata para o vendedor.</documentation>
+    </element>
+    <element xsi:type="archimate:Outcome" id="outcome-retention" name="↑ Retenção pós-venda (+5 a 8 pp/ano)"/>
+    <element xsi:type="archimate:Outcome" id="outcome-conversion" name="↑ Conversão de leads (+10 a 20%)"/>
+    <element xsi:type="archimate:Capability" id="cap-customer-segmentation" name="Segmentação Comportamental de Clientes"/>
+    <element xsi:type="archimate:Capability" id="cap-vehicle-intel" name="Inteligência de Catálogo de Veículos"/>
+    <element xsi:type="archimate:Capability" id="cap-action-orchestration" name="Orquestração de Ações de Retenção"/>
+  </folder>
+
+  <!-- ================== FOLDER: BUSINESS ================== -->
+  <folder name="Business" id="folder-business" type="business">
+    <element xsi:type="archimate:BusinessActor" id="actor-vendedor" name="Vendedor da Concessionária"/>
+    <element xsi:type="archimate:BusinessActor" id="actor-gestor" name="Gerente de Pós-Venda"/>
+    <element xsi:type="archimate:BusinessActor" id="actor-cliente" name="Cliente Final"/>
+    <element xsi:type="archimate:BusinessActor" id="actor-ford-corp" name="Ford Motor Company BR"/>
+    <element xsi:type="archimate:BusinessActor" id="actor-intel" name="Time de Inteligência Competitiva Ford"/>
+
+    <element xsi:type="archimate:BusinessRole" id="role-analista" name="Analista"/>
+    <element xsi:type="archimate:BusinessRole" id="role-gestor-r" name="Gestor"/>
+    <element xsi:type="archimate:BusinessRole" id="role-admin-r" name="Administrador"/>
+
+    <element xsi:type="archimate:BusinessProcess" id="proc-venda" name="Processo de Venda de Veículo">
+      <documentation>Captura de lead → qualificação → test drive → cadastro → contrato.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" id="proc-comparativo" name="Comparativo Competitivo (Showroom)"/>
+    <element xsi:type="archimate:BusinessProcess" id="proc-classificacao" name="Classificação Preditiva de Perfil"/>
+    <element xsi:type="archimate:BusinessProcess" id="proc-acao-retencao" name="Acionamento de Ação de Retenção"/>
+    <element xsi:type="archimate:BusinessProcess" id="proc-monitor" name="Monitoramento de Carteira"/>
+
+    <element xsi:type="archimate:BusinessService" id="svc-catalogo" name="Catálogo de Veículos (Desafio 1)"/>
+    <element xsi:type="archimate:BusinessService" id="svc-comparar" name="Comparação Competitiva com IA"/>
+    <element xsi:type="archimate:BusinessService" id="svc-predicao" name="Predição de Perfil de Cliente (Desafio 2)"/>
+    <element xsi:type="archimate:BusinessService" id="svc-leads" name="Gestão de Leads e Ações"/>
+    <element xsi:type="archimate:BusinessService" id="svc-painel" name="Painel de Carteira (KPIs)"/>
+
+    <element xsi:type="archimate:BusinessObject" id="bobj-veiculo" name="Veículo (com provenance por campo)"/>
+    <element xsi:type="archimate:BusinessObject" id="bobj-cliente" name="Cliente (pseudonimizado p/ ML)"/>
+    <element xsi:type="archimate:BusinessObject" id="bobj-lead" name="Lead"/>
+    <element xsi:type="archimate:BusinessObject" id="bobj-predicao" name="Predição (perfil + risco + ações)"/>
+    <element xsi:type="archimate:BusinessObject" id="bobj-audit" name="Trilha de Auditoria"/>
+  </folder>
+
+  <!-- ================== FOLDER: APPLICATION ================== -->
+  <folder name="Application" id="folder-app" type="application">
+    <!-- Components -->
+    <element xsi:type="archimate:ApplicationComponent" id="comp-web" name="FordIQ Web (Next.js 15)">
+      <documentation>apps/web — interface admin e gestor. Busca, comparação, detalhe de veículo, carteira de clientes, configurações.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" id="comp-mobile" name="FordIQ Mobile (Expo + RN 0.76)">
+      <documentation>apps/mobile — app iOS/Android para consultor em loja.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" id="comp-api" name="FordIQ API Gateway (Fastify + TS)">
+      <documentation>apps/api — REST com Swagger /docs. Centraliza auth, validação, audit, integração com fontes externas e ML.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" id="comp-ml" name="FordIQ ML Service (FastAPI + XGBoost)">
+      <documentation>services/ml — clustering KMeans (Base 1) e classificador XGBoost (Base 2). Endpoint /predict com HMAC + bearer.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" id="comp-aggregator" name="Aggregator de Veículos">
+      <documentation>apps/api/src/lib/data-sources/aggregator.ts — orquestra FIPE → manufacturer HTML → e-book PDF → 411 → AI fallback, com provenance por campo.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" id="comp-auth" name="Auth Plugin (JWT + RBAC)">
+      <documentation>apps/api/src/plugins/auth.ts — valida JWT Supabase, popula request.user, helpers requireUser/requireRole.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" id="comp-audit-log" name="Audit Log Service">
+      <documentation>apps/api/src/lib/audit.ts + tabela audit_log com RLS admin-only.</documentation>
+    </element>
+
+    <!-- Services -->
+    <element xsi:type="archimate:ApplicationService" id="asvc-rest" name="API REST (OpenAPI 3.0 / Swagger)"/>
+    <element xsi:type="archimate:ApplicationService" id="asvc-search" name="Busca de Veículo Multi-Fonte"/>
+    <element xsi:type="archimate:ApplicationService" id="asvc-compare" name="Comparação 2-5 Veículos + Análise IA"/>
+    <element xsi:type="archimate:ApplicationService" id="asvc-predict" name="Inferência de Perfil (/predict)"/>
+    <element xsi:type="archimate:ApplicationService" id="asvc-extract" name="Extração de PDF/Imagem (Multimodal)"/>
+    <element xsi:type="archimate:ApplicationService" id="asvc-auth-s" name="Autenticação JWT + RBAC"/>
+
+    <!-- External services -->
+    <element xsi:type="archimate:ApplicationComponent" id="ext-fipe" name="FIPE.online API v2"/>
+    <element xsi:type="archimate:ApplicationComponent" id="ext-nhtsa" name="NHTSA vPIC API"/>
+    <element xsi:type="archimate:ApplicationComponent" id="ext-411" name="411 Vehicle Data (RapidAPI)"/>
+    <element xsi:type="archimate:ApplicationComponent" id="ext-manufacturer" name="Sites Oficiais Fabricantes (HTML + PDF e-books)"/>
+    <element xsi:type="archimate:ApplicationComponent" id="ext-llm" name="LLM Providers (OpenAI, Anthropic, Gemini)"/>
+    <element xsi:type="archimate:ApplicationComponent" id="ext-supabase-auth" name="Supabase Auth"/>
+
+    <!-- Data Objects -->
+    <element xsi:type="archimate:DataObject" id="do-vehicle" name="vehicles (Postgres JSONB)"/>
+    <element xsi:type="archimate:DataObject" id="do-client" name="clients"/>
+    <element xsi:type="archimate:DataObject" id="do-lead" name="leads"/>
+    <element xsi:type="archimate:DataObject" id="do-pred" name="ai_predictions"/>
+    <element xsi:type="archimate:DataObject" id="do-audit" name="audit_log"/>
+    <element xsi:type="archimate:DataObject" id="do-ai-keys" name="ai_keys (RLS admin-only)"/>
+    <element xsi:type="archimate:DataObject" id="do-model" name="classifier_base2.joblib"/>
+  </folder>
+
+  <!-- ================== FOLDER: TECHNOLOGY ================== -->
+  <folder name="Technology" id="folder-tech" type="technology">
+    <!-- Compute -->
+    <element xsi:type="archimate:Node" id="node-api-host" name="API Host (Node 22)">
+      <documentation>Container Linux com Fastify, pnpm, tsx. Em produção: Fly.io ou similar com TLS via Caddy.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" id="node-ml-host" name="ML Host (Python 3.11)">
+      <documentation>Container com FastAPI, uvicorn, scikit-learn, XGBoost, joblib.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" id="node-web-host" name="Web Host (Vercel)"/>
+    <element xsi:type="archimate:Node" id="node-mobile-stores" name="App Stores (iOS App Store + Google Play)"/>
+    <element xsi:type="archimate:Node" id="node-supabase" name="Supabase Managed (Postgres + Auth + Storage)"/>
+
+    <!-- Devices -->
+    <element xsi:type="archimate:Device" id="dev-desktop" name="Estações da Concessionária"/>
+    <element xsi:type="archimate:Device" id="dev-smartphone" name="Smartphone do Consultor"/>
+
+    <!-- System software -->
+    <element xsi:type="archimate:SystemSoftware" id="ss-postgres" name="PostgreSQL 15 (Supabase)"/>
+    <element xsi:type="archimate:SystemSoftware" id="ss-rls" name="Row Level Security (RLS) por dealership"/>
+    <element xsi:type="archimate:SystemSoftware" id="ss-tls" name="TLS 1.2+ (Let's Encrypt via Caddy/Nginx)"/>
+    <element xsi:type="archimate:SystemSoftware" id="ss-fastify" name="Fastify 5 + Helmet + Rate-Limit"/>
+    <element xsi:type="archimate:SystemSoftware" id="ss-pino" name="Pino (logs estruturados com redact)"/>
+
+    <!-- Comm paths -->
+    <element xsi:type="archimate:CommunicationNetwork" id="net-internet" name="Internet pública (HTTPS)"/>
+    <element xsi:type="archimate:CommunicationNetwork" id="net-internal" name="Rede interna (API ↔ ML, HMAC + bearer)"/>
+
+    <!-- Tech services -->
+    <element xsi:type="archimate:TechnologyService" id="tsvc-db" name="Persistência Postgres + RLS"/>
+    <element xsi:type="archimate:TechnologyService" id="tsvc-auth-jwt" name="Emissão e Validação de JWT"/>
+    <element xsi:type="archimate:TechnologyService" id="tsvc-hmac" name="Assinatura HMAC-SHA256 entre serviços"/>
+    <element xsi:type="archimate:TechnologyService" id="tsvc-tls" name="Terminação TLS"/>
+  </folder>
+
+  <!-- ================== FOLDER: MOTIVATION ================== -->
+  <folder name="Motivation" id="folder-mot" type="motivation">
+    <element xsi:type="archimate:Driver" id="drv-vin-share" name="Necessidade de aumentar VIN Share"/>
+    <element xsi:type="archimate:Driver" id="drv-lgpd" name="Compliance LGPD"/>
+    <element xsi:type="archimate:Assessment" id="asm-churn" name="Diagnóstico: alta evasão pra rede paralela"/>
+    <element xsi:type="archimate:Requirement" id="req-zero-leakage" name="ML sem data leakage (só dados pré-compra)"/>
+    <element xsi:type="archimate:Requirement" id="req-provenance" name="Provenance por campo de spec"/>
+    <element xsi:type="archimate:Requirement" id="req-anon" name="Pseudonimização no pipeline de ML"/>
+    <element xsi:type="archimate:Requirement" id="req-rbac" name="RBAC granular (analista/gestor/admin)"/>
+  </folder>
+
+  <!-- ================== FOLDER: RELATIONS ================== -->
+  <folder name="Relations" id="folder-rel" type="relations">
+    <!-- Strategy → Outcome -->
+    <element xsi:type="archimate:RealizationRelationship" id="rel-1" source="cap-customer-segmentation" target="goal-vin-share"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-2" source="cap-vehicle-intel" target="goal-competitive"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-3" source="cap-action-orchestration" target="goal-vin-share"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-4" source="goal-vin-share" target="outcome-retention"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-5" source="goal-competitive" target="outcome-conversion"/>
+
+    <!-- Motivation → Strategy -->
+    <element xsi:type="archimate:InfluenceRelationship" id="rel-mot-1" source="drv-vin-share" target="goal-vin-share"/>
+    <element xsi:type="archimate:InfluenceRelationship" id="rel-mot-2" source="asm-churn" target="goal-vin-share"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-mot-3" source="req-zero-leakage" target="cap-customer-segmentation"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-mot-4" source="req-provenance" target="cap-vehicle-intel"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-mot-5" source="req-anon" target="cap-customer-segmentation"/>
+
+    <!-- Business actors → roles -->
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-act-1" source="actor-vendedor" target="role-analista"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-act-2" source="actor-gestor" target="role-gestor-r"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-act-3" source="actor-ford-corp" target="role-admin-r"/>
+
+    <!-- Business processes -->
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-proc-1" source="role-analista" target="proc-venda"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-proc-2" source="role-analista" target="proc-comparativo"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-proc-3" source="role-gestor-r" target="proc-monitor"/>
+    <element xsi:type="archimate:TriggeringRelationship" id="rel-proc-4" source="proc-venda" target="proc-classificacao"/>
+    <element xsi:type="archimate:TriggeringRelationship" id="rel-proc-5" source="proc-classificacao" target="proc-acao-retencao"/>
+
+    <!-- Business services realize processes -->
+    <element xsi:type="archimate:RealizationRelationship" id="rel-svc-1" source="svc-catalogo" target="proc-comparativo"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-svc-2" source="svc-comparar" target="proc-comparativo"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-svc-3" source="svc-predicao" target="proc-classificacao"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-svc-4" source="svc-leads" target="proc-acao-retencao"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-svc-5" source="svc-painel" target="proc-monitor"/>
+
+    <!-- Business objects acessados -->
+    <element xsi:type="archimate:AccessRelationship" id="rel-bobj-1" source="proc-comparativo" target="bobj-veiculo" accessType="1"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-bobj-2" source="proc-classificacao" target="bobj-cliente" accessType="1"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-bobj-3" source="proc-classificacao" target="bobj-predicao" accessType="2"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-bobj-4" source="proc-acao-retencao" target="bobj-lead" accessType="2"/>
+
+    <!-- Application components → business services (serving) -->
+    <element xsi:type="archimate:ServingRelationship" id="rel-app-1" source="comp-api" target="svc-catalogo"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-app-2" source="comp-api" target="svc-comparar"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-app-3" source="comp-ml" target="svc-predicao"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-app-4" source="comp-api" target="svc-leads"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-app-5" source="comp-api" target="svc-painel"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-app-6" source="comp-web" target="svc-catalogo"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-app-7" source="comp-mobile" target="svc-catalogo"/>
+
+    <!-- Web/Mobile → API (UsedBy = composition) -->
+    <element xsi:type="archimate:ServingRelationship" id="rel-ui-1" source="comp-api" target="comp-web"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ui-2" source="comp-api" target="comp-mobile"/>
+
+    <!-- API → ML, Auth, Audit, Aggregator -->
+    <element xsi:type="archimate:ServingRelationship" id="rel-int-1" source="comp-ml" target="comp-api"/>
+    <element xsi:type="archimate:CompositionRelationship" id="rel-comp-1" source="comp-api" target="comp-auth"/>
+    <element xsi:type="archimate:CompositionRelationship" id="rel-comp-2" source="comp-api" target="comp-audit-log"/>
+    <element xsi:type="archimate:CompositionRelationship" id="rel-comp-3" source="comp-api" target="comp-aggregator"/>
+
+    <!-- Aggregator → fontes externas -->
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-1" source="ext-fipe" target="comp-aggregator"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-2" source="ext-nhtsa" target="comp-aggregator"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-3" source="ext-411" target="comp-aggregator"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-4" source="ext-manufacturer" target="comp-aggregator"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-5" source="ext-llm" target="comp-aggregator"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-6" source="ext-llm" target="comp-ml"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-7" source="ext-supabase-auth" target="comp-auth"/>
+
+    <!-- Application services realized by components -->
+    <element xsi:type="archimate:RealizationRelationship" id="rel-asvc-1" source="comp-api" target="asvc-rest"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-asvc-2" source="comp-aggregator" target="asvc-search"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-asvc-3" source="comp-aggregator" target="asvc-compare"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-asvc-4" source="comp-ml" target="asvc-predict"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-asvc-5" source="comp-aggregator" target="asvc-extract"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-asvc-6" source="comp-auth" target="asvc-auth-s"/>
+
+    <!-- Components → data objects -->
+    <element xsi:type="archimate:AccessRelationship" id="rel-do-1" source="comp-api" target="do-vehicle" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-do-2" source="comp-api" target="do-client" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-do-3" source="comp-api" target="do-lead" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-do-4" source="comp-ml" target="do-pred" accessType="2"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-do-5" source="comp-audit-log" target="do-audit" accessType="2"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-do-6" source="comp-api" target="do-ai-keys" accessType="1"/>
+    <element xsi:type="archimate:AccessRelationship" id="rel-do-7" source="comp-ml" target="do-model" accessType="1"/>
+
+    <!-- Technology -->
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-1" source="node-api-host" target="comp-api"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-2" source="node-ml-host" target="comp-ml"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-3" source="node-web-host" target="comp-web"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-4" source="node-mobile-stores" target="comp-mobile"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-5" source="node-supabase" target="do-vehicle"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-6" source="node-supabase" target="do-client"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-7" source="node-supabase" target="do-lead"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-8" source="node-supabase" target="do-audit"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-9" source="node-supabase" target="do-ai-keys"/>
+
+    <element xsi:type="archimate:RealizationRelationship" id="rel-tsvc-1" source="ss-postgres" target="tsvc-db"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-tsvc-2" source="ext-supabase-auth" target="tsvc-auth-jwt"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-tsvc-3" source="ss-tls" target="tsvc-tls"/>
+
+    <element xsi:type="archimate:CompositionRelationship" id="rel-net-1" source="net-internet" target="node-api-host"/>
+    <element xsi:type="archimate:CompositionRelationship" id="rel-net-2" source="net-internet" target="node-web-host"/>
+    <element xsi:type="archimate:CompositionRelationship" id="rel-net-3" source="net-internal" target="node-ml-host"/>
+
+    <element xsi:type="archimate:UsedByRelationship" id="rel-dev-1" source="dev-desktop" target="node-web-host"/>
+    <element xsi:type="archimate:UsedByRelationship" id="rel-dev-2" source="dev-smartphone" target="node-mobile-stores"/>
+  </folder>
+
+  <!-- ================== FOLDER: VIEWS (diagramas) ================== -->
+  <folder name="Views" id="folder-views" type="diagrams">
+
+    <!-- VIEW 1: Visão da Arquitetura (Strategic) -->
+    <element xsi:type="archimate:ArchimateDiagramModel" id="view-strategic" name="01 — Visão Estratégica">
+      <child xsi:type="archimate:DiagramObject" id="vs-1" archimateElement="drv-vin-share"
+             targetConnections="">
+        <bounds x="40" y="40" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-2" archimateElement="asm-churn">
+        <bounds x="40" y="120" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-3" archimateElement="drv-lgpd">
+        <bounds x="40" y="200" width="200" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vs-4" archimateElement="goal-vin-share">
+        <bounds x="320" y="40" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-5" archimateElement="goal-competitive">
+        <bounds x="320" y="120" width="240" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vs-6" archimateElement="cap-customer-segmentation">
+        <bounds x="640" y="40" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-7" archimateElement="cap-vehicle-intel">
+        <bounds x="640" y="120" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-8" archimateElement="cap-action-orchestration">
+        <bounds x="640" y="200" width="240" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vs-9" archimateElement="outcome-retention">
+        <bounds x="950" y="40" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-10" archimateElement="outcome-conversion">
+        <bounds x="950" y="120" width="240" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vs-11" archimateElement="req-zero-leakage">
+        <bounds x="40" y="320" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-12" archimateElement="req-provenance">
+        <bounds x="320" y="320" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-13" archimateElement="req-anon">
+        <bounds x="640" y="320" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vs-14" archimateElement="req-rbac">
+        <bounds x="950" y="320" width="240" height="55"/>
+      </child>
+    </element>
+
+    <!-- VIEW 2: Arquitetura de Negócio -->
+    <element xsi:type="archimate:ArchimateDiagramModel" id="view-business" name="02 — Arquitetura de Negócio">
+      <child xsi:type="archimate:DiagramObject" id="vb-1" archimateElement="actor-vendedor">
+        <bounds x="40" y="40" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-2" archimateElement="actor-gestor">
+        <bounds x="40" y="120" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-3" archimateElement="actor-cliente">
+        <bounds x="40" y="200" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-4" archimateElement="actor-ford-corp">
+        <bounds x="40" y="280" width="200" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vb-5" archimateElement="proc-venda">
+        <bounds x="320" y="40" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-6" archimateElement="proc-classificacao">
+        <bounds x="320" y="120" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-7" archimateElement="proc-acao-retencao">
+        <bounds x="320" y="200" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-8" archimateElement="proc-comparativo">
+        <bounds x="320" y="280" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-9" archimateElement="proc-monitor">
+        <bounds x="320" y="360" width="240" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vb-10" archimateElement="svc-catalogo">
+        <bounds x="640" y="40" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-11" archimateElement="svc-comparar">
+        <bounds x="640" y="120" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-12" archimateElement="svc-predicao">
+        <bounds x="640" y="200" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-13" archimateElement="svc-leads">
+        <bounds x="640" y="280" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-14" archimateElement="svc-painel">
+        <bounds x="640" y="360" width="240" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vb-15" archimateElement="bobj-veiculo">
+        <bounds x="950" y="40" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-16" archimateElement="bobj-cliente">
+        <bounds x="950" y="120" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-17" archimateElement="bobj-predicao">
+        <bounds x="950" y="200" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vb-18" archimateElement="bobj-lead">
+        <bounds x="950" y="280" width="240" height="55"/>
+      </child>
+    </element>
+
+    <!-- VIEW 3: Arquitetura de Sistema (Application) -->
+    <element xsi:type="archimate:ArchimateDiagramModel" id="view-app" name="03 — Arquitetura de Sistema">
+      <child xsi:type="archimate:DiagramObject" id="va-1" archimateElement="comp-web">
+        <bounds x="40" y="40" width="200" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-2" archimateElement="comp-mobile">
+        <bounds x="40" y="140" width="200" height="80"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="va-3" archimateElement="comp-api">
+        <bounds x="320" y="60" width="240" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-4" archimateElement="comp-auth">
+        <bounds x="320" y="180" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-5" archimateElement="comp-audit-log">
+        <bounds x="320" y="260" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-6" archimateElement="comp-aggregator">
+        <bounds x="320" y="340" width="240" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="va-7" archimateElement="comp-ml">
+        <bounds x="640" y="60" width="240" height="80"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="va-8" archimateElement="ext-fipe">
+        <bounds x="940" y="40" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-9" archimateElement="ext-411">
+        <bounds x="940" y="110" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-10" archimateElement="ext-manufacturer">
+        <bounds x="940" y="180" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-11" archimateElement="ext-llm">
+        <bounds x="940" y="250" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-12" archimateElement="ext-nhtsa">
+        <bounds x="940" y="320" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-13" archimateElement="ext-supabase-auth">
+        <bounds x="940" y="390" width="200" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="va-14" archimateElement="do-vehicle">
+        <bounds x="640" y="180" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-15" archimateElement="do-client">
+        <bounds x="640" y="250" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-16" archimateElement="do-pred">
+        <bounds x="640" y="320" width="240" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="va-17" archimateElement="do-audit">
+        <bounds x="640" y="390" width="240" height="55"/>
+      </child>
+    </element>
+
+    <!-- VIEW 4: Arquitetura de Tecnologia -->
+    <element xsi:type="archimate:ArchimateDiagramModel" id="view-tech" name="04 — Arquitetura de Tecnologia">
+      <child xsi:type="archimate:DiagramObject" id="vt-1" archimateElement="dev-desktop">
+        <bounds x="40" y="40" width="200" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-2" archimateElement="dev-smartphone">
+        <bounds x="40" y="140" width="200" height="80"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vt-3" archimateElement="net-internet">
+        <bounds x="320" y="90" width="200" height="80"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vt-4" archimateElement="node-web-host">
+        <bounds x="600" y="40" width="200" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-5" archimateElement="node-mobile-stores">
+        <bounds x="600" y="140" width="200" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-6" archimateElement="node-api-host">
+        <bounds x="600" y="240" width="200" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-7" archimateElement="node-ml-host">
+        <bounds x="600" y="340" width="200" height="80"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vt-8" archimateElement="net-internal">
+        <bounds x="600" y="440" width="200" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vt-9" archimateElement="node-supabase">
+        <bounds x="880" y="240" width="200" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-10" archimateElement="ss-postgres">
+        <bounds x="880" y="340" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-11" archimateElement="ss-rls">
+        <bounds x="880" y="410" width="200" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vt-12" archimateElement="ss-tls">
+        <bounds x="320" y="240" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-13" archimateElement="ss-fastify">
+        <bounds x="320" y="320" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-14" archimateElement="ss-pino">
+        <bounds x="320" y="390" width="200" height="55"/>
+      </child>
+
+      <child xsi:type="archimate:DiagramObject" id="vt-15" archimateElement="tsvc-tls">
+        <bounds x="40" y="320" width="200" height="55"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="vt-16" archimateElement="tsvc-hmac">
+        <bounds x="40" y="390" width="200" height="55"/>
+      </child>
+    </element>
+  </folder>
+</archimate:model>

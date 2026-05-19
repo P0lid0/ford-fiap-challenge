@@ -8,7 +8,7 @@ import { requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 import { AVAILABLE_MODELS, clearKeyCache, getApiKey, type Provider } from '../lib/ai.js';
 
-const PROVIDERS = ['openai', 'anthropic', 'gemini', 'fipe'] as const;
+const PROVIDERS = ['openai', 'anthropic', 'gemini', 'fipe', 'vehicle411'] as const;
 
 export async function aiConfigRoutes(app: FastifyInstance) {
   // === Status das chaves (não retorna os valores!) ===
@@ -19,16 +19,20 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     if (u.role !== 'admin') { (req as any).reply.code(403); return { error: 'forbidden' }; }
 
     const status: Record<string, { configured: boolean; source: 'env' | 'db' | 'none'; preview?: string }> = {};
+    // Providers "não-IA" (FIPE, 411) usam env var dedicada + lookup direto no DB.
+    const nonAiEnvMap: Record<string, string> = {
+      fipe: 'FIPE_API_TOKEN',
+      vehicle411: 'VEHICLE411_API_KEY',
+    };
     for (const p of PROVIDERS) {
       let k = '';
       let fromEnv = false;
-      if (p === 'fipe') {
-        // FIPE não usa getApiKey (não é IA); checa direto
+      if (p in nonAiEnvMap) {
         const { adminClient } = await import('../lib/supabase.js');
-        const envTok = process.env.FIPE_API_TOKEN || '';
+        const envTok = process.env[nonAiEnvMap[p]!] || '';
         if (envTok) { k = envTok; fromEnv = true; }
         else {
-          const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', 'fipe').maybeSingle();
+          const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', p).maybeSingle();
           k = data?.api_key ?? '';
         }
       } else {
@@ -68,6 +72,10 @@ export async function aiConfigRoutes(app: FastifyInstance) {
       const { clearFipeTokenCache } = await import('../lib/data-sources/fipe.js');
       clearFipeTokenCache();
     }
+    if (provider === 'vehicle411') {
+      const { clear411TokenCache } = await import('../lib/data-sources/vehicle-411.js');
+      clear411TokenCache();
+    }
     return { ok: true, provider, preview: `${api_key.slice(0, 7)}…${api_key.slice(-4)}` };
   });
 
@@ -84,6 +92,14 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     const { provider } = req.params as any;
     await adminClient().from('ai_keys').delete().eq('provider', provider);
     clearKeyCache();
+    if (provider === 'fipe') {
+      const { clearFipeTokenCache } = await import('../lib/data-sources/fipe.js');
+      clearFipeTokenCache();
+    }
+    if (provider === 'vehicle411') {
+      const { clear411TokenCache } = await import('../lib/data-sources/vehicle-411.js');
+      clear411TokenCache();
+    }
     reply.code(204);
   });
 

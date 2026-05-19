@@ -90,6 +90,71 @@ function ComparePage() {
           </div>
         )}
 
+        {/* EQUIPAMENTOS por categoria — diferenciais que vendem */}
+        {data.equipamentos_comparativo && data.equipamentos_comparativo.length > 0 && (
+          <div className="bg-white rounded-2xl border border-gray-300 p-6 mb-8">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+                <Trophy className="w-5 h-5 text-amber-700" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Equipamentos — o que diferencia</h2>
+                <p className="text-xs text-gray-500">⭐ = exclusivo deste · ✓ = todos têm</p>
+              </div>
+            </div>
+            <div className="space-y-6">
+              {data.equipamentos_comparativo.map((grupo: any) => (
+                <div key={grupo.categoria} className="border-t border-gray-200 pt-4 first:border-t-0 first:pt-0">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded ${
+                      grupo.categoria === 'seguranca' ? 'bg-red-100 text-red-700' :
+                      grupo.categoria === 'conforto' ? 'bg-blue-100 text-blue-700' :
+                      grupo.categoria === 'tecnologia' ? 'bg-purple-100 text-purple-700' :
+                      grupo.categoria === 'assistencia' ? 'bg-cyan-100 text-cyan-700' :
+                      grupo.categoria === 'interior' ? 'bg-amber-100 text-amber-700' :
+                      grupo.categoria === 'exterior' ? 'bg-emerald-100 text-emerald-700' :
+                      grupo.categoria === 'cargo' ? 'bg-orange-100 text-orange-700' :
+                      grupo.categoria === 'offroad' ? 'bg-stone-200 text-stone-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {grupo.categoria.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${data.vehicles.length}, minmax(0, 1fr))` }}>
+                    {grupo.exclusivos_por_veiculo.map((veic: any, idx: number) => (
+                      <div key={veic.vehicle_id} className="bg-gray-50 rounded-xl p-4">
+                        <div className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                          {veic.marca} {veic.modelo}
+                        </div>
+                        {veic.itens.length > 0 ? (
+                          <ul className="space-y-1">
+                            {veic.itens.map((item: string) => (
+                              <li key={item} className="flex items-start gap-2 text-sm text-gray-900">
+                                <span className="text-amber-500 font-bold mt-0.5">⭐</span>
+                                <span>{item.replace(/_/g, ' ')}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="text-xs text-gray-400 italic">— nenhum exclusivo —</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {grupo.comuns.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-dashed border-gray-200">
+                      <div className="text-xs text-gray-500 mb-1">✓ Todos têm:</div>
+                      <div className="text-xs text-gray-600">
+                        {grupo.comuns.map((c: string) => c.replace(/_/g, ' ')).join(' · ')}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Tabela comparativa */}
         <div className="bg-white rounded-2xl border border-gray-300 overflow-x-auto">
           <table className="w-full text-sm">

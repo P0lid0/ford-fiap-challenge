@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Save, Upload, FileJson, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, Save, Upload, FileJson, FileSpreadsheet, FileText, Sparkles, Loader2, X, Check } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { BrandCombo } from '@/components/BrandCombo';
 import { api } from '@/lib/api';
@@ -27,10 +27,16 @@ export default function AdicionarVeiculo() {
     notas: '',
   });
 
-  // Upload
-  const [format, setFormat] = useState<'json' | 'csv'>('json');
+  // Upload texto (JSON/CSV)
+  const [format, setFormat] = useState<'json' | 'csv' | 'arquivo_ia'>('json');
   const [content, setContent] = useState('');
   const [importResult, setImportResult] = useState<any>(null);
+
+  // Upload PDF/imagem com extração IA
+  const [aiFile, setAiFile] = useState<File | null>(null);
+  const [aiExtracting, setAiExtracting] = useState(false);
+  const [aiPreview, setAiPreview] = useState<any>(null);
+  const [aiSelected, setAiSelected] = useState<Set<number>>(new Set());
 
   function num(v: string): number | null { return v === '' ? null : Number(v); }
   function clean(g: any): any {
@@ -68,6 +74,7 @@ export default function AdicionarVeiculo() {
 
   async function saveImport(e: React.FormEvent) {
     e.preventDefault();
+    if (format === 'arquivo_ia') return; // tratado em separado
     setSaving(true); setErr(null); setImportResult(null);
     try {
       const r = await api.importVehicles(format, content);
@@ -75,6 +82,37 @@ export default function AdicionarVeiculo() {
     } catch (e: any) {
       setErr(e.message ?? String(e));
     } finally { setSaving(false); }
+  }
+
+  async function extractFromFileAi() {
+    if (!aiFile) return;
+    setAiExtracting(true); setErr(null); setAiPreview(null); setAiSelected(new Set());
+    try {
+      const r = await api.importVehiclesFromFile(aiFile);
+      setAiPreview(r);
+      setAiSelected(new Set(r.veiculos.map((_: any, i: number) => i))); // todos selecionados por padrão
+    } catch (e: any) {
+      setErr(e.message ?? String(e));
+    } finally { setAiExtracting(false); }
+  }
+
+  async function saveAiSelected() {
+    if (!aiPreview || aiSelected.size === 0) return;
+    setSaving(true); setErr(null);
+    try {
+      const picked = aiPreview.veiculos.filter((_: any, i: number) => aiSelected.has(i));
+      const r = await api.importVehicles('json', JSON.stringify(picked));
+      setImportResult(r);
+      setAiPreview(null); setAiSelected(new Set()); setAiFile(null);
+    } catch (e: any) {
+      setErr(e.message ?? String(e));
+    } finally { setSaving(false); }
+  }
+
+  function toggleSelected(i: number) {
+    const s = new Set(aiSelected);
+    if (s.has(i)) s.delete(i); else s.add(i);
+    setAiSelected(s);
   }
 
   return (
@@ -198,8 +236,8 @@ export default function AdicionarVeiculo() {
         )}
 
         {tab === 'arquivo' && (
-          <form onSubmit={saveImport} className="space-y-6">
-            <div className="flex gap-2">
+          <div className="space-y-6">
+            <div className="flex gap-2 flex-wrap">
               <button type="button" onClick={() => setFormat('json')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 transition ${format === 'json' ? 'border-ford-blue bg-ford-blue/5 text-ford-blue' : 'border-gray-300'}`}>
                 <FileJson className="w-4 h-4" /> JSON
@@ -208,45 +246,163 @@ export default function AdicionarVeiculo() {
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 transition ${format === 'csv' ? 'border-ford-blue bg-ford-blue/5 text-ford-blue' : 'border-gray-300'}`}>
                 <FileSpreadsheet className="w-4 h-4" /> CSV
               </button>
+              <button type="button" onClick={() => setFormat('arquivo_ia')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl border-2 transition ${format === 'arquivo_ia' ? 'border-ford-blue bg-ford-blue/5 text-ford-blue' : 'border-gray-300'}`}>
+                <Sparkles className="w-4 h-4" /> PDF / Imagem (IA)
+              </button>
             </div>
 
-            <div className="bg-gray-50 rounded-xl p-4 text-sm">
-              <strong className="text-gray-800">Formato esperado:</strong>
-              {format === 'json' ? (
-                <pre className="text-xs text-gray-600 mt-2 overflow-x-auto">
+            {format === 'arquivo_ia' ? (
+              <div className="space-y-4">
+                <div className="bg-gradient-to-br from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-5">
+                  <div className="flex items-start gap-3">
+                    <FileText className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h3 className="font-bold text-gray-900 mb-1">Extração inteligente de e-books, brochuras e fichas</h3>
+                      <p className="text-sm text-gray-700">
+                        Solte um <strong>PDF</strong> (e-book do carro), <strong>PNG/JPG</strong> (foto de ficha técnica)
+                        ou screenshot. A IA identifica todas as versões/trims, extrai specs e equipamentos categorizados.
+                        Você revisa antes de salvar.
+                      </p>
+                      <p className="text-xs text-gray-500 mt-2">
+                        ⚠ PDFs exigem chave Anthropic em <Link href="/configuracoes" className="underline">/configuracoes</Link>.
+                        Imagens funcionam com OpenAI ou Anthropic.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-2 border-dashed border-gray-300 rounded-2xl p-8 text-center hover:border-ford-blue transition cursor-pointer">
+                  <input id="ai-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp"
+                    onChange={e => { setAiFile(e.target.files?.[0] ?? null); setAiPreview(null); }}
+                    className="hidden" />
+                  <label htmlFor="ai-file" className="cursor-pointer block">
+                    <Upload className="w-10 h-10 mx-auto text-gray-400 mb-2" />
+                    {aiFile ? (
+                      <div>
+                        <div className="text-gray-900 font-bold">{aiFile.name}</div>
+                        <div className="text-sm text-gray-500">{(aiFile.size / 1024 / 1024).toFixed(2)} MB · {aiFile.type}</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="text-gray-700 font-medium">Clique pra escolher um arquivo</div>
+                        <div className="text-xs text-gray-500 mt-1">PDF, PNG, JPG, WEBP — máx 30 MB</div>
+                      </div>
+                    )}
+                  </label>
+                </div>
+
+                {aiFile && !aiPreview && (
+                  <button type="button" onClick={extractFromFileAi} disabled={aiExtracting}
+                    className="w-full py-4 bg-gradient-to-r from-ford-blue to-ford-blue-light text-white font-bold rounded-2xl hover:opacity-90 transition disabled:opacity-50 uppercase tracking-wider text-sm flex items-center justify-center gap-2">
+                    {aiExtracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                    {aiExtracting ? 'IA analisando o arquivo (pode demorar 1–2 min em PDFs longos)…' : 'Extrair veículos com IA'}
+                  </button>
+                )}
+
+                {aiPreview && (
+                  <div className="bg-white border border-gray-300 rounded-2xl p-6 space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <h3 className="font-bold text-gray-900">{aiPreview.count} veículo(s) detectado(s)</h3>
+                        <p className="text-xs text-gray-500">Extraído por {aiPreview.extracted_by} · {aiPreview.filename}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setAiSelected(new Set(aiPreview.veiculos.map((_: any, i: number) => i)))}
+                          className="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Selecionar todos</button>
+                        <button type="button" onClick={() => setAiSelected(new Set())}
+                          className="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Limpar</button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 max-h-[500px] overflow-y-auto">
+                      {aiPreview.veiculos.map((v: any, i: number) => {
+                        const checked = aiSelected.has(i);
+                        return (
+                          <label key={i} className={`block border-2 rounded-xl p-4 cursor-pointer transition ${checked ? 'border-ford-blue bg-ford-blue/5' : 'border-gray-200 hover:border-gray-300'}`}>
+                            <div className="flex items-start gap-3">
+                              <input type="checkbox" checked={checked} onChange={() => toggleSelected(i)} className="mt-1.5 w-4 h-4 accent-ford-blue" />
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-gray-900">
+                                  {v.marca} {v.modelo} {v.versao} {v.ano ? `· ${v.ano}` : ''}
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {v.categoria ?? '?'} ·
+                                  {' '}{v.motor?.potencia_cv ? `${v.motor.potencia_cv}cv` : '?cv'} /
+                                  {' '}{v.motor?.torque_nm ? `${v.motor.torque_nm}Nm` : '?Nm'} ·
+                                  {' '}{v.transmissao?.tipo ?? '?'} {v.transmissao?.marchas ? `${v.transmissao.marchas}m` : ''} ·
+                                  {' '}{v.transmissao?.tracao ?? '?'} ·
+                                  {' '}{v.preco_brl ? `R$ ${v.preco_brl.toLocaleString('pt-BR')}` : 'sem preço'}
+                                </div>
+                                {v.equipamentos?.length > 0 && (
+                                  <div className="text-xs text-gray-600 mt-2 line-clamp-2">
+                                    <span className="font-semibold">{v.equipamentos.length} equipamentos:</span>{' '}
+                                    {v.equipamentos.slice(0, 8).map((e: string) => e.replace(/^[a-z_]+:/, '')).join(', ')}
+                                    {v.equipamentos.length > 8 ? '…' : ''}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex gap-3 pt-2">
+                      <button type="button" onClick={() => { setAiPreview(null); setAiFile(null); }}
+                        className="px-5 py-3 border border-gray-300 rounded-2xl text-gray-700 hover:bg-gray-50 flex items-center gap-2">
+                        <X className="w-4 h-4" /> Descartar
+                      </button>
+                      <button type="button" onClick={saveAiSelected} disabled={saving || aiSelected.size === 0}
+                        className="flex-1 py-3 bg-ford-blue text-white font-bold rounded-2xl hover:bg-ford-blue-dark transition disabled:opacity-50 uppercase tracking-wider text-sm flex items-center justify-center gap-2">
+                        <Check className="w-4 h-4" />
+                        {saving ? 'Salvando…' : `Salvar ${aiSelected.size} veículo(s) selecionado(s)`}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <form onSubmit={saveImport} className="space-y-6">
+                <div className="bg-gray-50 rounded-xl p-4 text-sm">
+                  <strong className="text-gray-800">Formato esperado:</strong>
+                  {format === 'json' ? (
+                    <pre className="text-xs text-gray-600 mt-2 overflow-x-auto">
 {`[
   {
     "marca": "Ford", "modelo": "Ranger", "versao": "Raptor", "ano": 2025,
     "categoria": "picape_media",
     "motor": { "potencia_cv": 397, "torque_nm": 583, "combustivel": "gasolina" },
     "preco_brl": 489900,
-    "equipamentos": ["bloqueio_diferencial_dianteiro", "fox_live_valve"]
+    "equipamentos": ["offroad:bloqueio_diferencial_dianteiro", "offroad:fox_live_valve"]
   }
 ]`}</pre>
-              ) : (
-                <pre className="text-xs text-gray-600 mt-2 overflow-x-auto">
+                  ) : (
+                    <pre className="text-xs text-gray-600 mt-2 overflow-x-auto">
 {`marca,modelo,versao,ano,categoria,motor.potencia_cv,motor.torque_nm,preco_brl,equipamentos
-Ford,Ranger,Raptor,2025,picape_media,397,583,489900,bloqueio_dianteiro;fox_valve`}</pre>
-              )}
-              <p className="text-xs text-gray-500 mt-2">Equipamentos em CSV: separados por ponto-e-vírgula. Use dot-notation para nested fields.</p>
-            </div>
+Ford,Ranger,Raptor,2025,picape_media,397,583,489900,offroad:bloqueio_dianteiro;offroad:fox_valve`}</pre>
+                  )}
+                  <p className="text-xs text-gray-500 mt-2">Equipamentos em CSV: separados por ponto-e-vírgula. Use prefixo categoria:item.</p>
+                </div>
 
-            <textarea value={content} onChange={e => setContent(e.target.value)} required rows={12}
-              placeholder={format === 'json' ? 'Cole o JSON aqui ou abra um arquivo...' : 'Cole o CSV aqui ou abra um arquivo...'}
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue font-mono text-xs" />
+                <textarea value={content} onChange={e => setContent(e.target.value)} required rows={12}
+                  placeholder={format === 'json' ? 'Cole o JSON aqui ou abra um arquivo...' : 'Cole o CSV aqui ou abra um arquivo...'}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue font-mono text-xs" />
 
-            <input type="file" accept={format === 'json' ? '.json' : '.csv'}
-              onChange={e => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                f.text().then(setContent);
-              }}
-              className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border file:border-gray-300 file:bg-white file:text-ford-blue file:font-medium hover:file:bg-gray-50 cursor-pointer" />
+                <input type="file" accept={format === 'json' ? '.json' : '.csv'}
+                  onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    f.text().then(setContent);
+                  }}
+                  className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border file:border-gray-300 file:bg-white file:text-ford-blue file:font-medium hover:file:bg-gray-50 cursor-pointer" />
 
-            <button type="submit" disabled={saving || !content}
-              className="w-full py-4 bg-ford-blue text-white font-bold rounded-2xl hover:bg-ford-blue-dark transition disabled:opacity-50 uppercase tracking-wider text-sm flex items-center justify-center gap-2">
-              <Upload className="w-4 h-4" /> {saving ? 'Importando…' : 'Importar lote'}
-            </button>
+                <button type="submit" disabled={saving || !content}
+                  className="w-full py-4 bg-ford-blue text-white font-bold rounded-2xl hover:bg-ford-blue-dark transition disabled:opacity-50 uppercase tracking-wider text-sm flex items-center justify-center gap-2">
+                  <Upload className="w-4 h-4" /> {saving ? 'Importando…' : 'Importar lote'}
+                </button>
+              </form>
+            )}
 
             {importResult && (
               <div className="bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl p-4">
@@ -254,7 +410,7 @@ Ford,Ranger,Raptor,2025,picape_media,397,583,489900,bloqueio_dianteiro;fox_valve
                 <Link href="/veiculos" className="text-sm underline">Ver catálogo →</Link>
               </div>
             )}
-          </form>
+          </div>
         )}
       </div>
     </Shell>

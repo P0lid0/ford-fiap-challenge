@@ -2,6 +2,8 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import sensible from '@fastify/sensible';
+import multipart from '@fastify/multipart';
+import helmet from '@fastify/helmet';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { serializerCompiler, validatorCompiler, jsonSchemaTransform, ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -13,6 +15,7 @@ import { clientRoutes } from './routes/clients.ts';
 import { insightRoutes } from './routes/insights.ts';
 import { metricRoutes } from './routes/metrics.ts';
 import { aiConfigRoutes } from './routes/ai-config.ts';
+import { acoesRoutes } from './routes/acoes.ts';
 
 const app = Fastify({
   logger: {
@@ -33,6 +36,32 @@ app.setValidatorCompiler(validatorCompiler);
 app.setSerializerCompiler(serializerCompiler);
 
 await app.register(sensible);
+
+// Security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy, etc.).
+// IMPORTANTE: defaults do helmet incluem Cross-Origin-Resource-Policy: same-origin
+// que BLOQUEIA cross-origin mesmo com CORS allow. Como temos web em :3000 e API
+// em :3333, desligamos COEP/CORP para permitir a integração.
+await app.register(helmet, {
+  contentSecurityPolicy: env.NODE_ENV === 'production' ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", env.SUPABASE_URL],
+      frameAncestors: ["'none'"],
+    },
+  } : false, // dev: false (não atrapalha Swagger UI inline)
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // libera consumo cross-origin (web→api)
+  crossOriginOpenerPolicy: false,
+});
+
+await app.register(multipart, {
+  limits: { fileSize: 30 * 1024 * 1024 }, // 30 MB — e-books e PDFs grandes
+});
 
 await app.register(cors, {
   origin: allowedOrigins,
@@ -102,6 +131,7 @@ await app.register(clientRoutes);
 await app.register(insightRoutes);
 await app.register(metricRoutes);
 await app.register(aiConfigRoutes);
+await app.register(acoesRoutes);
 
 await app.listen({ port: env.API_PORT, host: env.API_HOST });
 app.log.info(`📘 Swagger: http://${env.API_HOST}:${env.API_PORT}/docs`);

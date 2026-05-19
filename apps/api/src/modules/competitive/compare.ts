@@ -77,18 +77,49 @@ export function compareVehicles(vehicles: Vehicle[], fieldsFilter?: string[]) {
     });
   }
 
-  // Equipamentos exclusivos (por veículo)
-  const eqSets = vehicles.map(v => new Set(v.equipamentos ?? []));
-  for (let i = 0; i < eqSets.length; i++) {
-    const others = new Set<string>();
-    for (let j = 0; j < eqSets.length; j++) {
-      if (j === i) continue;
-      for (const e of eqSets[j]!) others.add(e);
+  // Equipamentos: parse de "categoria:item" → agrupar exclusivos por categoria
+  const eqByVehicle = vehicles.map(v =>
+    parseEquipamentosByCategory(v.equipamentos ?? [])
+  );
+  const allCategories = new Set<string>();
+  for (const cat of eqByVehicle) for (const k of Object.keys(cat)) allCategories.add(k);
+
+  // Itens em COMUM por categoria (todos os veículos têm)
+  const equipamentos_comparativo: EquipamentoCategoria[] = [];
+  for (const cat of [...allCategories].sort()) {
+    const perVehicle = eqByVehicle.map(e => new Set(e[cat] ?? []));
+    const intersect = perVehicle.length > 0
+      ? [...perVehicle[0]!].filter(item => perVehicle.every(s => s.has(item))).sort()
+      : [];
+    const exclusivosPerVehicle = perVehicle.map((set, i) => {
+      const outros = new Set<string>();
+      for (let j = 0; j < perVehicle.length; j++) {
+        if (j === i) continue;
+        for (const it of perVehicle[j]!) outros.add(it);
+      }
+      return [...set].filter(it => !outros.has(it)).sort();
+    });
+    equipamentos_comparativo.push({
+      categoria: cat,
+      comuns: intersect,
+      exclusivos_por_veiculo: vehicles.map((v, i) => ({
+        vehicle_id: v.id,
+        marca: v.marca, modelo: v.modelo, versao: v.versao,
+        itens: exclusivosPerVehicle[i] ?? [],
+      })),
+    });
+  }
+
+  // Mantém o resumo legado em fields[] pra UI antiga ainda funcionar
+  for (let i = 0; i < vehicles.length; i++) {
+    const exclusivosTotal: string[] = [];
+    for (const grp of equipamentos_comparativo) {
+      const my = grp.exclusivos_por_veiculo[i]?.itens ?? [];
+      exclusivosTotal.push(...my.map(it => `${grp.categoria}:${it}`));
     }
-    const exclusivos = [...eqSets[i]!].filter(e => !others.has(e)).sort();
-    if (exclusivos.length === 0) continue;
+    if (!exclusivosTotal.length) continue;
     const vals: (string | null)[] = vehicles.map(() => null);
-    vals[i] = exclusivos.slice(0, 8).join(', ') + (exclusivos.length > 8 ? '...' : '');
+    vals[i] = exclusivosTotal.slice(0, 10).join(', ') + (exclusivosTotal.length > 10 ? `... (+${exclusivosTotal.length - 10})` : '');
     fields.push({
       label: `Exclusivos ${vehicles[i]!.marca} ${vehicles[i]!.modelo}`,
       path: 'equipamentos.exclusivos',
@@ -98,5 +129,34 @@ export function compareVehicles(vehicles: Vehicle[], fieldsFilter?: string[]) {
     });
   }
 
-  return { vehicles, fields, summary: null };
+  return { vehicles, fields, equipamentos_comparativo, summary: null };
+}
+
+export type EquipamentoCategoria = {
+  categoria: string;
+  comuns: string[];
+  exclusivos_por_veiculo: Array<{
+    vehicle_id: string;
+    marca: string; modelo: string; versao: string;
+    itens: string[];
+  }>;
+};
+
+/**
+ * Parse "categoria:item_nome" → { categoria: [item_nome, ...] }.
+ * Itens legados sem prefixo caem em "geral".
+ */
+function parseEquipamentosByCategory(itens: string[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const raw of itens) {
+    const m = raw.match(/^([a-z_]+):(.+)$/);
+    if (m) {
+      const cat = m[1]!;
+      const item = m[2]!;
+      (out[cat] ??= []).push(item);
+    } else {
+      (out['geral'] ??= []).push(raw);
+    }
+  }
+  return out;
 }

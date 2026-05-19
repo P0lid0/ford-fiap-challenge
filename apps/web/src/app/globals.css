@@ -2,7 +2,80 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Dancing+Script:wght@600;700&family=Allura&display=swap');
 
-html, body { font-family: 'Inter', system-ui, sans-serif; }
-body { background: #F5F5F5; color: #1A1A1A; }
+:root {
+  --ford-blue:        #003478;
+  --ford-blue-dark:   #001A3D;
+  --ford-blue-deep:   #000A1F;
+  --ford-blue-light:  #1E4B8E;
+  --ford-accent:      #0066B2;
+}
+
+html, body {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-feature-settings: 'cv11', 'ss01', 'ss03'; /* tabular nums + alts modernas */
+}
+
+body {
+  background: #F7F8FB;
+  color: #1A1A1A;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* === Utilitários compostos === */
+
+@layer components {
+  .ford-script {
+    font-family: 'Dancing Script', 'Brush Script MT', cursive;
+    font-weight: 700;
+  }
+  /* glass effect sobre fundo escuro */
+  .glass-dark {
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  /* glass effect sobre fundo claro */
+  .glass-light {
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+  }
+  /* card padrão */
+  .ford-card {
+    @apply bg-white rounded-2xl border border-gray-200 shadow-soft;
+  }
+  /* botão primário */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl
+           bg-ford-blue text-white font-bold uppercase tracking-wider text-sm
+           shadow-card hover:shadow-elevated hover:-translate-y-0.5
+           transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
+           disabled:transform-none;
+  }
+  /* botão ghost */
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 rounded-xl
+           border border-gray-300 text-gray-700
+           hover:border-ford-blue hover:text-ford-blue hover:bg-ford-blue-soft/30
+           transition-colors duration-200;
+  }
+}
+
+/* scrollbar minimalista */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: #C7CCD3; border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+
+/* tabular numerals em valores monetários */
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* selection */
+::selection { background: #003478; color: white; }

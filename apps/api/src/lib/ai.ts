@@ -17,6 +17,7 @@ export type AiResult = {
   output: string;
   model: string;
   provider: Provider | 'fallback';
+  citations?: AiCitation[]; // URLs consultadas via web search (quando webSearch: true)
 };
 
 export const AVAILABLE_MODELS: Record<Provider, { id: string; label: string; tier: AiTier }[]> = {
@@ -98,12 +99,53 @@ export type ChatOpts = {
   systemOverride?: string;
   modelOverride?: string;       // "provider:model" ou "model"
   jsonObjectMode?: boolean;     // força JSON output
+  maxTokens?: number;           // override do limite (default: 600 fast, 1200 smart)
+  webSearch?: boolean;          // ativa busca web (só OpenAI gpt-4o-*-search-preview)
+  searchContextSize?: 'low' | 'medium' | 'high'; // nível de contexto da busca; default 'high'
 };
 
-async function chatOpenAi(prompt: string, system: string, model: string, opts: ChatOpts, tier: AiTier): Promise<string> {
+export type AiCitation = { url: string; title?: string; snippet?: string };
+
+function resolveMaxTokens(opts: ChatOpts, tier: AiTier): number {
+  if (opts.maxTokens) return opts.maxTokens;
+  return tier === 'fast' ? 600 : 1200;
+}
+
+type OpenAiCallResult = { text: string; citations?: AiCitation[]; usedModel: string };
+
+async function chatOpenAi(prompt: string, system: string, model: string, opts: ChatOpts, tier: AiTier): Promise<OpenAiCallResult> {
   const key = await getApiKey('openai');
   if (!key) throw new Error('OPENAI key not configured');
   const client = new OpenAI({ apiKey: key });
+
+  // Web search: roteia pro modelo de busca da OpenAI (gpt-4o-*-search-preview).
+  // Os modelos search NÃO aceitam temperature nem response_format=json_object
+  // e ignoram max_tokens — eles trazem citations no campo `annotations`.
+  if (opts.webSearch) {
+    const searchModel = tier === 'fast' ? 'gpt-4o-mini-search-preview' : 'gpt-4o-search-preview';
+    const r = await client.chat.completions.create({
+      model: searchModel,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: prompt },
+      ],
+      web_search_options: {
+        search_context_size: opts.searchContextSize ?? 'high',
+      },
+    } as any);
+    const msg = r.choices[0]?.message;
+    const text = msg?.content?.trim() ?? '';
+    const annotations = (msg as any)?.annotations as any[] | undefined;
+    const citations: AiCitation[] = (annotations ?? [])
+      .filter(a => a.type === 'url_citation' && a.url_citation?.url)
+      .map(a => ({
+        url: a.url_citation.url,
+        title: a.url_citation.title,
+        snippet: a.url_citation.start_index !== undefined ? undefined : undefined,
+      }));
+    return { text, citations, usedModel: searchModel };
+  }
+
   const r = await client.chat.completions.create({
     model,
     response_format: opts.jsonObjectMode ? { type: 'json_object' } : undefined,
@@ -111,32 +153,43 @@ async function chatOpenAi(prompt: string, system: string, model: string, opts: C
       { role: 'system', content: system },
       { role: 'user', content: prompt },
     ],
-    max_tokens: tier === 'fast' ? 600 : 1200,
-    temperature: opts.jsonObjectMode ? 0.1 : 0.4,
+    max_tokens: resolveMaxTokens(opts, tier),
+    // Extração estruturada: 0 (determinístico, mínimo de alucinação).
+    // Análise textual: 0.4 (mais natural).
+    temperature: opts.jsonObjectMode ? 0 : 0.4,
   });
-  return r.choices[0]?.message?.content?.trim() ?? '';
+  if (r.choices[0]?.finish_reason === 'length') {
+    console.warn(`[ai] openai:${model} truncated at ${resolveMaxTokens(opts, tier)} tokens — JSON pode estar incompleto`);
+  }
+  return { text: r.choices[0]?.message?.content?.trim() ?? '', usedModel: model };
 }
 
-async function chatAnthropic(prompt: string, system: string, model: string, tier: AiTier): Promise<string> {
+async function chatAnthropic(prompt: string, system: string, model: string, opts: ChatOpts, tier: AiTier): Promise<string> {
   const key = await getApiKey('anthropic');
   if (!key) throw new Error('ANTHROPIC key not configured');
   const client = new Anthropic({ apiKey: key });
   const msg = await client.messages.create({
     model, system,
-    max_tokens: tier === 'fast' ? 600 : 1200,
+    max_tokens: resolveMaxTokens(opts, tier),
     messages: [{ role: 'user', content: prompt }],
   });
+  if (msg.stop_reason === 'max_tokens') {
+    console.warn(`[ai] anthropic:${model} truncated at ${resolveMaxTokens(opts, tier)} tokens — JSON pode estar incompleto`);
+  }
   return msg.content[0]?.type === 'text' ? msg.content[0].text : '';
 }
 
-async function chatGemini(prompt: string, system: string, model: string, opts: ChatOpts): Promise<string> {
+async function chatGemini(prompt: string, system: string, model: string, opts: ChatOpts, tier: AiTier): Promise<string> {
   const key = await getApiKey('gemini');
   if (!key) throw new Error('GEMINI key not configured');
   const genAI = new GoogleGenerativeAI(key);
   const m = genAI.getGenerativeModel({
     model,
     systemInstruction: system,
-    generationConfig: opts.jsonObjectMode ? { responseMimeType: 'application/json' } : undefined,
+    generationConfig: {
+      maxOutputTokens: resolveMaxTokens(opts, tier),
+      ...(opts.jsonObjectMode ? { responseMimeType: 'application/json' } : {}),
+    },
   });
   const r = await m.generateContent(prompt);
   return r.response.text().trim();
@@ -155,11 +208,16 @@ export async function chat(prompt: string, tier: AiTier = 'fast', opts: ChatOpts
 
   for (const { provider, model } of tryOrder) {
     try {
-      let output = '';
-      if (provider === 'openai') output = await chatOpenAi(prompt, system, model, opts, tier);
-      else if (provider === 'anthropic') output = await chatAnthropic(prompt, system, model, tier);
-      else if (provider === 'gemini') output = await chatGemini(prompt, system, model, opts);
-      if (output) return { output, model, provider };
+      if (provider === 'openai') {
+        const r = await chatOpenAi(prompt, system, model, opts, tier);
+        if (r.text) return { output: r.text, model: r.usedModel, provider, citations: r.citations };
+      } else if (provider === 'anthropic') {
+        const output = await chatAnthropic(prompt, system, model, opts, tier);
+        if (output) return { output, model, provider };
+      } else if (provider === 'gemini') {
+        const output = await chatGemini(prompt, system, model, opts, tier);
+        if (output) return { output, model, provider };
+      }
     } catch (err: any) {
       console.warn(`[ai] ${provider}:${model} failed:`, err?.message);
     }
