@@ -1,6 +1,6 @@
-# Ford × FIAP Challenge 2026 — 3am IT
+# Ford × FIAP Challenge 2026
 
-> **Squad:** 3am IT (parceria Genova × FIAP) · **Entrega:** 24/05/2026 · **Scrum Master:** Prof. Yan Coelho
+> **Squad:** · **Entrega:** 24/05/2026 · **Scrum Master:** Prof. Yan Coelho
 
 Plataforma única que resolve os **dois desafios da Ford**:
 - **Desafio 1 — Inteligência Competitiva:** lookup padronizado de fichas técnicas com seleção dinâmica de atributos + comparação 2-5 veículos.
