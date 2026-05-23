@@ -186,4 +186,3 @@ Veja `DECISIONS.md` para histórico completo.
 
 ---
 
-**3am IT — parceria Genova × FIAP**
