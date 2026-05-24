@@ -2,14 +2,18 @@
 
 **Equipe Faro AI** — Guilherme (RM 554962) · Pedro (RM 555556) · Fabrício (RM 558216) · Vitor (RM 554893) · Matheus (RM 555447)
 
-Documento técnico cobrindo os **5 eixos avaliativos** da disciplina de Cybersecurity:
+Documento técnico cobrindo os **5 eixos avaliativos** da disciplina de Cybersecurity.
+O estado atual é **MVP funcional com arquitetura preparada para produção**:
+LGPD-ready e com controles de segurança implementados no nível de aplicação.
+Os itens de infraestrutura no checklist final permanecem como pendências de deploy
+produtivo.
 
 | Eixo | Pontos | Cobertura |
 |---|---|---|
 | 1. Validação e sanitização de entrada | 20 | ✅ Zod, sanitização XSS/SQL/cmd, rate-limit, multipart |
 | 2. Autenticação e autorização | 20 | ✅ JWT Supabase, RBAC 3 níveis, RLS Postgres |
 | 3. Proteção de APIs e serviços | 20 | ✅ TLS 1.3, rate-limit, CORS allowlist, HMAC payloads |
-| 4. Dados e privacidade | 25 | ✅ AES-256 at rest, VIN_Hash, anonimização ML, LGPD |
+| 4. Dados e privacidade | 25 | ✅ AES-256 at rest, VIN_Hash, anonimização ML, LGPD-ready |
 | 5. Monitoramento, logs e auditoria | 15 | ✅ Logs estruturados, audit_log, observabilidade |
 | **Total** | **100** | |
 
@@ -56,7 +60,7 @@ body: z.object({
 
 ### Tratamento seguro de erros
 
-Stack traces nunca vão pro cliente em produção:
+Stack traces nunca vão pro cliente em ambiente produtivo:
 
 ```ts
 // server.ts
@@ -102,7 +106,7 @@ configuração de chaves de IA exigem `admin`.
 
 **Local (dev):** API roda HTTP em `127.0.0.1:3333`. Web App em `localhost:3000`.
 
-**Produção:** Reverse proxy com TLS 1.2+ é mandatório. Exemplo Caddy:
+**Deploy produtivo:** Reverse proxy com TLS 1.2+ é pendência obrigatória. Exemplo Caddy:
 
 ```caddy
 api.ford-fiap.example.com {
@@ -156,13 +160,13 @@ Whitelist explícita em `ALLOWED_ORIGINS`:
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8081,https://ford-fiap.example.com
 ```
 
-Wildcard nunca é aceito — produção rejeita origens desconhecidas.
+Wildcard nunca é aceito — em deploy produtivo, origens desconhecidas são rejeitadas.
 
 ### Headers de Segurança (`@fastify/helmet`)
 
 Registrado em `server.ts`:
 
-- `Content-Security-Policy` (em produção): `default-src 'self'` + permissões mínimas
+- `Content-Security-Policy` (em ambiente produtivo): `default-src 'self'` + permissões mínimas
 - `Strict-Transport-Security`: `max-age=31536000; includeSubDomains; preload`
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY` (via `frameAncestors 'none'`)
@@ -189,7 +193,7 @@ Previne manipulação de payload em trânsito e replay com body alterado.
 
 - **Supabase Postgres**: AES-256 em repouso (gerenciado pela plataforma — disk encryption + WAL encryption)
 - **CPF**: nunca armazenado em claro. `apps/api/src/routes/clients.ts:30` aplica `sha256(cpf + CLIENT_CPF_PEPPER)` antes de gravar. Lookup é feito comparando hashes.
-- **Chaves de API (OpenAI, Anthropic, Gemini, FIPE, 411)**: em tabela `ai_keys` com RLS admin-only. Em produção, recomendamos migrar pra **Supabase Vault** (criptografia de coluna).
+- **Chaves de API (OpenAI, Anthropic, Gemini, FIPE, 411)**: em tabela `ai_keys` com RLS admin-only. Para deploy produtivo, recomendamos migrar pra **Supabase Vault** (criptografia de coluna).
 - **JWTs**: nunca persistidos no backend (validação stateless).
 
 ### Política de retenção e descarte
@@ -219,7 +223,7 @@ listam clientes individuais sem permissão explícita (RLS).
 
 - Logs do Pino com `redact: ['req.headers.authorization', 'req.headers.cookie', '*.SUPABASE_SERVICE_ROLE_KEY', '*.ANTHROPIC_API_KEY']`
 - `.env.local` no `.gitignore`
-- Swagger UI disponível em dev em `/docs` — recomendamos desabilitar em produção
+- Swagger UI disponível em dev em `/docs` — para deploy produtivo, desabilitar
   ou proteger com auth (basic auth no reverse proxy)
 - Mensagens de erro genéricas pra cliente (sem stack/SQL/internal paths)
 - RLS no Supabase isola dados por `dealership_id` — analista de uma loja não
@@ -231,7 +235,7 @@ listam clientes individuais sem permissão explícita (RLS).
 
 ### Logs estruturados
 
-**Pino** com formato JSON em produção, pretty em dev. Cada log carrega
+**Pino** com formato JSON em ambiente produtivo, pretty em dev. Cada log carrega
 `reqId`, `method`, `url`, `ip`, `status`, `latency_ms`. Campos sensíveis
 redacted (Authorization, cookies, chaves).
 
@@ -260,7 +264,10 @@ Eventos críticos têm metadata estruturada pra investigação posterior.
 
 ---
 
-## Checklist de Deploy (HTTPS Production)
+## Pendências de deploy produtivo (HTTPS Production)
+
+Os controles de aplicação já estão implementados no MVP, mas os itens abaixo
+devem ser concluídos antes de afirmar deploy produtivo final.
 
 - [ ] Definir DNS apontando pro host
 - [ ] Caddy ou Nginx + Let's Encrypt instalado

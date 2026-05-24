@@ -135,7 +135,7 @@ def build_ml_report():
         n_test = METRICS_REAL.get("n_samples_test", 0)
         total = n_train + n_test
         story.append(Paragraph(
-            f"<b>Upgrade: dados reais Ford BR.</b> O modelo de produção (<code>{METRICS_REAL['model_version']}</code>) "
+            f"<b>Upgrade: dados reais Ford BR.</b> O modelo técnico (<code>{METRICS_REAL['model_version']}</code>) "
             f"foi treinado com <b>{total:,}</b> VINs reais do arquivo <code>vin_share_Desafio_02.xlsx</code> "
             f"({n_train:,} treino · {n_test:,} teste), entregando "
             f"<b>accuracy {METRICS_REAL['accuracy']:.1%}</b> · F1-weighted {METRICS_REAL['f1_weighted']:.3f} · "
@@ -178,7 +178,7 @@ def build_ml_report():
         "Durante o desenvolvimento inicial, usamos bases sintéticas geradas em "
         "<code>services/ml/src/synthetic.py</code> para validar todo o pipeline (EDA, "
         "clustering, treino, avaliação) sem depender da chegada do dataset oficial. "
-        "<b>Na versão final em produção</b>, o modelo <code>xgb-real-v1</code> foi "
+        "<b>Na versão final do MVP</b>, o modelo <code>xgb-real-v1</code> foi "
         "treinado com a <b>base real Ford BR de 175.554 VINs</b> "
         "(<code>vin_share_Desafio_02.xlsx</code>) — descrito em detalhe na Seção 5.bis. "
         "As métricas sintéticas (Seção 5) são mantidas apenas como baseline histórico de "
@@ -371,7 +371,7 @@ def build_ml_report():
         n_test = METRICS_REAL.get("n_samples_test", 0)
         total = n_train + n_test
         story.append(Paragraph(
-            f"A versão de produção (<code>{METRICS_REAL['model_version']}</code>) foi retreinada "
+            f"A versão técnica do MVP (<code>{METRICS_REAL['model_version']}</code>) foi retreinada "
             f"sobre <b>{total:,}</b> VINs reais do arquivo <code>vin_share_Desafio_02.xlsx</code> "
             f"fornecido pela Ford. ETL em <code>scripts/etl-d2-real.py</code> converte XLSX → Parquet "
             "gerado localmente (não commitado por tamanho/governança de dados), "
@@ -530,7 +530,7 @@ def build_ml_report():
     story.append(Paragraph("<b>Próximos passos sugeridos:</b>", BODY))
     for txt in [
         "Coletar dados reais adicionais de uma loja-piloto, com tracking de conversão pós-ação, "
-        "para re-treino contínuo e validação operacional do modelo já em produção "
+        "para re-treino contínuo e validação operacional do modelo do MVP "
         "(<code>xgb-real-v1</code>, 175.554 VINs, accuracy 62,7%).",
         "Adicionar tracking de conversão das ações sugeridas (A/B) para fechar o loop "
         "modelo-ação-resultado e quantificar uplift de retenção por perfil.",
@@ -875,7 +875,7 @@ QV_ROWS = [
         "Time de Segurança / Compliance Ford",
         "Garantia de proteção de dados pessoais (LGPD) e auditabilidade.",
         "Pseudonimização no pipeline de ML, HMAC nas chamadas, audit log de ações críticas, RLS por dealership.",
-        "Zero incidentes de vazamento; LGPD compliance contínuo.",
+        "Zero incidentes de vazamento; operação LGPD-ready contínua",
         "100% requisições ML com payload anonimizado; 100% ações sensíveis auditadas.",
         "ALTA",
     ),

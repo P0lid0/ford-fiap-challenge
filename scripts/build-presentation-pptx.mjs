@@ -717,7 +717,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     ['Dataset Ford BR real',    '✓ 175k VINs',    '—',            '—',           '—'],
     ['IA explicável (sinais)',  '✓',              'Parcial',      '—',           'SHAP only'],
     ['LGPD-first',              '✓ VIN_Hash+RLS', '✓',            'Parcial',     'Parcial'],
-    ['Pronto em produção',      '✓ Hoje',         '3-6 meses',    '1-2 meses',   '2-3 meses'],
+    ['Arquitetura prod-ready',  'MVP funcional', '3-6 meses',    '1-2 meses',   '2-3 meses'],
     ['Integração FIPE',         '✓ Nativa',       '—',            'Parcial',     '—'],
   ];
   // header
@@ -761,7 +761,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     x: 0.5, y: 6.0, w: 12.3, h: 0.35,
     fontFace: 'Calibri', fontSize: 12, bold: true, color: NAVY,
   });
-  s.addText('Stack brasileira · IA explicável · ML hybrid + LLM crítico · MVP em produção · LGPD by design', {
+  s.addText('Stack brasileira · IA explicável · ML hybrid + LLM crítico · MVP prod-ready · LGPD-ready', {
     x: 0.5, y: 6.4, w: 12.3, h: 0.35,
     fontFace: 'Calibri', fontSize: 11, italic: true, color: FERRARI,
   });
@@ -817,7 +817,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Performance: <2s render · <1s ranking 175k leads\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
-    { text: 'Segurança: RLS · HMAC · audit log LGPD\n', options: { color: '2A3A4A', fontSize: 10 } },
+    { text: 'Segurança: RLS · HMAC · audit log · LGPD-ready\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Usabilidade: ≤4 cliques pra ação · 100% PT-BR\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },

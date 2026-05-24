@@ -184,12 +184,12 @@ Plataforma SaaS que combina:
 | Dataset Ford BR real | ✅ 175k VINs | ❌ | ❌ | ❌ |
 | IA explicável | ✅ Sinais visíveis | ⚠️ Limitada | ❌ | ⚠️ SHAP only |
 | LGPD-first | ✅ VIN_Hash + RLS | ✅ | ⚠️ | ⚠️ |
-| Ready em produção | ✅ Hoje | 3-6 meses | 1-2 meses | 2-3 meses |
+| Arquitetura preparada para produção | ✅ MVP funcional | 3-6 meses | 1-2 meses | 2-3 meses |
 | Integração FIPE/FENABRAVE | ✅ Nativa | ❌ | ⚠️ | ❌ |
 
 ## Critérios de qualidade
 - **Performance**: <2s render · <1s ranking 175k leads
-- **Segurança**: RLS Postgres · HMAC payloads · audit log LGPD
+- **Segurança**: RLS Postgres · HMAC payloads · audit log · LGPD-ready
 - **Usabilidade**: ≤4 cliques pra ação · UI 100% PT-BR
 - **Observabilidade**: 100% das chamadas IA rastreadas (custo + provider + cache)
 

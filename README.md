@@ -195,7 +195,7 @@ role:  admin
   1. Segmentação não-supervisionada na Base 1 (histórico completo) → K-Means K=4 validado por elbow + silhouette → 4 perfis: **fiel** · **abandono** · **esquecido** · **econômico**
   2. Classificação supervisionada na Base 2 (apenas dados pré-compra) → XGBoost → **zero data leakage**
 
-- **Modelo de produção (`xgb-real-v1`)** — treinado em **175.554 VINs reais Ford BR** (`vin_share_Desafio_02.xlsx`):
+- **Modelo técnico do MVP (`xgb-real-v1`)** — treinado em **175.554 VINs reais Ford BR** (`vin_share_Desafio_02.xlsx`):
   - accuracy = **62,7%**
   - F1 weighted = **0,60**
   - F1 macro = **0,48**
