@@ -26,7 +26,7 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: python -m src.scripts.train_models 1500
-      - run: pytest -q || true   # tolerante até existirem testes
+      - run: pytest -q
 
   secrets-scan:
     runs-on: ubuntu-latest
