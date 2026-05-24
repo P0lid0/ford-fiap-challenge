@@ -152,12 +152,12 @@ A challenge tem **5 disciplinas**. A nota é a média das entregas, e TODAS as d
 | **Classificação supervisionada (Base 2)** | ✅ | XGBoost com features pré-compra (zero leakage) |
 | **Sem data leakage** | ✅ | Lista de features fixa em `classifier_real.py` |
 | **Split treino/teste estratificado** | ✅ | `train_test_split` 80/20 com `random_state=42` |
-| **Métricas: accuracy/precision/recall/F1** | ✅ | Reportadas em `metrics_real.json` (acc 62.7% · F1 0.60) |
+| **Métricas: accuracy/precision/recall/F1** | ✅ | Geradas localmente em `services/ml/models/metrics_real.json` (acc 62.7% · F1 0.60) |
 | **Matriz de confusão** | ✅ | No notebook + relatório PDF + página `/visao-ford` |
 | **Leitura executiva** | ✅ | Seção 8 do notebook |
 | **Aplicação dia-a-dia da concessionária** | ✅ | Sistema FUNCIONAL: `/leads` mostra 135k clientes priorizados |
 
-**Modelo serializado**: `services/ml/models/classifier_real_v1.joblib` (treinado em 175.554 VINs reais Ford BR).
+**Modelo serializado**: gerado localmente em `services/ml/models/classifier_real_v1.joblib` por `python -m src.scripts.train_real` (treinado em 175.554 VINs reais Ford BR). Os Parquets em `services/ml/data/` e os modelos em `services/ml/models/` não são commitados por tamanho e governança de dados.
 
 ---
 

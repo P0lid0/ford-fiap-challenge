@@ -22,7 +22,7 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# ML artifacts (regenerados a partir do gerador sintético)
+# ML artifacts (gerados localmente; não commitados por tamanho/governança de dados)
 services/ml/models/
 services/ml/data/
 

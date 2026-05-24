@@ -21,8 +21,8 @@ Plataforma única que resolve os **dois desafios da Ford**:
 | 4. Cybersecurity | Documento de segurança (5 eixos) | `docs/SECURITY.md` |
 | 5. IA / ML | Serviço FastAPI + XGBoost | `services/ml/` |
 | 5. IA / ML | Notebook Jupyter (EDA + cluster + classif) | `services/ml/notebooks/ford_segmentation.ipynb` |
-| 5. IA / ML | Modelo treinado serializado | `services/ml/models/classifier_real_v1.joblib` |
-| 5. IA / ML | Métricas reais (175k VINs) | `services/ml/models/metrics_real.json` |
+| 5. IA / ML | Modelo treinado serializado | Gerado localmente em `services/ml/models/classifier_real_v1.joblib` |
+| 5. IA / ML | Métricas reais (175k VINs) | Geradas localmente em `services/ml/models/metrics_real.json` |
 
 ## 📨 Entregas finais via Teams
 
@@ -83,12 +83,12 @@ Plataforma única que resolve os **dois desafios da Ford**:
 ford-fiap-challenge/
 ├── apps/
 │   ├── api/                     # Fastify + Zod + Swagger + Supabase (30+ rotas)
-│   ├── web/                     # Next.js 15 (painel operacional)
-│   └── mobile/                  # Expo + Expo Router + AsyncStorage (9 telas)
+│   ├── mobile/                  # Expo + Expo Router + AsyncStorage (9 telas)
+│   └── web/                     # Next.js 15 (painel operacional)
 ├── services/ml/                 # FastAPI + scikit-learn + XGBoost
 │   ├── src/                     # classifier, classifier_real, clustering, scrapers, main.py
-│   ├── data/                    # Parquet das bases + JSON canônico D1
-│   ├── models/                  # .joblib + metrics.json + metrics_real.json
+│   ├── data/                    # gerado localmente: Parquet das bases + JSON canônico D1
+│   ├── models/                  # gerado localmente: .joblib + metrics.json + metrics_real.json
 │   └── notebooks/               # ford_segmentation.ipynb (entrega oficial D5)
 ├── packages/
 │   ├── types/                   # tipos compartilhados TS
@@ -150,8 +150,13 @@ SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
 ```bash
 cd services/ml
 pip install -r requirements.txt
-python -m src.scripts.train_real    # treina classifier_real_v1 com 175k VINs
+python ../../scripts/etl-d2-real.py  # gera Parquets reais a partir do XLSX Ford
+python -m src.scripts.train_real     # gera classifier_real_v1 + metrics_real.json
 ```
+
+Os artefatos em `services/ml/data/` e `services/ml/models/` são gerados
+localmente pelos scripts de ETL/treino e não são commitados por tamanho e
+governança de dados.
 
 ### 6. Rodar tudo (4 terminais)
 ```bash
@@ -197,6 +202,8 @@ role:  admin
   - 140.443 amostras treino · 35.111 amostras teste
 
 - **Bases sintéticas** (`services/ml/src/synthetic.py`) — usadas só durante desenvolvimento inicial pra validar o pipeline. Métricas sintéticas (≈ 60% acc) ficam como baseline histórico.
+
+- **Artefatos de treino**: `services/ml/data/*.parquet`, `services/ml/models/classifier_real_v1.joblib` e `services/ml/models/metrics_real.json` são gerados localmente por `scripts/etl-d2-real.py` e `python -m src.scripts.train_real`; não são commitados por tamanho e governança de dados.
 
 - **Notebook oficial**: [`services/ml/notebooks/ford_segmentation.ipynb`](services/ml/notebooks/ford_segmentation.ipynb)
 

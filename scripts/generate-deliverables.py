@@ -373,7 +373,8 @@ def build_ml_report():
         story.append(Paragraph(
             f"A versão de produção (<code>{METRICS_REAL['model_version']}</code>) foi retreinada "
             f"sobre <b>{total:,}</b> VINs reais do arquivo <code>vin_share_Desafio_02.xlsx</code> "
-            f"fornecido pela Ford. ETL em <code>scripts/etl-d2-real.py</code> converte XLSX → Parquet, "
+            f"fornecido pela Ford. ETL em <code>scripts/etl-d2-real.py</code> converte XLSX → Parquet "
+            "gerado localmente (não commitado por tamanho/governança de dados), "
             "reconstrói Base 1 (histórico completo) e Base 2 (features pré-compra: ano_modelo, "
             "ano_venda, mês_venda, dealer_venda, modelo, % histórico de cada perfil no dealer e "
             "no modelo). Implementação em <code>services/ml/src/classifier_real.py</code>.".replace(',', '.'),
@@ -545,13 +546,13 @@ def build_ml_report():
     deliv = [
         [PH("Item"), PH("Localização")],
         [P("Notebook EDA + treino"),    P("services/ml/notebooks/ford_segmentation.ipynb", TBL_CELL_MONO)],
-        [P("Dados sintéticos (baseline)"), P("services/ml/data/base1_full.parquet, base2_classifier.parquet", TBL_CELL_MONO)],
-        [P("Dados reais Ford BR"),      P("services/ml/data/ford_real_base1_full.parquet, ford_real_base2_classifier.parquet", TBL_CELL_MONO)],
+        [P("Dados sintéticos (baseline)"), P("gerados localmente: services/ml/data/base1_full.parquet, base2_classifier.parquet", TBL_CELL_MONO)],
+        [P("Dados reais Ford BR"),      P("gerados localmente: services/ml/data/ford_real_base1_full.parquet, ford_real_base2_classifier.parquet", TBL_CELL_MONO)],
         [P("ETL D2 (XLSX → Parquet)"),  P("scripts/etl-d2-real.py", TBL_CELL_MONO)],
-        [P("Modelo sintético"),         P("services/ml/models/classifier_base2.joblib", TBL_CELL_MONO)],
-        [P("Modelo PRODUÇÃO (real)"),   P("services/ml/models/classifier_real_v1.joblib", TBL_CELL_MONO)],
-        [P("Métricas (sintético)"),     P("services/ml/models/metrics.json", TBL_CELL_MONO)],
-        [P("Métricas (real)"),          P("services/ml/models/metrics_real.json", TBL_CELL_MONO)],
+        [P("Modelo sintético"),         P("gerado localmente: services/ml/models/classifier_base2.joblib", TBL_CELL_MONO)],
+        [P("Modelo PRODUÇÃO (real)"),   P("gerado localmente: services/ml/models/classifier_real_v1.joblib", TBL_CELL_MONO)],
+        [P("Métricas (sintético)"),     P("geradas localmente: services/ml/models/metrics.json", TBL_CELL_MONO)],
+        [P("Métricas (real)"),          P("geradas localmente: services/ml/models/metrics_real.json", TBL_CELL_MONO)],
         [P("Classifier real"),          P("services/ml/src/classifier_real.py", TBL_CELL_MONO)],
         [P("Serviço de inferência"),    P("services/ml/src/main.py (FastAPI)", TBL_CELL_MONO)],
         [P("Hybrid ML+IA classifier"),  P("apps/api/src/modules/retention/hybrid-classifier.ts", TBL_CELL_MONO)],
