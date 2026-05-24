@@ -294,7 +294,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const anoInt = parseInt(ano_codigo.slice(0, 4));
     // Parse modelo: "Ranger Raptor 3.0 V6 Bi-Turbo 4WD AUT." → modelo="Ranger", versao="Raptor 3.0 V6 Bi-Turbo 4WD AUT."
     const modeloPartes = fipeData.Modelo.split(/\s+/);
-    const modeloBase = modeloPartes[0];
+    const modeloBase = modeloPartes[0] ?? fipeData.Modelo;
     const versao = modeloPartes.slice(1).join(' ') || 'Padrão';
 
     // 2. Verifica cache
@@ -481,6 +481,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
             // dot-notation: motor.potencia_cv → obj.motor.potencia_cv
             if (h.includes('.')) {
               const [g, k] = h.split('.');
+              if (!g || !k) return;
               if (!obj[g]) obj[g] = {};
               obj[g][k] = isNaN(Number(val)) ? val : Number(val);
             } else if (h === 'equipamentos') {

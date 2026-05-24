@@ -9,14 +9,14 @@ import swaggerUi from '@fastify/swagger-ui';
 import { serializerCompiler, validatorCompiler, jsonSchemaTransform, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { env, allowedOrigins } from './config.js';
 import { authPlugin, requireUser } from './plugins/auth.js';
-import { vehicleRoutes } from './routes/vehicles.ts';
-import { adminVehicleRoutes } from './routes/admin-vehicles.ts';
-import { clientRoutes } from './routes/clients.ts';
-import { insightRoutes } from './routes/insights.ts';
-import { metricRoutes } from './routes/metrics.ts';
-import { aiConfigRoutes } from './routes/ai-config.ts';
-import { acoesRoutes } from './routes/acoes.ts';
-import { fordRealRoutes } from './routes/ford-real.ts';
+import { vehicleRoutes } from './routes/vehicles.js';
+import { adminVehicleRoutes } from './routes/admin-vehicles.js';
+import { clientRoutes } from './routes/clients.js';
+import { insightRoutes } from './routes/insights.js';
+import { metricRoutes } from './routes/metrics.js';
+import { aiConfigRoutes } from './routes/ai-config.js';
+import { acoesRoutes } from './routes/acoes.js';
+import { fordRealRoutes } from './routes/ford-real.js';
 
 const app = Fastify({
   logger: {
