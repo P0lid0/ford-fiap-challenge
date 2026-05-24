@@ -1,65 +1,119 @@
-# Ford × FIAP Challenge 2026
+# Ford × FIAP Challenge 2026 — Faro AI
 
-> **Squad:** · **Entrega:** 24/05/2026 · **Scrum Master:** Prof. Yan Coelho
+> **Equipe Faro AI** · **Entrega:** 24/05/2026 · **Scrum Master:** Prof. Yan Coelho
+>
+> Guilherme (RM 554962) · Pedro (RM 555556) · Fabrício (RM 558216) · Vitor (RM 554893) · Matheus (RM 555447)
 
 Plataforma única que resolve os **dois desafios da Ford**:
-- **Desafio 1 — Inteligência Competitiva:** lookup padronizado de fichas técnicas com seleção dinâmica de atributos + comparação 2-5 veículos.
-- **Desafio 2 — VIN Share / Retenção:** classificador no momento da compra (sem data leakage), leads proativos, KPIs por concessionária + insights gerados por Claude.
+- **Desafio 1 — Inteligência Competitiva:** schema canônico de 262 atributos × 14 seções (template oficial Ford), comparação 2-5 veículos lado a lado, busca FIPE + IA com web search.
+- **Desafio 2 — VIN Share / Retenção:** classificador XGBoost treinado em **175.554 VINs reais Ford BR**, leads priorizados via risco composto, ação real via Resend, visão 360 do cliente.
 
-## Arquitetura
+---
+
+## 📦 Entregas técnicas no GitHub (este repositório)
+
+| Disciplina | Entregável | Caminho |
+|---|---|---|
+| 1. SOA / Web Services | API REST Fastify + Swagger | `apps/api/` |
+| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**18 migrations**) |
+| 2. Mobile & IoT | App React Native + Expo Router | `apps/mobile/` |
+| 3. Testing / QA | Frontend web Next.js 15 | `apps/web/` |
+| 4. Cybersecurity | Documento de segurança (5 eixos) | `docs/SECURITY.md` |
+| 5. IA / ML | Serviço FastAPI + XGBoost | `services/ml/` |
+| 5. IA / ML | Notebook Jupyter (EDA + cluster + classif) | `services/ml/notebooks/ford_segmentation.ipynb` |
+| 5. IA / ML | Modelo treinado serializado | `services/ml/models/classifier_real_v1.joblib` |
+| 5. IA / ML | Métricas reais (175k VINs) | `services/ml/models/metrics_real.json` |
+
+## 📨 Entregas finais via Teams
+
+| Documento | Caminho local |
+|---|---|
+| Apresentação 14 slides (PPTX) | `docs/deliverables/Apresentacao_FaroAI.pptx` |
+| Roteiro do vídeo de pitch (3 min, 5 falantes) | `docs/deliverables/Pitch_FaroAI.md` |
+| Vídeo de pitch gravado | a gravar — inserir link no slide 1 do PPTX |
+| Arquitetura TOGAF (.archimate) | `docs/deliverables/FaroAI_Architecture.archimate` |
+| Diagrama de arquitetura exportado | `docs/deliverables/FaroAI_Architecture_Diagram.pdf/.png` |
+| Business Model Canvas | `docs/deliverables/Business_Canvas.docx` |
+| Quadro de Valor | `docs/deliverables/Quadro_de_Valor.docx` |
+| Relatório técnico ML (PDF) | `docs/deliverables/Relatorio_Desafio_2_ML.pdf` |
+| Checklist completa de entregas | `docs/deliverables/CHECKLIST_ENTREGAS.md` |
+| README das entregas | `docs/deliverables/README_Entregaveis.docx` |
+
+---
+
+## 🏗 Arquitetura
 
 ```
-┌──────────────────────────────────────────────┐
-│  apps/mobile  — React Native + Expo Router   │
-│  Login, Carteira, Leads, Veículos, Insights, │
-│  Detalhe do cliente, Cadastro, Comparativo   │
-└─────────────────────┬────────────────────────┘
-                      │ HTTPS + JWT (Supabase)
-┌─────────────────────▼────────────────────────┐
-│  apps/api  — Node.js + Fastify (TS, Zod)     │
-│  /me /vehicles /lookup /compare /clients     │
-│  /predict /insights /metrics  +  /docs       │
-└──────┬──────────────────────┬────────────────┘
-       │                      │
-       │              ┌───────▼─────────────┐
-       │              │ services/ml         │
-       │              │ FastAPI + sklearn + │
-       │              │ XGBoost             │
-       │              │ /predict /ingest    │
-       │              └─────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  apps/web — Next.js 15 + TypeScript + Tailwind   │
+│  Login · Carteira · Leads · Veículos · Clientes  │
+│  Ações · Configurações · Ajuda                   │
+└──────────────────┬───────────────────────────────┘
+                   │
+┌──────────────────▼───────────────────────────────┐
+│  apps/mobile — React Native + Expo Router        │
+│  Login · Tabs · Cliente [id] · Compare           │
+└──────────────────┬───────────────────────────────┘
+                   │ HTTPS + JWT (Supabase Auth)
+┌──────────────────▼───────────────────────────────┐
+│  apps/api — Node.js + Fastify + TypeScript + Zod │
+│  30+ rotas REST · Swagger UI em /docs            │
+│  /clients /vehicles /leads /metrics /acoes ...   │
+└──────┬───────────────────────┬───────────────────┘
+       │                       │
+       │              ┌────────▼─────────────────┐
+       │              │ services/ml — FastAPI    │
+       │              │ XGBoost + scikit-learn   │
+       │              │ classifier_real_v1       │
+       │              └──────────────────────────┘
        │
-┌──────▼──────────────────────────────────────┐
-│  Supabase (Postgres + Auth + RLS)           │
-│  profiles · dealerships · clients ·         │
-│  client_history · predictions · vehicles ·  │
-│  ai_insights · audit_log                    │
-└─────────────────────────────────────────────┘
+┌──────▼───────────────────────────────────────────┐
+│  Supabase Postgres (managed)                     │
+│  18 migrations · RLS por dealership × role       │
+│  profiles · dealerships · clients · vehicles     │
+│  catalog_items · vehicle_catalog_values          │
+│  acoes_retencao · email_logs · audit_log         │
+│  predictions · ai_insights · ai_keys             │
+└──────────────────────────────────────────────────┘
 ```
 
-## Estrutura
+## 📁 Estrutura do monorepo
 
 ```
 ford-fiap-challenge/
 ├── apps/
-│   ├── api/                     # Fastify + Zod + Swagger + Supabase + rate limit
-│   └── mobile/                  # Expo + Expo Router + Supabase Auth
-├── services/ml/                 # FastAPI + scikit-learn + XGBoost + scrapers
-│   ├── src/                     # synthetic, clustering, classifier, scrapers, main.py
-│   └── notebooks/               # ford_segmentation.ipynb (entrega IA)
+│   ├── api/                     # Fastify + Zod + Swagger + Supabase (30+ rotas)
+│   ├── web/                     # Next.js 15 (painel operacional)
+│   └── mobile/                  # Expo + Expo Router + AsyncStorage (9 telas)
+├── services/ml/                 # FastAPI + scikit-learn + XGBoost
+│   ├── src/                     # classifier, classifier_real, clustering, scrapers, main.py
+│   ├── data/                    # Parquet das bases + JSON canônico D1
+│   ├── models/                  # .joblib + metrics.json + metrics_real.json
+│   └── notebooks/               # ford_segmentation.ipynb (entrega oficial D5)
 ├── packages/
 │   ├── types/                   # tipos compartilhados TS
 │   └── ui/                      # design tokens Ford (cores, tipografia, spacing)
 ├── supabase/
-│   └── migrations/              # schema + RLS + seeds
+│   └── migrations/              # 18 migrations versionadas + RLS + seeds
 ├── scripts/
-│   ├── run-migrations.mjs       # aplica SQL no Postgres (precisa DB password)
-│   ├── seed-vehicles.mjs        # popula vehicles com Ranger Raptor + concorrentes
-│   ├── test-supabase-connection.mjs
-│   └── test-pg-connection.mjs
+│   ├── run-migrations.mjs       # aplica SQL no Postgres
+│   ├── apply-migrations-via-api.mjs # alternativa via Management API
+│   ├── seed-vehicles.mjs        # popula vehicles
+│   ├── import-ford-real-clients.mjs # importa 175k VINs Ford BR
+│   ├── populate-catalog-canonico.mjs # popula schema 262 atributos
+│   ├── reset-catalog-ranger-only.mjs # mantém só as 3 Ranger 26MY
+│   ├── generate-deliverables.py # gera PDFs/DOCX dos entregáveis
+│   └── build-presentation-pptx.mjs # gera Apresentacao_FaroAI.pptx
+├── docs/
+│   ├── SECURITY.md              # política de segurança (entrega D4)
+│   ├── SETUP.md
+│   └── deliverables/            # PPTX, PDFs, DOCX, .archimate
 └── .github/workflows/ci.yml     # lint + typecheck + train smoke + gitleaks
 ```
 
-## Setup local (10 min)
+---
+
+## 🚀 Setup local (10 min)
 
 ### 1. Pré-requisitos
 - Node ≥ 20 + pnpm ≥ 9 + Python 3.11
@@ -69,120 +123,138 @@ ford-fiap-challenge/
 cp .env.example .env.local
 ```
 Preencha `.env.local` com:
-- `SUPABASE_URL` — já preenchido com seu projeto
-- `SUPABASE_ANON_KEY` — pegar em **Supabase Dashboard → Project Settings → API → anon public**
-- `SUPABASE_SERVICE_ROLE_KEY` — já preenchido (service_role JWT)
-- `SUPABASE_JWT_SECRET` — em **Settings → API → JWT Settings** (necessário se quiser validar JWT no backend localmente)
-- `SUPABASE_DB_PASSWORD` (opcional) — em **Settings → Database → Connection string**. Só se quiser rodar migrations via `pnpm db:migrate`.
-- `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback regra-baseada
+- `SUPABASE_URL` — URL do projeto Supabase
+- `SUPABASE_ANON_KEY` — anon JWT
+- `SUPABASE_SERVICE_ROLE_KEY` — service_role JWT
+- `SUPABASE_JWT_SECRET` — para validar JWT no backend
+- `SUPABASE_DB_PASSWORD` (opcional) — para `pnpm db:migrate`
+- `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback rule-based
 
-### 3. Banco de dados
-**Opção A — Manual (1 minuto, recomendada):**
-1. Abra **Supabase Dashboard → SQL Editor → New Query**
-2. Cole o conteúdo de `supabase/migrations.combined.sql`
-3. Click em **Run**
-
-**Opção B — Script automatizado:**
+### 3. Instalar dependências
 ```bash
 pnpm install
-pnpm db:migrate   # precisa SUPABASE_DB_PASSWORD ou DATABASE_URL no .env.local
-pnpm db:seed
 ```
 
-### 4. Treinar o modelo ML
+### 4. Banco de dados — aplicar as 18 migrations
+**Opção A — Script automatizado (recomendado):**
+```bash
+SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
+```
+
+**Opção B — Manual via SQL Editor:**
+1. Supabase Dashboard → SQL Editor → New Query
+2. Cole o conteúdo de cada arquivo em `supabase/migrations/` (em ordem)
+3. Click em Run
+
+### 5. Treinar o modelo ML
 ```bash
 cd services/ml
 pip install -r requirements.txt
-python -m src.scripts.train_models 10000
-```
-Saída esperada:
-```
-silhouette=0.29  accuracy=0.60  f1_macro=0.56
+python -m src.scripts.train_real    # treina classifier_real_v1 com 175k VINs
 ```
 
-### 5. Rodar tudo (3 terminais)
+### 6. Rodar tudo (4 terminais)
 ```bash
 # Terminal 1 — ML service
 cd services/ml && python -m uvicorn src.main:app --reload --port 8001
 
 # Terminal 2 — API gateway
-cd apps/api && pnpm dev
+pnpm dev:api          # http://localhost:3333
 
-# Terminal 3 — App mobile
-cd apps/mobile && pnpm start
+# Terminal 3 — Web (painel operacional)
+pnpm dev:web          # http://localhost:3000
+
+# Terminal 4 — Mobile (Expo)
+pnpm dev:mobile       # QR code para Expo Go
 ```
 
-- API: http://localhost:3333 · Swagger: http://localhost:3333/docs
-- ML: http://localhost:8001 · OpenAPI: http://localhost:8001/docs
-- Mobile: scaneie o QR com Expo Go (ou rode `pnpm android` / `pnpm ios`)
+URLs:
+- Web: http://localhost:3000
+- API: http://localhost:3333
+- Swagger: **http://localhost:3333/docs**
+- ML: http://localhost:8001
+- ML OpenAPI: http://localhost:8001/docs
 
-## Endpoints principais
-
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/health` | Liveness |
-| `GET` | `/me` | Perfil + role + dealership do usuário autenticado |
-| `GET` | `/competitive/vehicles` | Lista veículos |
-| `GET` | `/competitive/lookup?marca=Ford&modelo=Ranger&versao=Raptor&fields=motor.potencia_cv,...` | **Lookup com seleção dinâmica** (requisito Ford) |
-| `POST` | `/competitive/compare` | Comparação 2-5 veículos campo a campo |
-| `GET` | `/competitive/fields` | Catálogo de campos comparáveis |
-| `POST` | `/clients` | Cadastra cliente + classifica automaticamente |
-| `GET` | `/clients` | Lista carteira (filtra por dealership via RLS) |
-| `GET` | `/clients/:id` | Detalhe + histórico de predições |
-| `GET` | `/clients/leads?risco_min=0.6` | Lista priorizada de leads em risco |
-| `GET` | `/metrics/dealership` | KPIs + **VIN Share** estimado |
-| `GET` | `/insights/client/:id` | XAI: Claude explica em PT-BR por que o cliente foi classificado |
-| `GET` | `/insights/portfolio` | Análise de carteira em PT-BR |
-
-## Segurança (Cybersec — disciplina 4)
-
-- **RLS habilitada** em todas as tabelas com policies escritas explicitamente.
-- `SUPABASE_SERVICE_ROLE_KEY` só é usado em `apps/api` — nunca chega no mobile.
-- JWT validado em todas as rotas autenticadas (`/me`, `/clients/*`, `/insights/*`).
-- Rate limit 120 req/min por usuário (configurável).
-- CORS restritivo via `ALLOWED_ORIGINS`.
-- Validação Zod em todos os body/querystring.
-- Tabela `audit_log` para eventos críticos (criação de cliente, etc.).
-- Logs estruturados (pino) com redaction automática de Authorization e API keys.
-- CI roda **gitleaks** para barrar push acidental de segredos.
-- Tratamento de erro genérico (sem stack trace para o cliente).
-
-## ML & IA (Disciplina 5)
-
-- **Base 1** (com pós-compra) → segmentação K-Means → 4 perfis: fiel · abandono · esquecido · econômico.
-- **Base 2** (somente pré-compra) → classificador XGBoost. **Sem data leakage.**
-- Métricas atuais (com 10k clientes sintéticos):
-  - Clustering: silhouette ≈ 0.29 (4 grupos)
-  - Classificador: accuracy ≈ 0.60, F1 macro ≈ 0.56 (vs 0.25 do baseline aleatório)
-- **Notebook**: [`services/ml/notebooks/ford_segmentation.ipynb`](services/ml/notebooks/ford_segmentation.ipynb) — entrega oficial da disciplina IA, com EDA, escolha de K (elbow + silhouette), interpretação dos clusters, classificação, feature importance e leitura executiva.
-
-## Diferencial — Claude API
-
-- `/insights/client/:id` usa **Claude Haiku 4.5** para XAI (explica em PT-BR por que o cliente foi classificado).
-- `/insights/portfolio` usa **Claude Sonnet 4.6** para análise estratégica da carteira.
-- **Cache** por hash do payload (TTL 24h por cliente, 6h por portfolio).
-- Sem `ANTHROPIC_API_KEY`, cai em fallback rule-based.
-
-## Sobre o Desafio 1 — ingestão de dados reais
-
-A ideia era usar `carrosnaweb.com.br` como fonte primária. No dia 14/05/2026 o backend deles está retornando 500 em todas as fichas técnicas. Implementação preparada com:
-
-1. **Scraper de carrosnaweb** (`services/ml/src/scrapers/carrosnaweb.py`) — parser por regex sobre o HTML clássico do site.
-2. **Fallback LLM** (`services/ml/src/scrapers/llm_extractor.py`) — fetch do site oficial da fabricante + Claude normaliza para o schema canônico.
-3. **Cache em Supabase** (`vehicles`) — não re-fetcha o que já foi normalizado.
-
-Veja `DECISIONS.md` para histórico completo.
-
-## Roadmap pós-MVP
-
-- [ ] App mobile: notificações push, modo escuro, biometria, deeplinks
-- [ ] Detox/Maestro e2e nos fluxos críticos
-- [ ] Survival analysis (tempo até evasão)
-- [ ] Uplift modeling (causalml)
-- [ ] Reverse ETL pro CRM/DMS da concessionária
-- [ ] Observabilidade: OpenTelemetry + Grafana
-- [ ] Documentos da disciplina QA: Pitch.pdf, BusinessCanvas.pdf, QuadroDeValor.pdf
-- [ ] Arquitetura no Archi (.archimate) com 4 visões TOGAF
+### 7. Login demo
+```
+email: admin@faroai.com.br
+senha: Ford2026!
+role:  admin
+```
 
 ---
 
+## 🧠 ML & IA (Disciplina 5)
+
+- **Pipeline em 2 etapas**:
+  1. Segmentação não-supervisionada na Base 1 (histórico completo) → K-Means K=4 validado por elbow + silhouette → 4 perfis: **fiel** · **abandono** · **esquecido** · **econômico**
+  2. Classificação supervisionada na Base 2 (apenas dados pré-compra) → XGBoost → **zero data leakage**
+
+- **Modelo de produção (`xgb-real-v1`)** — treinado em **175.554 VINs reais Ford BR** (`vin_share_Desafio_02.xlsx`):
+  - accuracy = **62,7%**
+  - F1 weighted = **0,60**
+  - F1 macro = **0,48**
+  - 140.443 amostras treino · 35.111 amostras teste
+
+- **Bases sintéticas** (`services/ml/src/synthetic.py`) — usadas só durante desenvolvimento inicial pra validar o pipeline. Métricas sintéticas (≈ 60% acc) ficam como baseline histórico.
+
+- **Notebook oficial**: [`services/ml/notebooks/ford_segmentation.ipynb`](services/ml/notebooks/ford_segmentation.ipynb)
+
+---
+
+## 🛡 Segurança (Disciplina 4 — 5 eixos)
+
+Documento completo em **[`docs/SECURITY.md`](docs/SECURITY.md)**. Cobre os 5 eixos:
+
+| Eixo | Pontos | Status |
+|---|---|---|
+| 1. Validação & Sanitização | 20 | ✅ Zod em todas rotas · sem SQL raw · rate-limit · multipart 30MB |
+| 2. Autenticação & RBAC | 20 | ✅ JWT Supabase · 3 roles · RLS Postgres |
+| 3. Proteção de APIs | 20 | ✅ TLS 1.3 · CORS allowlist · HMAC payloads |
+| 4. Dados & Privacidade | 25 | ✅ AES-256 at rest · VIN_Hash · LGPD-ready |
+| 5. Monitoramento & Auditoria | 15 | ✅ audit_log estruturado · email_logs · sem stack trace |
+
+---
+
+## 📊 Endpoints principais (Disciplina 1)
+
+Swagger UI completo: **http://localhost:3333/docs**
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/health` | Liveness |
+| GET | `/me` | Perfil + role + dealership autenticado |
+| GET | `/competitive/vehicles` | Lista veículos |
+| GET | `/competitive/lookup?marca=&modelo=&fields=…` | Lookup com seleção dinâmica de campos |
+| POST | `/competitive/compare` | Comparação 2-5 veículos |
+| GET | `/competitive/catalog-items` | Schema canônico Ford D1 (262 atributos) |
+| POST | `/competitive/compare/canonico` | Comparação na tabela canônica |
+| POST | `/competitive/vehicles/:id/refresh-price` | Atualiza preço FIPE |
+| POST | `/competitive/vehicles/:id/catalog-values/auto-fill` | IA preenche 262 atributos |
+| POST | `/clients` | Cadastra cliente + classifica |
+| GET | `/clients/leads?risco_min=&perfil=&sinal=…` | Leads priorizados (perfil + 6 sinais) |
+| GET | `/clients/leads/stats` | KPIs agregados de leads |
+| GET | `/metrics/dealership` | KPIs por dealer + VIN Share |
+| GET | `/metrics/proximas-revisoes` | Próximas revisões estimadas |
+| GET | `/metrics/garantia-status` | Veículos com garantia vencendo |
+| GET | `/metrics/anomalias-dealer` | Dealers fora da curva (z-score) |
+| POST | `/acoes/email-send` | **Envia e-mail real via Resend** |
+| GET | `/insights/client/:id` | XAI por cliente |
+| GET | `/insights/portfolio` | Briefing executivo da carteira |
+
+---
+
+## ✅ Status final
+
+- **18 migrations** versionadas em `supabase/migrations/`
+- **175.554 VINs reais Ford BR** importados na base
+- **786 valores canônicos** populados (262 atributos × 3 Ranger 26MY)
+- **135.839 leads** detectados via risco composto
+- **30+ endpoints REST** documentados em Swagger
+- **9 telas mobile** + **11 páginas web**
+- **Zero menções legadas** (FordIQ, Genova, 3am IT) removidas
+
+---
+
+**Faro AI · Ford × FIAP Challenge 2026**
+*AI que tem faro pro cliente certo.*

@@ -16,6 +16,7 @@ import { insightRoutes } from './routes/insights.ts';
 import { metricRoutes } from './routes/metrics.ts';
 import { aiConfigRoutes } from './routes/ai-config.ts';
 import { acoesRoutes } from './routes/acoes.ts';
+import { fordRealRoutes } from './routes/ford-real.ts';
 
 const app = Fastify({
   logger: {
@@ -132,6 +133,7 @@ await app.register(insightRoutes);
 await app.register(metricRoutes);
 await app.register(aiConfigRoutes);
 await app.register(acoesRoutes);
+await app.register(fordRealRoutes);
 
 await app.listen({ port: env.API_PORT, host: env.API_HOST });
 app.log.info(`📘 Swagger: http://${env.API_HOST}:${env.API_PORT}/docs`);

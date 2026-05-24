@@ -5,9 +5,10 @@ import {
   Trash2, Brain, Bot, Loader2, ExternalLink,
 } from 'lucide-react';
 import { Shell } from '@/components/Shell';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { api, type AiFunction } from '@/lib/api';
 
-type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'fipe' | 'vehicle411';
+type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'fipe' | 'vehicle411' | 'resend' | 'email_from';
 const PROVIDERS: { id: ProviderId; name: string; url: string; desc?: string }[] = [
   { id: 'openai',    name: 'OpenAI',        url: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', name: 'Anthropic',     url: 'https://console.anthropic.com/settings/keys' },
@@ -16,6 +17,10 @@ const PROVIDERS: { id: ProviderId; name: string; url: string; desc?: string }[] 
     desc: 'Token aumenta o rate limit de 500 → 1000 req/dia. Cobre carros, motos e caminhões.' },
   { id: 'vehicle411', name: '411 Vehicle Data', url: 'https://autoapi411.com',
     desc: 'Specs detalhadas (HP, torque, reboque, drivetrain) — cobertura US-centric (Ford, Chevrolet, RAM, Jeep, Toyota US). Free tier 3000 req/mês.' },
+  { id: 'resend',    name: 'Resend (e-mail)', url: 'https://resend.com/api-keys',
+    desc: 'Envio REAL de e-mail nas ações de retenção. Free tier 100 e-mails/dia. Sem chave configurada, ações ficam em modo mock (registra mas não envia).' },
+  { id: 'email_from', name: 'Remetente de e-mail', url: '#',
+    desc: 'E-mail que aparece como remetente. Formato "Nome <email@dominio.com>". Em sandbox Resend usa "FordIQ <onboarding@resend.dev>". Pra produção use domínio verificado.' },
 ];
 
 const FUNCTIONS: { id: AiFunction; label: string; desc: string; tier: 'fast' | 'smart' }[] = [
@@ -37,6 +42,7 @@ const FUNCTIONS: { id: AiFunction; label: string; desc: string; tier: 'fast' | '
 ];
 
 export default function Configuracoes() {
+  const { confirm, dialog } = useConfirm();
   const [tab, setTab] = useState<'keys' | 'functions'>('keys');
   const [keysStatus, setKeysStatus] = useState<Record<string, { configured: boolean; source: string; preview?: string }>>({});
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
@@ -77,7 +83,19 @@ export default function Configuracoes() {
   }
 
   async function deleteKey(provider: string) {
-    if (!confirm(`Remover chave ${provider}?`)) return;
+    const ok = await confirm({
+      title: `Remover chave ${provider}?`,
+      message: (
+        <>
+          A chave de API do <b>{provider}</b> vai ser removida do banco. Funções que
+          dependem dela vão parar de funcionar até você reconfigurar.
+        </>
+      ),
+      confirmLabel: 'Sim, remover',
+      cancelLabel: 'Cancelar',
+      variant: 'danger',
+    });
+    if (!ok) return;
     setSavingKey(provider); setKeyErr(null);
     try {
       await api.deleteAiKey(provider);
@@ -104,6 +122,7 @@ export default function Configuracoes() {
 
   return (
     <Shell>
+      {dialog}
       <div className="p-8 max-w-5xl mx-auto">
         <div className="flex items-center gap-3 mb-2">
           <Settings className="w-7 h-7 text-ford-blue" />

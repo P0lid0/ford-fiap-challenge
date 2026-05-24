@@ -37,7 +37,9 @@ EQUIPE = [
     ("Vitor",     "554893"),
     ("Matheus",   "555447"),
 ]
-PROJETO = "FordIQ — Inteligência Competitiva + Retenção VIN Share"
+PROJETO = "Faro AI — Inteligência Competitiva + Retenção VIN Share"
+EMPRESA = "Faro AI"
+TAGLINE = "AI que tem faro pro cliente certo."
 CHALLENGE = "Ford × FIAP 2026 · 1ª Sprint"
 ENTREGA = "24/05/2026"
 
@@ -47,8 +49,14 @@ FORD_BLUE_LIGHT = colors.HexColor("#0066B2")
 FORD_GREY = colors.HexColor("#4A4A4A")
 FORD_AMBER = colors.HexColor("#FFA500")
 
-# Métricas reais do modelo treinado
+# Métricas: prioriza métricas REAIS Ford BR (175k VINs), com fallback ao sintético.
 METRICS = json.loads((ROOT / "services" / "ml" / "models" / "metrics.json").read_text(encoding="utf-8"))
+_real_path = ROOT / "services" / "ml" / "models" / "metrics_real.json"
+METRICS_REAL = json.loads(_real_path.read_text(encoding="utf-8")) if _real_path.exists() else None
+
+# D1 schema canônico (262 itens × 14 seções)
+_d1_path = ROOT / "services" / "ml" / "data" / "ford-d1-ranger-26my.json"
+D1_SCHEMA = json.loads(_d1_path.read_text(encoding="utf-8")) if _d1_path.exists() else None
 
 
 # ============================================================
@@ -122,6 +130,18 @@ def build_ml_report():
         "venda, prever a qual perfil o novo cliente provavelmente pertencerá. Para cada perfil "
         "são propostas ações de retenção específicas, executáveis pelo CRM da concessionária.", BODY))
 
+    if METRICS_REAL:
+        n_train = METRICS_REAL.get("n_samples_train", 0)
+        n_test = METRICS_REAL.get("n_samples_test", 0)
+        total = n_train + n_test
+        story.append(Paragraph(
+            f"<b>Upgrade: dados reais Ford BR.</b> O modelo de produção (<code>{METRICS_REAL['model_version']}</code>) "
+            f"foi treinado com <b>{total:,}</b> VINs reais do arquivo <code>vin_share_Desafio_02.xlsx</code> "
+            f"({n_train:,} treino · {n_test:,} teste), entregando "
+            f"<b>accuracy {METRICS_REAL['accuracy']:.1%}</b> · F1-weighted {METRICS_REAL['f1_weighted']:.3f} · "
+            f"F1-macro {METRICS_REAL['f1_macro']:.3f}. As métricas no sintético (Seção 5) são mantidas como "
+            "baseline histórico de desenvolvimento — todo o produto consulta o modelo real.".replace(',', '.'), BODY))
+
     # ---- Hipótese de negócio ----
     story.append(Paragraph("2. Hipótese de Negócio", H2))
     story.append(Paragraph(
@@ -155,8 +175,15 @@ def build_ml_report():
     # ---- Bases de dados ----
     story.append(Paragraph("3. Bases de Dados", H2))
     story.append(Paragraph(
-        "Trabalhamos com duas bases sintéticas geradas em <code>services/ml/src/synthetic.py</code>, "
-        "construídas para refletir padrões plausíveis de comportamento de clientes Ford:", BODY))
+        "Durante o desenvolvimento inicial, usamos bases sintéticas geradas em "
+        "<code>services/ml/src/synthetic.py</code> para validar todo o pipeline (EDA, "
+        "clustering, treino, avaliação) sem depender da chegada do dataset oficial. "
+        "<b>Na versão final em produção</b>, o modelo <code>xgb-real-v1</code> foi "
+        "treinado com a <b>base real Ford BR de 175.554 VINs</b> "
+        "(<code>vin_share_Desafio_02.xlsx</code>) — descrito em detalhe na Seção 5.bis. "
+        "As métricas sintéticas (Seção 5) são mantidas apenas como baseline histórico de "
+        "desenvolvimento. As bases sintéticas seguiram a mesma estrutura conceitual "
+        "Base 1 (histórico completo) e Base 2 (apenas dados pré-compra):", BODY))
 
     bases_t = [
         [PH("Base"), PH("Conteúdo"), PH("Uso")],
@@ -337,6 +364,117 @@ def build_ml_report():
         "comerciais). Para o uso no chão da concessionária, a probabilidade de cada "
         "classe (e não só a top-1) é exibida ao vendedor, permitindo decisão informada.", BODY))
 
+    # ---- 5.bis Modelo em PRODUÇÃO (dados reais Ford BR) ----
+    if METRICS_REAL:
+        story.append(Paragraph("5.bis Modelo em Produção — Dados Reais Ford BR", H2))
+        n_train = METRICS_REAL.get("n_samples_train", 0)
+        n_test = METRICS_REAL.get("n_samples_test", 0)
+        total = n_train + n_test
+        story.append(Paragraph(
+            f"A versão de produção (<code>{METRICS_REAL['model_version']}</code>) foi retreinada "
+            f"sobre <b>{total:,}</b> VINs reais do arquivo <code>vin_share_Desafio_02.xlsx</code> "
+            f"fornecido pela Ford. ETL em <code>scripts/etl-d2-real.py</code> converte XLSX → Parquet, "
+            "reconstrói Base 1 (histórico completo) e Base 2 (features pré-compra: ano_modelo, "
+            "ano_venda, mês_venda, dealer_venda, modelo, % histórico de cada perfil no dealer e "
+            "no modelo). Implementação em <code>services/ml/src/classifier_real.py</code>.".replace(',', '.'),
+            BODY))
+
+        real_kpi = [
+            [PH("Métrica"), PH("Valor", center=True)],
+            [P("Accuracy"),    P(f"{METRICS_REAL['accuracy']:.4f}", TBL_CELL_C)],
+            [P("F1 macro"),    P(f"{METRICS_REAL['f1_macro']:.4f}", TBL_CELL_C)],
+            [P("F1 weighted"), P(f"{METRICS_REAL['f1_weighted']:.4f}", TBL_CELL_C)],
+            [P("Treino / Teste"), P(f"{n_train:,} / {n_test:,}".replace(',', '.'), TBL_CELL_C)],
+            [P("Modelo"),      P(METRICS_REAL["model_version"], TBL_CELL_C)],
+        ]
+        t_real = Table(real_kpi, colWidths=[5 * cm, 5 * cm], repeatRows=1)
+        t_real.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), FORD_BLUE),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F4F8')]),
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#CCCCCC')),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(t_real)
+        story.append(Spacer(1, 0.3 * cm))
+
+        # Matriz confusão real
+        story.append(Paragraph("5.bis.1 Matriz de Confusão (dados reais)", H3))
+        cm_labels_r = METRICS_REAL["labels"]
+        matrix_r = METRICS_REAL["confusion_matrix"]
+        TBL_CELL_RH2 = ParagraphStyle("TblCellRH2", parent=TBL_CELL, fontName="Helvetica-Bold",
+                                       textColor=colors.white)
+        cm_rows_r = [[Paragraph("", TBL_HEAD_C)] +
+                     [PH("Pred " + l, center=True) for l in cm_labels_r]]
+        for i, label in enumerate(cm_labels_r):
+            cm_rows_r.append([Paragraph("Real " + label, TBL_CELL_RH2)] +
+                             [P(f"{x:,}".replace(',', '.'), TBL_CELL_C) for x in matrix_r[i]])
+        t_real_cm = Table(cm_rows_r, colWidths=[3.2 * cm] + [2.8 * cm] * 4)
+        t_real_cm.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), FORD_BLUE),
+            ('BACKGROUND', (0, 1), (0, -1), FORD_BLUE_LIGHT),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#CCCCCC')),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        for i in range(len(cm_labels_r)):
+            t_real_cm.setStyle(TableStyle([
+                ('BACKGROUND', (i + 1, i + 1), (i + 1, i + 1), colors.HexColor('#D4F0D4'))
+            ]))
+        story.append(t_real_cm)
+        story.append(Spacer(1, 0.3 * cm))
+
+        story.append(Paragraph(
+            f"<b>Distribuição observada na base real:</b> ~55% Esquecido, ~19% Fiel, ~15% "
+            "Econômico, ~11% Abandono. A predominância de Esquecido confirma a hipótese "
+            "de que o maior ganho operacional está em reativar clientes que perdem o "
+            "timing da revisão — exatamente o foco do módulo <code>/leads</code>, que "
+            "ranqueia por risco de evasão.", BODY))
+
+    # ---- 5.ter Schema canônico Ford D1 (262 atributos) ----
+    if D1_SCHEMA:
+        n_secoes = len(D1_SCHEMA["sections"])
+        n_items = sum(len(v) for v in D1_SCHEMA["sections"].values())
+        story.append(Paragraph("5.ter Cobertura do Desafio 1 — Schema Canônico Ford D1", H2))
+        story.append(Paragraph(
+            f"O Desafio 1 (Inteligência Competitiva) pede que o sistema permita "
+            "comparações ponta-a-ponta com qualquer concorrente. A Ford forneceu um "
+            f"<b>template oficial de Vehicle Data com {n_items} atributos em {n_secoes} seções</b> "
+            "(Wheels, Connectivity, Ice Line Up, Air conditioning, Safety, High tech, Global "
+            "Closing, Trim, SunRoof, Seats, Lights, 4X4, Others + Motorização). Implementamos "
+            "esse template como schema canônico no banco:", BODY))
+        d1_t = [
+            [PH("Objeto"), PH("Função")],
+            [P("catalog_items"), P(f"{n_items} linhas read-mostly. Cada linha = 1 atributo "
+                                    "do template (secao, ordem, nome, tipo: flag/numeric/text)")],
+            [P("vehicle_catalog_values"), P("Bridge (vehicle × item) com valor preenchido (X / 0 / "
+                                            "numérico) + confiança + fonte")],
+            [P("GET /competitive/catalog-items"), P("Retorna os 262 atributos agrupados por seção")],
+            [P("POST /competitive/compare/canonico"), P("Retorna matriz 262 × N veículos para "
+                                                       "renderização da tabela fixa")],
+            [P("/veiculos/comparar"), P("UI exibe a tabela canônica colapsável por seção, com "
+                                        "ícones ✓/✗ para flags e valores numéricos por trim")],
+        ]
+        t_d1 = Table(d1_t, colWidths=[5.5 * cm, 11.0 * cm], repeatRows=1)
+        t_d1.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), FORD_BLUE),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F0F4F8')]),
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#CCCCCC')),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(t_d1)
+        story.append(Spacer(1, 0.3 * cm))
+        story.append(Paragraph(
+            f"As três versões da Ford Ranger 26MY (XLT, Limited, Limited+) já chegam com "
+            f"todos os {n_items} valores preenchidos a partir do datasheet oficial. Cadastros "
+            "de concorrentes (Hilux, Amarok, SW4, Frontier…) herdam o schema vazio e podem "
+            "ser preenchidos manualmente ou via IA puxando do site oficial — habilitando "
+            "comparação 1:1 estrita, como pede a Ford.", BODY))
+
     # ---- Estratégias por perfil ----
     story.append(Paragraph("6. Estratégias de Retenção por Perfil", H2))
     story.append(Paragraph(
@@ -390,8 +528,9 @@ def build_ml_report():
         "tangíveis para cada segmento.", BODY))
     story.append(Paragraph("<b>Próximos passos sugeridos:</b>", BODY))
     for txt in [
-        "Coletar dados reais de uma loja-piloto e re-treinar — esperamos ganho substancial "
-        "de acurácia ao substituir os dados sintéticos pelo histórico verdadeiro.",
+        "Coletar dados reais adicionais de uma loja-piloto, com tracking de conversão pós-ação, "
+        "para re-treino contínuo e validação operacional do modelo já em produção "
+        "(<code>xgb-real-v1</code>, 175.554 VINs, accuracy 62,7%).",
         "Adicionar tracking de conversão das ações sugeridas (A/B) para fechar o loop "
         "modelo-ação-resultado e quantificar uplift de retenção por perfil.",
         "Treinar variantes específicas por região/dealership para capturar diferenças "
@@ -406,11 +545,19 @@ def build_ml_report():
     deliv = [
         [PH("Item"), PH("Localização")],
         [P("Notebook EDA + treino"),    P("services/ml/notebooks/ford_segmentation.ipynb", TBL_CELL_MONO)],
-        [P("Dados sintéticos"),         P("services/ml/data/base1_full.parquet, base2_classifier.parquet", TBL_CELL_MONO)],
-        [P("Modelo serializado"),       P("services/ml/models/classifier_base2.joblib", TBL_CELL_MONO)],
-        [P("Métricas serializadas"),    P("services/ml/models/metrics.json", TBL_CELL_MONO)],
+        [P("Dados sintéticos (baseline)"), P("services/ml/data/base1_full.parquet, base2_classifier.parquet", TBL_CELL_MONO)],
+        [P("Dados reais Ford BR"),      P("services/ml/data/ford_real_base1_full.parquet, ford_real_base2_classifier.parquet", TBL_CELL_MONO)],
+        [P("ETL D2 (XLSX → Parquet)"),  P("scripts/etl-d2-real.py", TBL_CELL_MONO)],
+        [P("Modelo sintético"),         P("services/ml/models/classifier_base2.joblib", TBL_CELL_MONO)],
+        [P("Modelo PRODUÇÃO (real)"),   P("services/ml/models/classifier_real_v1.joblib", TBL_CELL_MONO)],
+        [P("Métricas (sintético)"),     P("services/ml/models/metrics.json", TBL_CELL_MONO)],
+        [P("Métricas (real)"),          P("services/ml/models/metrics_real.json", TBL_CELL_MONO)],
+        [P("Classifier real"),          P("services/ml/src/classifier_real.py", TBL_CELL_MONO)],
         [P("Serviço de inferência"),    P("services/ml/src/main.py (FastAPI)", TBL_CELL_MONO)],
-        [P("Cliente HTTP no gateway"),  P("apps/api/src/modules/retention/ml-client.ts", TBL_CELL_MONO)],
+        [P("Hybrid ML+IA classifier"),  P("apps/api/src/modules/retention/hybrid-classifier.ts", TBL_CELL_MONO)],
+        [P("D1 Schema canônico (262)"), P("services/ml/data/ford-d1-ranger-26my.json + migration 015", TBL_CELL_MONO)],
+        [P("D1 Populate script"),       P("scripts/populate-catalog-canonico.mjs", TBL_CELL_MONO)],
+        [P("Resumo Ford real"),         P("services/ml/data/ford-real-summary.json", TBL_CELL_MONO)],
         [P("Relatório (este doc)"),     P("docs/deliverables/Relatorio_Desafio_2_ML.pdf", TBL_CELL_MONO)],
     ]
     t8 = Table(deliv, colWidths=[5.0 * cm, 11.5 * cm], repeatRows=1)
@@ -850,10 +997,10 @@ def build_readme_docx():
         ("Relatorio_Desafio_2_ML.pdf",
          "Relatório técnico do classificador de retenção (Desafio 2): hipótese, bases, pipeline, métricas, perfis e ações."),
         ("Business_Canvas.docx",
-         "Business Model Canvas do projeto FordIQ, cobrindo proposta de valor, parcerias, recursos, canais e custos."),
+         "Business Model Canvas do projeto Faro AI, cobrindo proposta de valor, parcerias, recursos, canais e custos."),
         ("Quadro_de_Valor.docx",
          "Mapeamento de stakeholders × expectativas × métricas de negócio + qualidade × prioridade."),
-        ("FordIQ_Architecture.archimate",
+        ("FaroAI_Architecture.archimate",
          "Modelo de arquitetura no padrão TOGAF/ArchiMate 3.1 — abrir no Archi (https://www.archimatetool.com)."),
         ("../SECURITY.md",
          "Política de segurança cobrindo os 5 eixos avaliativos de Cybersecurity (validação, auth, APIs, dados, monitoramento)."),
@@ -898,7 +1045,7 @@ def build_readme_docx():
     notes = [
         ("Arquitetura SOA & Web Services", "API REST com Swagger em /docs, separação routes/lib/db, 8 migrations Supabase ordenadas, serviços independentes."),
         ("Mobile Development & IoT", "App Expo 52 + RN 0.76 com expo-router, AsyncStorage, consumo async."),
-        ("Testing, Compliance & QA", "Veja Business_Canvas.docx, Quadro_de_Valor.docx, FordIQ_Architecture.archimate. Métricas de negócio + qualidade em todas promessas."),
+        ("Testing, Compliance & QA", "Veja Business_Canvas.docx, Quadro_de_Valor.docx, FaroAI_Architecture.archimate. Métricas de negócio + qualidade em todas promessas."),
         ("Cybersecurity", "Veja SECURITY.md — cobre os 5 eixos: validação (Zod), auth (JWT + RBAC), APIs (helmet, rate-limit, CORS, HMAC), dados (pseudonimização, RLS, retenção), monitoramento (Pino + audit_log)."),
         ("IA & Machine Learning", "Veja Relatorio_Desafio_2_ML.pdf + services/ml/notebooks/ford_segmentation.ipynb. Clustering KMeans k=4 + classificador XGBoost sem data leakage."),
     ]

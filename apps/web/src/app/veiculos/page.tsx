@@ -5,11 +5,12 @@ import Link from 'next/link';
 import {
   Check, Search, GitCompare, Plus, Eye, ChevronDown, ChevronUp,
   Car, Truck, ShoppingCart, X, SlidersHorizontal, ArrowUpDown,
-  Layers, Grid3x3, Sparkles, Fuel, Gauge,
+  Layers, Grid3x3, Sparkles, Fuel, Gauge, RefreshCw, Loader2, AlertCircle, TrendingUp, TrendingDown,
 } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { ConfianceBadge } from '@/components/SourceBadge';
 import { SearchWizard } from '@/components/SearchWizard';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { api } from '@/lib/api';
 
 const CATEGORIA_LABELS: Record<string, { label: string; icon: any; color: string }> = {
@@ -250,7 +251,11 @@ export default function Veiculos() {
                   )}
                   {!isCollapsed && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {items.map(v => <VehicleCard key={v.id} v={v} sel={selected.includes(v.id)} onToggle={toggleSel} />)}
+                      {items.map(v => (
+                        <VehicleCard key={v.id} v={v} sel={selected.includes(v.id)} onToggle={toggleSel}
+                          onUpdated={updated => setVehicles(curr => curr.map(c => c.id === updated.id ? { ...c, ...updated } : c))}
+                        />
+                      ))}
                     </div>
                   )}
                 </section>
@@ -273,13 +278,62 @@ export default function Veiculos() {
   );
 }
 
-function VehicleCard({ v, sel, onToggle }: { v: any; sel: boolean; onToggle: (id: string) => void }) {
+function VehicleCard({ v, sel, onToggle, onUpdated }: {
+  v: any; sel: boolean;
+  onToggle: (id: string) => void;
+  onUpdated: (updated: any) => void;
+}) {
   const catInfo = CATEGORIA_LABELS[v.categoria] ?? { label: v.categoria, icon: Car, color: 'bg-gray-50 text-gray-700' };
+  const { confirm, dialog } = useConfirm();
+  const [refreshingPrice, setRefreshingPrice] = useState(false);
+  const [priceMsg, setPriceMsg] = useState<{ tone: 'ok' | 'err'; text: string; diff?: number | null } | null>(null);
+
+  async function refreshPrice(e: React.MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    const ok = await confirm({
+      title: 'Atualizar preço FIPE?',
+      message: (
+        <>
+          Vou consultar a FIPE pra <b>{v.marca} {v.modelo} {v.versao} · {v.ano}</b>
+          {' '}e atualizar só o preço (e o mês de referência). Specs e equipamentos não mudam.
+        </>
+      ),
+      details: <>Sem custo de IA — só a consulta gratuita à API FIPE.</>,
+      confirmLabel: 'Sim, consultar FIPE',
+      cancelLabel: 'Cancelar',
+      variant: 'info',
+    });
+    if (!ok) return;
+    setRefreshingPrice(true); setPriceMsg(null);
+    try {
+      const r = await api.refreshVehiclePrice(v.id);
+      onUpdated(r.vehicle);
+      const diff = r.diff;
+      setPriceMsg({
+        tone: 'ok',
+        text: r.preco_antigo == null
+          ? `Preço inicial: R$ ${r.preco_novo.toLocaleString('pt-BR')} (${r.mes_referencia})`
+          : diff === 0
+            ? `Preço mantido (${r.mes_referencia})`
+            : `Atualizado · ref ${r.mes_referencia}`,
+        diff,
+      });
+      // some a mensagem depois de 5s
+      setTimeout(() => setPriceMsg(null), 5000);
+    } catch (e: any) {
+      const msg = e.message ?? String(e);
+      setPriceMsg({ tone: 'err', text: msg.includes('not_in_fipe')
+        ? 'FIPE não tem essa combinação cadastrada'
+        : msg.slice(0, 80) });
+    } finally { setRefreshingPrice(false); }
+  }
 
   return (
     <div className={`group bg-white rounded-2xl border-2 transition relative overflow-hidden ${
       sel ? 'border-ford-blue ring-4 ring-ford-blue/10' : 'border-gray-300 hover:border-ford-blue hover:shadow-md'
     }`}>
+      {dialog}
       {sel && (
         <div className="absolute top-3 right-3 w-7 h-7 rounded-full bg-ford-blue text-white flex items-center justify-center z-10">
           <Check className="w-4 h-4" />
@@ -302,21 +356,63 @@ function VehicleCard({ v, sel, onToggle }: { v: any; sel: boolean; onToggle: (id
         </h3>
         <div className="text-sm text-gray-500 mb-3">{v.ano}</div>
 
-        {/* Preço destaque */}
-        {v.preco_brl ? (
-          <div className="mb-3 pb-3 border-b border-gray-100">
-            <div className="text-2xl font-black text-ford-blue leading-none">
-              R$ {(v.preco_brl).toLocaleString('pt-BR')}
+        {/* Preço destaque com botão de atualizar FIPE */}
+        <div className="mb-3 pb-3 border-b border-gray-100">
+          {v.preco_brl ? (
+            <>
+              <div className="flex items-start justify-between gap-2">
+                <div className="text-2xl font-black text-ford-blue leading-none">
+                  R$ {(v.preco_brl).toLocaleString('pt-BR')}
+                </div>
+                <button onClick={refreshPrice} disabled={refreshingPrice}
+                  title="Atualizar preço com FIPE atual"
+                  className="pointer-events-auto relative z-20 inline-flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 hover:bg-ford-blue hover:text-white text-gray-500 transition disabled:opacity-50">
+                  {refreshingPrice
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <RefreshCw className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 mt-1">
+                {v.fipe_codigo ? `FIPE oficial · ${v.fipe_mes_referencia ?? ''}` : 'sem FIPE'}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm text-gray-400 italic">Preço não disponível</div>
+              <button onClick={refreshPrice} disabled={refreshingPrice}
+                title="Buscar preço atual na FIPE"
+                className="pointer-events-auto relative z-20 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-ford-blue text-white text-[10px] font-bold uppercase tracking-wider hover:bg-ford-blue-dark transition disabled:opacity-50">
+                {refreshingPrice
+                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                  : <RefreshCw className="w-3 h-3" />}
+                Buscar FIPE
+              </button>
             </div>
-            <div className="text-[10px] uppercase tracking-wider text-gray-500 mt-1">
-              {v.fipe_codigo ? `FIPE oficial · ${v.fipe_mes_referencia ?? ''}` : 'sem FIPE'}
+          )}
+          {priceMsg && (
+            <div className={`mt-2 text-[10px] flex items-center gap-1.5 ${
+              priceMsg.tone === 'ok'
+                ? (priceMsg.diff != null && priceMsg.diff > 0)
+                  ? 'text-rose-600'
+                  : (priceMsg.diff != null && priceMsg.diff < 0)
+                    ? 'text-emerald-600'
+                    : 'text-gray-600'
+                : 'text-rose-600'
+            }`}>
+              {priceMsg.tone === 'err' && <AlertCircle className="w-3 h-3" />}
+              {priceMsg.tone === 'ok' && priceMsg.diff != null && priceMsg.diff > 0 && <TrendingUp className="w-3 h-3" />}
+              {priceMsg.tone === 'ok' && priceMsg.diff != null && priceMsg.diff < 0 && <TrendingDown className="w-3 h-3" />}
+              <span>
+                {priceMsg.text}
+                {priceMsg.tone === 'ok' && priceMsg.diff != null && priceMsg.diff !== 0 && (
+                  <span className="ml-1 font-bold">
+                    ({priceMsg.diff > 0 ? '+' : ''}R$ {Math.abs(priceMsg.diff).toLocaleString('pt-BR')})
+                  </span>
+                )}
+              </span>
             </div>
-          </div>
-        ) : (
-          <div className="mb-3 pb-3 border-b border-gray-100">
-            <div className="text-sm text-gray-400">Preço não disponível</div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Specs em chips */}
         <div className="flex flex-wrap gap-2 text-xs mb-3">

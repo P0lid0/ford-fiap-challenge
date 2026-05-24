@@ -2,56 +2,34 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Pencil, Save, X, Check, Trash2, RefreshCw, FileText, Sparkles } from 'lucide-react';
+import { ArrowLeft, Pencil, Save, X, Check, Trash2, RefreshCw, FileText, Sparkles, DollarSign, Loader2, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react';
 import { Shell } from '@/components/Shell';
-import { ConfianceBadge, SourceBadge } from '@/components/SourceBadge';
+import { ConfianceBadge } from '@/components/SourceBadge';
+import { CanonicoBlock } from '@/components/CanonicoBlock';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { api } from '@/lib/api';
 
-const SPEC_GROUPS: Array<[string, string, Array<[string, string, string?]>]> = [
-  ['Motor', 'motor', [
-    ['Cilindrada (cc)', 'cilindrada_cc', 'number'],
-    ['Potência (cv)', 'potencia_cv', 'number'],
-    ['Torque (Nm)', 'torque_nm', 'number'],
-    ['Combustível', 'combustivel'],
-    ['Aspiração', 'aspiracao'],
-    ['Cilindros', 'cilindros', 'number'],
-  ]],
-  ['Transmissão', 'transmissao', [
-    ['Tipo', 'tipo'],
-    ['Marchas', 'marchas', 'number'],
-    ['Tração', 'tracao'],
-  ]],
-  ['Desempenho', 'desempenho', [
-    ['0-100 km/h (s)', 'aceleracao_0_100_s', 'number'],
-    ['Vel. máxima (km/h)', 'velocidade_max_kmh', 'number'],
-    ['Consumo cidade (km/l)', 'consumo_cidade_kml', 'number'],
-    ['Consumo estrada (km/l)', 'consumo_estrada_kml', 'number'],
-    ['Autonomia (km)', 'autonomia_km', 'number'],
-  ]],
-  ['Dimensões', 'dimensoes', [
-    ['Comprimento (mm)', 'comprimento_mm', 'number'],
-    ['Largura (mm)', 'largura_mm', 'number'],
-    ['Altura (mm)', 'altura_mm', 'number'],
-    ['Entre-eixos (mm)', 'entre_eixos_mm', 'number'],
-    ['Vão livre (mm)', 'vao_livre_mm', 'number'],
-    ['Peso (kg)', 'peso_kg', 'number'],
-    ['Porta-malas (L)', 'capacidade_porta_malas_l', 'number'],
-    ['Caçamba (L)', 'capacidade_cacamba_l', 'number'],
-    ['Carga (kg)', 'capacidade_carga_kg', 'number'],
-    ['Reboque (kg)', 'capacidade_reboque_kg', 'number'],
-  ]],
-];
-
+/**
+ * Página de detalhe do veículo (concorrência).
+ *
+ * IMPORTANTE: por solicitação explícita do usuário, esta página NÃO exibe mais
+ * blocos separados pra Motor / Transmissão / Desempenho / Dimensões. Toda a
+ * ficha técnica está na seção "Especificações canônicas Ford D1" (262
+ * atributos em 14 seções) abaixo. O bloco de equipamentos-legado (tags livres)
+ * fica colapsado pra compatibilidade.
+ */
 export default function VeiculoDetalhe() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const { confirm, dialog } = useConfirm();
   const [v, setV] = useState<any>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingPrice, setRefreshingPrice] = useState(false);
+  const [priceMsg, setPriceMsg] = useState<{ tone: 'ok' | 'err'; text: string; diff?: number | null } | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showEbookInput, setShowEbookInput] = useState(false);
   const [ebookUrl, setEbookUrl] = useState('');
@@ -61,14 +39,62 @@ export default function VeiculoDetalhe() {
     api.getVehicle(params.id).then(d => { setV(d); setDraft(d); }).catch(e => setErr(e.message));
   }, [params.id]);
 
-  function setSpec(group: string, key: string, value: any) {
-    setDraft({
-      ...draft,
-      [group]: { ...(draft[group] ?? {}), [key]: value === '' ? null : (isNaN(Number(value)) ? value : Number(value)) },
+  async function refreshPrice() {
+    const ok = await confirm({
+      title: 'Atualizar preço FIPE?',
+      message: (
+        <>
+          Vou consultar a FIPE pra <b>{v.marca} {v.modelo} {v.versao} · {v.ano}</b>
+          {' '}e atualizar só o preço (e o mês de referência). Specs e equipamentos não mudam.
+        </>
+      ),
+      details: <>Sem custo de IA — só a consulta gratuita à API FIPE.</>,
+      confirmLabel: 'Sim, consultar FIPE',
+      cancelLabel: 'Cancelar',
+      variant: 'info',
     });
+    if (!ok) return;
+    setRefreshingPrice(true); setPriceMsg(null); setErr(null);
+    try {
+      const r = await api.refreshVehiclePrice(v.id);
+      setV((curr: any) => ({ ...curr, ...r.vehicle }));
+      setDraft((curr: any) => ({ ...curr, ...r.vehicle }));
+      setPriceMsg({
+        tone: 'ok',
+        text: r.preco_antigo == null
+          ? `Preço inicial: R$ ${r.preco_novo.toLocaleString('pt-BR')} (ref ${r.mes_referencia})`
+          : r.diff === 0
+            ? `Preço mantido (ref ${r.mes_referencia})`
+            : `Atualizado de R$ ${r.preco_antigo.toLocaleString('pt-BR')} → R$ ${r.preco_novo.toLocaleString('pt-BR')} (ref ${r.mes_referencia})`,
+        diff: r.diff,
+      });
+      setTimeout(() => setPriceMsg(null), 8000);
+    } catch (e: any) {
+      const msg = e.message ?? String(e);
+      setPriceMsg({ tone: 'err', text: msg.includes('not_in_fipe')
+        ? 'FIPE não tem essa combinação cadastrada — preço não disponível'
+        : msg.includes('fipe_unavailable')
+          ? 'FIPE indisponível no momento. Tente novamente em alguns segundos.'
+          : msg.slice(0, 120) });
+    } finally { setRefreshingPrice(false); }
   }
 
   async function refresh(opts?: { ebook_url?: string; skip_ebook?: boolean }) {
+    const ok = await confirm({
+      title: 'Reanalisar o veículo?',
+      message: (
+        <>
+          Vou consultar FIPE + e-book + site oficial + IA pra atualizar
+          {' '}<b>{v.marca} {v.modelo} {v.versao}</b>. Pode levar alguns segundos e
+          consome créditos de IA paga.
+        </>
+      ),
+      details: opts?.ebook_url ? <>Vou usar o PDF: <code className="break-all">{opts.ebook_url}</code></> : undefined,
+      confirmLabel: 'Sim, reanalisar',
+      cancelLabel: 'Cancelar',
+      variant: 'ai',
+    });
+    if (!ok) return;
     setRefreshing(true); setErr(null);
     try {
       const updated = await api.refreshVehicle(v.id, opts);
@@ -80,6 +106,20 @@ export default function VeiculoDetalhe() {
   }
 
   async function remove() {
+    const ok = await confirm({
+      title: `Excluir ${v.marca} ${v.modelo} ${v.versao}?`,
+      message: (
+        <>
+          Esta ação é <b>permanente</b> — o veículo, seus {' '}
+          <b>262 valores canônicos</b> e todas as comparações que o usam
+          serão removidos. Não dá pra desfazer.
+        </>
+      ),
+      confirmLabel: 'Sim, excluir definitivamente',
+      cancelLabel: 'Cancelar',
+      variant: 'danger',
+    });
+    if (!ok) return;
     setDeleting(true); setErr(null);
     try {
       await api.deleteVehicle(v.id);
@@ -91,15 +131,20 @@ export default function VeiculoDetalhe() {
   }
 
   async function save() {
+    const ok = await confirm({
+      title: 'Salvar alterações?',
+      message: <>Vou gravar as alterações em <b>{v.marca} {v.modelo} {v.versao}</b>.</>,
+      confirmLabel: 'Sim, salvar',
+      cancelLabel: 'Voltar a editar',
+      variant: 'info',
+    });
+    if (!ok) return;
     setSaving(true); setErr(null);
     try {
-      // Envia só os grupos modificados
       const patch: any = {};
-      for (const [, group] of SPEC_GROUPS) if (draft[group]) patch[group] = draft[group];
       for (const k of ['marca', 'modelo', 'versao', 'ano', 'categoria', 'preco_brl', 'pais_origem', 'notas']) {
         if (draft[k] !== v[k]) patch[k] = draft[k];
       }
-      if (JSON.stringify(draft.equipamentos) !== JSON.stringify(v.equipamentos)) patch.equipamentos = draft.equipamentos;
       const updated = await api.updateVehicle(v.id, patch);
       setV(updated); setDraft(updated);
       setEditing(false);
@@ -108,25 +153,96 @@ export default function VeiculoDetalhe() {
     } finally { setSaving(false); }
   }
 
-  if (!v || !draft) return <Shell><div className="p-8 text-gray-500">{err || 'Carregando…'}</div></Shell>;
+  async function cancelEdit() {
+    const hasChanges = ['marca', 'modelo', 'versao', 'ano', 'categoria', 'preco_brl', 'pais_origem', 'notas']
+      .some(k => draft[k] !== v[k]);
+    if (hasChanges) {
+      const ok = await confirm({
+        title: 'Descartar alterações?',
+        message: 'Você tem mudanças não salvas. Elas vão ser perdidas.',
+        confirmLabel: 'Sim, descartar',
+        cancelLabel: 'Continuar editando',
+        variant: 'warning',
+      });
+      if (!ok) return;
+    }
+    setEditing(false);
+    setDraft(v);
+  }
 
-  const src = (path: string) => v.data_sources?.[path];
+  if (!v || !draft) return <Shell><div className="p-8 text-gray-500">{err || 'Carregando…'}</div></Shell>;
 
   return (
     <Shell>
       <div className="p-8 max-w-5xl mx-auto">
+        {dialog}
+
         <Link href="/veiculos" className="inline-flex items-center gap-2 text-gray-600 hover:text-ford-blue mb-6 transition">
           <ArrowLeft className="w-4 h-4" /> Voltar ao catálogo
         </Link>
 
+        {/* Cabeçalho */}
         <div className="bg-gradient-to-br from-ford-blue to-ford-blue-light text-white rounded-2xl p-8 mb-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div>
+            <div className="flex-1 min-w-0">
               <div className="text-xs uppercase tracking-wider text-gray-300 mb-2">{v.marca}</div>
               <h1 className="text-4xl font-bold">{v.modelo} {v.versao}</h1>
               <p className="text-gray-200 mt-2 text-lg">{v.ano} · {v.categoria}</p>
-              {v.preco_brl && (
-                <p className="text-3xl font-black mt-3">R$ {v.preco_brl.toLocaleString('pt-BR')}</p>
+
+              {/* Preço + botão atualizar FIPE */}
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                {v.preco_brl ? (
+                  <>
+                    <p className="text-3xl font-black">R$ {v.preco_brl.toLocaleString('pt-BR')}</p>
+                    <div className="flex flex-col">
+                      {v.fipe_codigo && (
+                        <span className="text-[10px] uppercase tracking-wider text-gray-300">
+                          FIPE oficial · {v.fipe_mes_referencia ?? 'sem ref'}
+                        </span>
+                      )}
+                      <button onClick={refreshPrice} disabled={refreshingPrice || !editing && refreshing}
+                        title="Atualizar preço com FIPE atual"
+                        className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 bg-white/15 hover:bg-white/25 border border-white/30 rounded-lg text-xs font-bold uppercase tracking-wider transition disabled:opacity-50 self-start">
+                        {refreshingPrice
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : <RefreshCw className="w-3 h-3" />}
+                        {refreshingPrice ? 'Consultando FIPE…' : 'Atualizar FIPE'}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button onClick={refreshPrice} disabled={refreshingPrice}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-white text-ford-blue font-bold rounded-xl hover:bg-gray-100 transition disabled:opacity-50 uppercase tracking-wider text-sm">
+                    {refreshingPrice
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : <DollarSign className="w-4 h-4" />}
+                    {refreshingPrice ? 'Consultando FIPE…' : 'Buscar preço FIPE'}
+                  </button>
+                )}
+              </div>
+
+              {priceMsg && (
+                <div className={`mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold ${
+                  priceMsg.tone === 'ok'
+                    ? (priceMsg.diff != null && priceMsg.diff > 0)
+                      ? 'bg-rose-500/20 text-rose-100'
+                      : (priceMsg.diff != null && priceMsg.diff < 0)
+                        ? 'bg-emerald-500/20 text-emerald-100'
+                        : 'bg-white/20 text-white'
+                    : 'bg-rose-500/30 text-rose-100'
+                }`}>
+                  {priceMsg.tone === 'err' && <AlertCircle className="w-3.5 h-3.5" />}
+                  {priceMsg.tone === 'ok' && priceMsg.diff != null && priceMsg.diff > 0 && <TrendingUp className="w-3.5 h-3.5" />}
+                  {priceMsg.tone === 'ok' && priceMsg.diff != null && priceMsg.diff < 0 && <TrendingDown className="w-3.5 h-3.5" />}
+                  <span>
+                    {priceMsg.text}
+                    {priceMsg.tone === 'ok' && priceMsg.diff != null && priceMsg.diff !== 0 && (
+                      <span className="ml-1">
+                        ({priceMsg.diff > 0 ? '+' : '−'}R$ {Math.abs(priceMsg.diff).toLocaleString('pt-BR')})
+                      </span>
+                    )}
+                  </span>
+                </div>
               )}
             </div>
             <div className="flex flex-col items-end gap-2">
@@ -154,14 +270,14 @@ export default function VeiculoDetalhe() {
                     className="inline-flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition">
                     <Pencil className="w-4 h-4" /> Editar
                   </button>
-                  <button onClick={() => setConfirmDel(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-red-500/30 hover:bg-red-500/50 border border-red-300/50 rounded-xl text-sm transition">
-                    <Trash2 className="w-4 h-4" /> Excluir
+                  <button onClick={remove} disabled={deleting}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-red-500/30 hover:bg-red-500/50 border border-red-300/50 rounded-xl text-sm transition disabled:opacity-50">
+                    <Trash2 className="w-4 h-4" /> {deleting ? 'Excluindo…' : 'Excluir'}
                   </button>
                 </div>
               ) : (
                 <div className="flex gap-2">
-                  <button onClick={() => { setEditing(false); setDraft(v); }}
+                  <button onClick={cancelEdit}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-white/15 hover:bg-white/25 border border-white/30 rounded-xl text-sm transition">
                     <X className="w-4 h-4" /> Cancelar
                   </button>
@@ -177,6 +293,7 @@ export default function VeiculoDetalhe() {
 
         {err && <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-xl mb-4">{err}</div>}
 
+        {/* E-book PDF refresh */}
         {showEbookInput && !editing && (
           <div className="bg-gradient-to-br from-blue-50 to-purple-50 border-2 border-blue-200 rounded-2xl p-5 mb-4">
             <div className="flex items-start gap-3 mb-3">
@@ -208,147 +325,79 @@ export default function VeiculoDetalhe() {
           </div>
         )}
 
-        {confirmDel && (
-          <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-5 mb-4 flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <h3 className="font-bold text-red-800">Excluir este veículo?</h3>
-              <p className="text-sm text-red-700">Esta ação é permanente. Comparações futuras não vão mais incluí-lo.</p>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => setConfirmDel(false)} disabled={deleting}
-                className="px-4 py-2 border border-gray-300 rounded-xl text-sm hover:bg-gray-50">
-                Cancelar
-              </button>
-              <button onClick={remove} disabled={deleting}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white font-bold rounded-xl text-sm hover:bg-red-700 transition disabled:opacity-50">
-                <Trash2 className="w-4 h-4" /> {deleting ? 'Excluindo…' : 'Confirmar exclusão'}
-              </button>
-            </div>
-          </div>
-        )}
-
+        {/* Fontes consultadas */}
         {v.fontes?.length > 0 && (() => {
           const webCitations: string[] = v.fontes.filter((f: string) => f.startsWith('web:')).map((f: string) => f.slice(4));
           const otherFontes: string[] = v.fontes.filter((f: string) => !f.startsWith('web:'));
           return (
-          <div className="bg-white rounded-2xl border border-gray-300 p-5 mb-6">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-600 mb-3">Fontes consultadas</h3>
-            <ul className="space-y-1 text-sm text-gray-700">
-              {otherFontes.map((f: string, i: number) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span className="text-success">•</span>
-                  <code className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{f}</code>
-                </li>
-              ))}
-            </ul>
-            {webCitations.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-dashed border-gray-200">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-2">
-                  ⚡ Páginas consultadas pela IA via web search ({webCitations.length})
-                </h4>
-                <ul className="space-y-1">
-                  {webCitations.slice(0, 10).map((url: string, i: number) => (
-                    <li key={i} className="text-xs">
-                      <a href={url} target="_blank" rel="noreferrer"
-                        className="text-blue-600 hover:underline truncate inline-block max-w-full">
-                        {url.replace(/^https?:\/\//, '').slice(0, 80)}
-                      </a>
-                    </li>
-                  ))}
-                  {webCitations.length > 10 && (
-                    <li className="text-xs text-gray-500">+ {webCitations.length - 10} outras</li>
-                  )}
-                </ul>
-              </div>
-            )}
-            {v.fipe_codigo && (
-              <p className="text-xs text-gray-500 mt-3">FIPE: {v.fipe_codigo} · {v.fipe_mes_referencia}</p>
-            )}
-          </div>
+            <div className="bg-white rounded-2xl border border-gray-300 p-5 mb-6">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-600 mb-3">Fontes consultadas</h3>
+              <ul className="space-y-1 text-sm text-gray-700">
+                {otherFontes.map((f: string, i: number) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="text-success">•</span>
+                    <code className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">{f}</code>
+                  </li>
+                ))}
+              </ul>
+              {webCitations.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-dashed border-gray-200">
+                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-2">
+                    ⚡ Páginas consultadas pela IA via web search ({webCitations.length})
+                  </h4>
+                  <ul className="space-y-1">
+                    {webCitations.slice(0, 10).map((url: string, i: number) => (
+                      <li key={i} className="text-xs">
+                        <a href={url} target="_blank" rel="noreferrer"
+                          className="text-blue-600 hover:underline truncate inline-block max-w-full">
+                          {url.replace(/^https?:\/\//, '').slice(0, 80)}
+                        </a>
+                      </li>
+                    ))}
+                    {webCitations.length > 10 && (
+                      <li className="text-xs text-gray-500">+ {webCitations.length - 10} outras</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+              {v.fipe_codigo && (
+                <p className="text-xs text-gray-500 mt-3">FIPE: {v.fipe_codigo} · {v.fipe_mes_referencia}</p>
+              )}
+            </div>
           );
         })()}
 
-        {SPEC_GROUPS.map(([title, group, fields]) => (
-          <div key={group} className="bg-white rounded-2xl border border-gray-300 p-6 mb-4">
-            <h2 className="text-lg font-bold text-ford-blue mb-4">{title}</h2>
+        {/* Edição dos campos identificadores (sem o bloco de specs duplicadas) */}
+        {editing && (
+          <div className="bg-white rounded-2xl border border-gray-300 p-6 mb-4">
+            <h2 className="text-lg font-bold text-ford-blue mb-4">Identificação</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
-              {fields.map(([label, key, type]) => {
-                const path = `${group}.${key}`;
-                const val = editing ? draft[group]?.[key] : v[group]?.[key];
-                return (
-                  <div key={key} className="flex items-center justify-between gap-3 border-b border-gray-100 pb-2">
-                    <div className="min-w-0">
-                      <div className="text-sm text-gray-600">{label}</div>
-                      <SourceBadge source={src(path)} />
-                    </div>
-                    {editing ? (
-                      <input type={type ?? 'text'}
-                        value={val ?? ''}
-                        onChange={e => setSpec(group, key, e.target.value)}
-                        className="w-32 px-2 py-1 border border-gray-300 rounded text-right text-sm focus:outline-none focus:border-ford-blue" />
-                    ) : (
-                      <div className="font-semibold text-gray-900 text-right">{val ?? '—'}</div>
-                    )}
-                  </div>
-                );
-              })}
+              {[
+                ['Marca', 'marca'],
+                ['Modelo', 'modelo'],
+                ['Versão', 'versao'],
+                ['Ano', 'ano'],
+                ['Categoria', 'categoria'],
+                ['Preço (R$)', 'preco_brl'],
+                ['País de origem', 'pais_origem'],
+              ].map(([label, key]) => (
+                <div key={key} className="flex items-center justify-between gap-3 border-b border-gray-100 pb-2">
+                  <div className="text-sm text-gray-600">{label}</div>
+                  <input
+                    value={draft[key] ?? ''}
+                    onChange={e => setDraft({ ...draft, [key]: e.target.value })}
+                    className="w-40 px-2 py-1 border border-gray-300 rounded text-right text-sm focus:outline-none focus:border-ford-blue" />
+                </div>
+              ))}
             </div>
           </div>
-        ))}
+        )}
 
-        <div className="bg-white rounded-2xl border border-gray-300 p-6 mb-4">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold text-ford-blue">Equipamentos de série</h2>
-            <SourceBadge source={src('equipamentos')} />
-          </div>
-          {editing ? (
-            <textarea rows={4} value={(draft.equipamentos ?? []).join('\n')}
-              onChange={e => setDraft({ ...draft, equipamentos: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })}
-              placeholder="Um equipamento por linha (snake_case)"
-              className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue font-mono text-sm" />
-          ) : (
-            (() => {
-              const grouped: Record<string, string[]> = {};
-              for (const raw of (v.equipamentos ?? [])) {
-                const m = String(raw).match(/^([a-z_]+):(.+)$/);
-                if (m) (grouped[m[1]!] ??= []).push(m[2]!);
-                else (grouped['geral'] ??= []).push(raw);
-              }
-              const catStyle: Record<string, string> = {
-                seguranca: 'bg-red-100 text-red-700',
-                conforto: 'bg-blue-100 text-blue-700',
-                tecnologia: 'bg-purple-100 text-purple-700',
-                assistencia: 'bg-cyan-100 text-cyan-700',
-                interior: 'bg-amber-100 text-amber-700',
-                exterior: 'bg-emerald-100 text-emerald-700',
-                cargo: 'bg-orange-100 text-orange-700',
-                offroad: 'bg-stone-200 text-stone-700',
-                geral: 'bg-gray-100 text-gray-700',
-              };
-              const keys = Object.keys(grouped).sort();
-              if (keys.length === 0) return <span className="text-gray-500 text-sm">Nenhum equipamento cadastrado.</span>;
-              return (
-                <div className="space-y-4">
-                  {keys.map(cat => (
-                    <div key={cat}>
-                      <div className={`inline-block text-xs font-bold uppercase tracking-wider px-2 py-1 rounded mb-2 ${catStyle[cat] ?? catStyle.geral}`}>
-                        {cat.replace(/_/g, ' ')} · {grouped[cat]!.length}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {grouped[cat]!.map((item, i) => (
-                          <span key={i} className="px-3 py-1 bg-gray-50 border border-gray-200 rounded-md text-sm text-gray-800">
-                            {item.replace(/_/g, ' ')}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()
-          )}
-        </div>
+        {/* === SCHEMA CANÔNICO FORD D1 (262 atributos × 14 seções) ===
+            ÚNICA fonte de verdade pra ficha técnica do veículo. */}
+        <CanonicoBlock vehicleId={v.id} />
 
+        {/* Notas */}
         {(v.notas || editing) && (
           <div className="bg-white rounded-2xl border border-gray-300 p-6">
             <h2 className="text-lg font-bold text-ford-blue mb-3">Observações</h2>

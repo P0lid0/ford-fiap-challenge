@@ -2,7 +2,7 @@
   "name": "ford-fiap-challenge",
   "version": "0.1.0",
   "private": true,
-  "description": "Ford FIAP Challenge 2026 — 3am IT",
+  "description": "Ford FIAP Challenge 2026 — Faro AI",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev:api": "pnpm --filter @ford/api dev",
@@ -22,9 +22,10 @@
     "postgres": "3.4.5"
   },
   "devDependencies": {
-    "typescript": "5.7.2",
     "@types/node": "22.10.2",
-    "tsx": "4.19.2"
+    "pptxgenjs": "^4.0.1",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2"
   },
   "engines": {
     "node": ">=20",

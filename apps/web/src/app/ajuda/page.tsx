@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import {
   BookOpen, Users, Car, Sparkles, Settings, Shield, BarChart3, AlertTriangle,
   Megaphone, Brain, Database, ChevronRight, ChevronDown, Search, ArrowRight,
-  CheckCircle2, Info, Zap, Lock, Eye, Target, Activity, Building2,
+  CheckCircle2, Info, Zap, Lock, Eye, Target, Activity, Building2, Award,
+  Wrench, Mail,
 } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { PerfilBadge } from '@/components/PerfilBadge';
@@ -70,24 +71,45 @@ const SECTIONS: Section[] = [
           {' '}(predição de perfil do cliente no ato da compra e ações de retenção orientadas por dados).
         </Lead>
 
-        <H3>O que você consegue fazer aqui</H3>
+        <H3>Mapa do sistema (sidebar)</H3>
+        <p>
+          A sidebar está organizada por desafio:
+        </p>
+        <Grid cols={2}>
+          <FeatureCard icon={BarChart3} title="Retenção (D2) — 4 telas">
+            <ul className="text-xs mt-1 space-y-0.5">
+              <li>· <Code>/carteira</Code> — painel UNIFICADO: KPIs + perfis + leads + anomalias + briefing IA + ML stats</li>
+              <li>· <Code>/leads</Code> — lead feed com 175k+ candidatos e sinais explícitos</li>
+              <li>· <Code>/clientes</Code> — lista filtrável + Visão 360 por cliente</li>
+              <li>· <Code>/acoes</Code> — histórico de toques + envio de e-mail real (Resend)</li>
+            </ul>
+          </FeatureCard>
+          <FeatureCard icon={Car} title="Catálogo (D1) — 2 telas">
+            <ul className="text-xs mt-1 space-y-0.5">
+              <li>· <Code>/veiculos</Code> — catálogo competitivo com schema canônico 262 atributos</li>
+              <li>· <Code>/veiculos/adicionar</Code> — 3 fluxos: manual, busca IA, PDF</li>
+            </ul>
+          </FeatureCard>
+        </Grid>
+
+        <H3>Capacidades principais</H3>
         <Grid cols={2}>
           <FeatureCard icon={Car} title="Catálogo competitivo">
             Cadastrar veículos próprios e da concorrência com dados verificados de
             5+ fontes (FIPE, scraping da fabricante, e-book PDF, 411 API, IA).
-            Comparar 2-5 lado a lado com análise IA.
+            Comparar 2-5 lado a lado com análise IA + dados de venda BR via web search.
           </FeatureCard>
-          <FeatureCard icon={Users} title="Carteira de clientes">
-            Cadastrar a venda no ato. Sistema classifica em 1 de 4 perfis
-            comportamentais e sugere ações específicas pra cada um.
+          <FeatureCard icon={Users} title="175k VINs Ford reais">
+            Base oficial vin_share_Desafio_02.xlsx importada. Sistema classifica
+            em 1 de 4 perfis comportamentais via XGBoost real (62.7% accuracy).
           </FeatureCard>
-          <FeatureCard icon={AlertTriangle} title="Leads priorizados">
-            Lista automática de clientes em alto risco de evasão, ordenada por
-            probabilidade. Vendedor consegue agir antes do cliente sumir.
+          <FeatureCard icon={AlertTriangle} title="Leads automáticos">
+            135k+ leads detectados via risco composto (perfil_real + 6 sinais
+            operacionais). Cada lead mostra POR QUE está no topo.
           </FeatureCard>
-          <FeatureCard icon={Sparkles} title="Insights IA">
-            Explicação em linguagem natural de cada classificação + análise
-            estratégica da carteira da concessionária.
+          <FeatureCard icon={Mail} title="E-mail real via Resend">
+            Ação tipo &quot;e-mail&quot; manda mensagem real pro cliente via API Resend,
+            com templates por perfil. Sem chave → modo simulação claramente sinalizado.
           </FeatureCard>
         </Grid>
       </>
@@ -194,6 +216,52 @@ const SECTIONS: Section[] = [
           <StatBlock value="60%" label="Margem média de peças e serviços vs venda de carro novo" />
           <StatBlock value="3x" label="Mais barato reter que adquirir novo cliente" />
         </Grid>
+
+        <H3>Cobertura dos 3 blocos do briefing Ford</H3>
+        <p>
+          O slide oficial pede 3 capacidades. Como a gente cobre cada uma:
+        </p>
+        <Grid cols={3}>
+          <FeatureCard icon={BarChart3} title="1. Análise e visualização">
+            <Code>/carteira</Code> mostra VIN Share, aderência, perfis, distribuição
+            <b>por modelo</b> e <b>por idade do veículo</b> (0-2a / 2-5a / 5+a).
+            Filtros granulares: <Code>dealer_code</Code>, <Code>model_name</Code>,
+            <Code>idade_bucket</Code> via <Code>GET /metrics/dealership?...</Code>.
+          </FeatureCard>
+          <FeatureCard icon={Sparkles} title="2. Leads + modelagem preditiva">
+            <ul className="text-xs mt-1 space-y-1">
+              <li>· <b>XGBoost real</b> classifica perfil de evasão (175k VINs)</li>
+              <li>· <b>Próxima revisão estimada</b> (12 meses do último serviço) — <Code>/metrics/proximas-revisoes</Code></li>
+              <li>· <b>Status de garantia</b> (vencendo em 90d / 180d) — <Code>/metrics/garantia-status</Code></li>
+              <li>· <b>Leads priorizados por risco</b> — <Code>/leads</Code></li>
+            </ul>
+          </FeatureCard>
+          <FeatureCard icon={Target} title="3. Jornada do cliente (360)">
+            <Code>/clientes/[id]</Code> consolida ficha + predição + sinais
+            (próxima revisão · garantia · idade do veículo) com <b>sugestões
+            automáticas de ação</b>. Tudo registrado em <Code>/acoes</Code>.
+          </FeatureCard>
+        </Grid>
+
+        <H3>Detecção de anomalias</H3>
+        <p>
+          O slide pede explicitamente &quot;identificar padrões, tendências e
+          anomalias&quot;. Calculamos isso em <Code>GET /metrics/anomalias-dealer</Code>:
+        </p>
+        <ul className="list-disc list-inside text-sm text-slate ml-2 space-y-1">
+          <li>Para cada dealer com ≥50 clientes, % de clientes &quot;fiéis&quot;</li>
+          <li>Z-score vs média da rede</li>
+          <li>Anomalia = z &lt; -1 (significativamente abaixo)</li>
+          <li>Devolve também top performers como benchmark</li>
+        </ul>
+
+        <Callout type="info">
+          <b>O que NÃO conseguimos cobrir (limitação do dataset):</b> &quot;dados de veículos conectados&quot;
+          e &quot;tipo de serviço&quot; granular não estão no <Code>vin_share_Desafio_02.xlsx</Code>.
+          O sistema está pronto pra consumir essas fontes quando a Ford disponibilizar — os campos
+          {' '}<Code>km_max</Code>, <Code>num_revisoes</Code> e <Code>dias_desde_ultima_revisao</Code>
+          {' '}são placeholders pra dados telemáticos reais.
+        </Callout>
       </>
     ),
   },
@@ -250,42 +318,126 @@ const SECTIONS: Section[] = [
   {
     id: 'leads-acao',
     icon: AlertTriangle,
-    title: 'Trabalhando os leads de alto risco',
-    summary: 'Como priorizar contatos e registrar ações',
+    title: 'Leads priorizados — como funcionam',
+    summary: 'Da onde vêm, como o risco é calculado e o fluxo de atendimento',
     body: (
       <>
         <Lead>
-          A página <Code>/leads</Code> lista todos os clientes com risco de evasão acima de 40%,
-          ordenados do mais crítico ao menos crítico. É o feed diário do consultor.
+          A página <Code>/leads</Code> é o <b>feed diário do consultor</b>. Lista
+          automaticamente os clientes que mais provavelmente vão sair da rede oficial
+          Ford, com explicação de <b>POR QUE</b> cada um está naquela posição.
         </Lead>
 
+        <H3>De onde vêm os leads (a fonte)</H3>
+        <p>
+          O sistema percorre os <b>175k VINs reais</b> + cadastros manuais e calcula
+          em tempo real (via função SQL <Code>leads_ranqueados</Code>) um <b>risco composto</b>
+          pra cada um. Não depende de nenhum batch ou cron — é sempre live contra o banco.
+        </p>
+
+        <H3>Como o risco é calculado</H3>
+        <p>
+          A fórmula combina <b>perfil_real</b> (do ETL via XGBoost) com <b>sinais operacionais</b>:
+        </p>
+        <Formula>
+          risco_composto = risco_base(perfil_real) + Σ bonificações(sinais)
+        </Formula>
+
+        <H3>Risco base por perfil</H3>
+        <Grid cols={4}>
+          <StatBlock value="85%" label="Abandono — base alta, candidato natural a lead" />
+          <StatBlock value="65%" label="Esquecido — perde timing, recuperável" />
+          <StatBlock value="35%" label="Econômico — vínculo frágil mas presente" />
+          <StatBlock value="15%" label="Fiel — improvável (mas vira lead se sinais críticos)" />
+        </Grid>
+
+        <H3>Bonificações por sinal (somam ao risco base)</H3>
+        <ul className="list-disc list-inside text-sm text-slate ml-2 space-y-1">
+          <li><b>+0.10</b> Revisão atrasada (mais de 365d sem serviço na rede)</li>
+          <li><b>+0.07</b> Sem 1ª revisão (entregue há 15+ meses, nunca passou)</li>
+          <li><b>+0.05</b> Garantia já vencida</li>
+          <li><b>+0.05</b> Dealer loyalty baixa (&lt;40% das revisões no dealer original)</li>
+          <li><b>+0.03</b> Veículo veterano (5+ anos)</li>
+        </ul>
+        <p className="text-xs text-slate mt-2">
+          Cap em 0.99 — risco nunca passa de 99%. Empate em risco desempata por
+          número de revisões (menos revisões = mais prioritário).
+        </p>
+
+        <H3>Os 6 sinais detectados — o porquê visível</H3>
+        <p>
+          Cada lead na lista mostra <b>chips coloridos</b> com os sinais que dispararam.
+          O operador entende imediatamente <i>por que aquele cliente é prioridade</i>:
+        </p>
+        <Grid cols={3}>
+          <FeatureCard icon={Wrench} title="Revisão atrasada">
+            Mais de 365 dias sem voltar à rede. Pode estar fazendo manutenção em oficina externa.
+          </FeatureCard>
+          <FeatureCard icon={AlertTriangle} title="Sem 1ª revisão">
+            Entrega +15 meses, num_revisoes = 0. Crítico — provavelmente já foi pra fora.
+          </FeatureCard>
+          <FeatureCard icon={Shield} title="Garantia vencida/vencendo">
+            Janela curta pra oferecer pacote pós-garantia antes que ele saia.
+          </FeatureCard>
+          <FeatureCard icon={Building2} title="Dealer loyalty baixa">
+            Cliente tem revisões, mas espalhadas — não casou com nenhum dealer específico.
+          </FeatureCard>
+          <FeatureCard icon={Car} title="Veículo veterano">
+            5+ anos — fator natural de migração pra oficinas multimarca.
+          </FeatureCard>
+          <FeatureCard icon={Sparkles} title="(combinações)">
+            Quanto mais sinais um lead acumular, mais alto o risco e mais ao topo da lista.
+          </FeatureCard>
+        </Grid>
+
+        <H3>Filtros disponíveis</H3>
+        <ul className="list-disc list-inside text-sm text-slate ml-2 space-y-1">
+          <li><b>Risco mínimo</b>: 40% / 50% / 60% / 70% / 80% / 90%</li>
+          <li><b>Perfil real</b>: fiel / abandono / esquecido / econômico</li>
+          <li><b>Modelo Ford</b>: foco em RANGER, ECOSPORT, TERRITORY etc.</li>
+          <li><b>Dealer code</b>: leads de uma concessionária específica (gestor regional)</li>
+          <li><b>Sinal específico</b>: clique num chip pra ver só leads com aquele sinal</li>
+        </ul>
+
+        <H3>Fluxo de atendimento (passo a passo)</H3>
         <Steps>
-          <Step n={1} title="Filtre por risco e perfil">
-            Use os controles do topo da página pra ver só perfis específicos ou risco mínimo
-            mais alto (ex: ≥70% pra emergências).
+          <Step n={1} title="Comece pelos KPIs no topo">
+            Os 4 cards mostram quantos leads existem em cada faixa de risco.
+            Clique num card → filtra direto pra aquela faixa.
           </Step>
-          <Step n={2} title="Abra a ficha do cliente">
-            Clique no card → vai pra <Code>/clientes/[id]</Code>. Lá você vê o histórico
-            completo + ações sugeridas pra esse perfil específico.
+          <Step n={2} title="Aplique filtros pro seu escopo">
+            Gerente de loja: filtra por <Code>dealer_code</Code> da sua loja.
+            Foco em modelo específico (ex: campanha Ranger): filtra por <Code>modelo</Code>.
           </Step>
-          <Step n={3} title="Registre a ação tomada">
-            Botão <b>+ Nova ação</b> permite logar qualquer tentativa de contato:
-            ligação, WhatsApp, e-mail, visita, oferta enviada. Isso alimenta o histórico
-            e o painel de gestão.
+          <Step n={3} title="Leia os sinais antes de abrir">
+            Os chips coloridos no card de cada lead dizem POR QUE ele está ali.
+            Lead com "Sem 1ª revisão" + "Garantia vencendo" é prioridade absoluta.
           </Step>
-          <Step n={4} title="Acompanhe o desfecho">
-            Quando o cliente responde (volta pra revisão, recusa a oferta, pede mais info),
-            atualize o status da ação. Ações com desfecho ajudam a calibrar o modelo no
-            próximo treino.
+          <Step n={4} title="Abra a ficha → registre ação">
+            Clica em <b>"Abrir ficha"</b> → vai pra <Code>/clientes/[id]</Code>.
+            Lá tem Visão 360 (próxima revisão, garantia, idade) e o botão
+            <b>"+ Nova ação"</b> pra registrar ligação, WhatsApp, ou enviar e-mail real.
+          </Step>
+          <Step n={5} title="Acompanhe o desfecho">
+            Em <Code>/acoes</Code> você vê todo o histórico, taxa de conversão por tipo,
+            tempo médio de resolução.
           </Step>
         </Steps>
 
-        <H3>Sinais de cor</H3>
+        <H3>Sinais de cor no cartão</H3>
         <Grid cols={3}>
-          <ColorChip color="bg-red-500" label="≥ 70% risco" desc="Ação no mesmo dia" />
+          <ColorChip color="bg-rose-500" label="≥ 70% risco" desc="Ação no mesmo dia" />
           <ColorChip color="bg-amber-500" label="50-69%" desc="Ação em até 48h" />
-          <ColorChip color="bg-blue-500" label="40-49%" desc="Acompanhar semanalmente" />
+          <ColorChip color="bg-blue-500" label="40-49%" desc="Acompanhar semanal" />
         </Grid>
+
+        <Callout type="info">
+          <b>Por que isto importa pra Ford?</b> O slide D2 pede explicitamente
+          &quot;modelagem preditiva que identifique veículos com alta probabilidade de
+          precisar de serviço OU em risco de sair da rede&quot;. O endpoint
+          <Code>GET /clients/leads</Code> entrega exatamente isso, com sinais
+          transparentes em vez de uma black box.
+        </Callout>
       </>
     ),
   },
@@ -303,20 +455,34 @@ const SECTIONS: Section[] = [
           inteligência competitiva interna.
         </Lead>
 
-        <H3>Adicionar um veículo</H3>
-        <p>Três caminhos em <Code>/veiculos/adicionar</Code>:</p>
+        <H3>Adicionar um veículo — 3 fluxos novos</H3>
+        <p>
+          Em <Code>/veiculos/adicionar</Code>. Todos os fluxos pedem só identificação
+          (marca/modelo/versão/ano) — a ficha técnica completa fica no schema canônico
+          (262 atributos) que é preenchido depois.
+        </p>
         <Grid cols={3}>
           <FeatureCard icon={Users} title="Manual">
-            Preenchimento campo a campo. Marcado como &quot;verificado por humano&quot; — máxima confiança.
+            Só identificação. Marcado como &quot;verificado por humano&quot;. Checkbox opcional
+            roda <b>auto-fill canônico via IA</b> logo após criar (draft revisável).
           </FeatureCard>
-          <FeatureCard icon={Database} title="JSON / CSV">
-            Importar em lote uma lista pronta. Bom pra migração inicial.
+          <FeatureCard icon={Sparkles} title="Buscar (FIPE + IA)">
+            Inputs marca/modelo. Sistema consulta FIPE → e-book oficial → site da
+            fabricante → NHTSA → LLM com web search. Mostra preview, você confirma,
+            e a IA preenche os 262 atributos.
           </FeatureCard>
-          <FeatureCard icon={Sparkles} title="PDF / Imagem (IA)">
-            Solta um e-book da fabricante (F-150 etc.). IA extrai automaticamente
-            todas as versões com specs e equipamentos por trim.
+          <FeatureCard icon={Database} title="Arquivo (PDF/IA, JSON, CSV)">
+            <b>PDF/Imagem:</b> IA extrai todos os trims dum e-book, você seleciona quais
+            salvar, e o auto-fill canônico roda em série pra cada um.
+            {' '}<b>JSON/CSV:</b> bulk insert por identificação (canônico fica vazio,
+            preenche depois).
           </FeatureCard>
         </Grid>
+        <Callout type="info">
+          <b>Confirmações obrigatórias:</b> qualquer ação que chame IA paga, sobrescreva
+          dados, ou apague entrada passa por um modal de confirmação com estimativa
+          de custo. Você nunca executa nada sem clicar &quot;Sim&quot;.
+        </Callout>
 
         <H3>Pipeline de busca automática</H3>
         <p>Quando você busca um modelo, o sistema consulta nesta ordem:</p>
@@ -340,10 +506,65 @@ const SECTIONS: Section[] = [
           Vai pra <Code>/veiculos/comparar?ids=...</Code> com:
         </p>
         <ul className="list-disc list-inside space-y-1 text-sm text-slate ml-2">
-          <li><b>Tabela vencedor por campo</b> (troféu verde no melhor de cada categoria)</li>
+          <li><b>Schema canônico Ford D1</b> — tabela fixa de 262 atributos em 14 seções (Wheels, Connectivity, Safety, High tech, 4X4, …) preenchidos com X / 0 / valor por veículo</li>
+          <li><b>Tabela vencedor por campo quantitativo</b> (troféu verde no melhor de cada categoria)</li>
           <li><b>Diferenciais exclusivos</b> agrupados por categoria (segurança, conforto, tech, off-road…)</li>
           <li><b>Análise IA</b> focada em features que distinguem versões — formato de showroom</li>
         </ul>
+
+        <H3>Schema canônico Ford 26MY (262 atributos × 14 seções) — onde mora o coração do D1</H3>
+        <p>
+          A Ford forneceu no template oficial uma <b>matriz fixa</b> de 262 atributos pra
+          padronizar comparações. Cada concorrente cadastrado preenche os mesmos
+          campos (X = tem, 0 = não tem, valor numérico, ou <i>não disponível</i>).
+          Vantagem: comparação 1:1 entre Ranger Limited+ e qualquer Hilux/Amarok/SW4 sem ambiguidade.
+        </p>
+        <Grid cols={3}>
+          <FeatureCard icon={Database} title="catalog_items (262 linhas)">
+            Schema imutável: 14 seções (Wheels, Connectivity, Safety, High tech, 4X4…)
+            com atributos pré-definidos no template Ford.
+            Endpoint <Code>GET /competitive/catalog-items</Code>.
+          </FeatureCard>
+          <FeatureCard icon={Car} title="vehicle_catalog_values">
+            Bridge veículo × atributo. Cada veículo do catálogo preenche
+            os 262 valores. Confiança e fonte rastreáveis por valor (manual / IA / Ford D1).
+          </FeatureCard>
+          <FeatureCard icon={Sparkles} title="POST /compare/canonico">
+            Devolve a matriz 262×N pra qualquer combinação de veículos —
+            usado pelo bloco &quot;Comparativo Ford 26MY&quot; em <Code>/veiculos/comparar</Code>.
+          </FeatureCard>
+        </Grid>
+
+        <H3>Como editar / preencher os 262 atributos de um veículo</H3>
+        <p>
+          Abra qualquer veículo em <Code>/veiculos/[id]</Code>. O bloco
+          <b> &quot;Especificações canônicas Ford D1&quot;</b> aparece logo abaixo das specs gerais:
+        </p>
+        <ul className="list-disc list-inside space-y-1 text-sm text-slate ml-2">
+          <li>Indicador <b>X/262 preenchidos</b> + barra de progresso</li>
+          <li>Cada seção colapsável mostra os atributos com <b>✓ tem</b> / <b>✗ não tem</b> / valor numérico / <b>&quot;não disponível&quot;</b></li>
+          <li>Botão <b>Editar</b> habilita edição inline (switch pra flags, input pra numérico)</li>
+          <li>Botão <b>Preencher com IA</b> (Sparkles) chama o LLM pra completar as lacunas — mantém o que já está manual, marca novos como confiança &quot;baixa&quot;</li>
+        </ul>
+        <Callout type="info">
+          As 3 versões da Ranger 26MY (XLT, Limited, Limited +) já chegam com os 262 valores
+          preenchidos a partir do datasheet oficial. Modelos da concorrência (Hilux, Amarok, SW4…)
+          herdam o schema vazio — operador preenche manualmente ou aciona &quot;Preencher com IA&quot;
+          pra um draft de baixa confiança que ele revisa antes de salvar.
+        </Callout>
+
+        <H3>Validação Ford — Ranger Raptor</H3>
+        <p>
+          O slide oficial pede que a solução entregue <b>todas as especificações</b> apresentadas
+          no slide da Ranger Raptor. Fluxo recomendado:
+        </p>
+        <PipelineList>
+          <PipelineStep n={1} name="Cadastrar Ranger Raptor" desc="/veiculos/adicionar com marca=Ford, modelo=Ranger, versao=Raptor" />
+          <PipelineStep n={2} name="Reanalisar" desc='abre detalhe, clica "Reanalisar" — sistema busca FIPE + e-book + site Ford + IA' />
+          <PipelineStep n={3} name="Preencher canônico" desc='no bloco canônico, clica "Preencher com IA" — IA propõe valores pros 262 atributos do template' />
+          <PipelineStep n={4} name="Revisar" desc='operador valida atributo por atributo (especialmente os marcados "ai:auto-fill") e edita o que estiver errado' />
+          <PipelineStep n={5} name="Comparar" desc='/veiculos/comparar mostra a tabela 262 × N veículos selecionados — formato fixo independente do modelo' />
+        </PipelineList>
       </>
     ),
   },
@@ -372,7 +593,9 @@ const SECTIONS: Section[] = [
 
         <H3>Insight de carteira (gestor)</H3>
         <p>
-          Página <Code>/insights</Code>. Dá uma análise estratégica considerando:
+          Disponível no painel <Code>/carteira</Code> seção <b>5 — Briefing executivo da IA</b>
+          {' '}(antes era <Code>/insights</Code>, agora unificado). Dá uma análise
+          estratégica considerando:
         </p>
         <ul className="list-disc list-inside space-y-1 text-sm text-slate ml-2">
           <li>Distribuição de perfis na sua concessionária</li>
@@ -384,6 +607,87 @@ const SECTIONS: Section[] = [
           Insights ficam em cache (24h por cliente, 6h por carteira) — não gera custo a cada
           abertura. Custo médio: $0,002-0,01 por insight com gpt-4o-mini.
         </Callout>
+      </>
+    ),
+  },
+
+  {
+    id: 'email-real',
+    icon: Mail,
+    title: 'E-mail real (Resend)',
+    summary: 'Como configurar envio real de e-mail nas ações de retenção',
+    body: (
+      <>
+        <Lead>
+          O slide D2 pede &quot;lembretes de serviço e ofertas&quot; — a gente implementou
+          isso como <b>envio REAL de e-mail</b> via provider Resend, com templates por perfil
+          comportamental, registro em <Code>email_logs</Code> e auditoria LGPD.
+        </Lead>
+
+        <H3>Como configurar (3 minutos)</H3>
+        <Steps>
+          <Step n={1} title="Cria conta na Resend">
+            <a href="https://resend.com" target="_blank" rel="noreferrer" className="text-ford-blue underline">resend.com</a>
+            {' '}— grátis 100 e-mails/dia. Login com GitHub.
+          </Step>
+          <Step n={2} title="Pega a API key">
+            Resend Console → <b>API Keys</b> → <b>Create API Key</b> → copia o token
+            (<Code>re_xxxxx</Code>).
+          </Step>
+          <Step n={3} title="Cola em /configuracoes">
+            Aba <b>Chaves de API</b> → campo <b>Resend (e-mail)</b> → cola e salva.
+          </Step>
+          <Step n={4} title="Opcional: define remetente">
+            Campo <b>Remetente de e-mail</b>. Pra sandbox use
+            {' '}<Code>FordIQ &lt;onboarding@resend.dev&gt;</Code>. Pra produção precisa
+            de domínio verificado no Resend.
+          </Step>
+        </Steps>
+
+        <H3>Como enviar e-mail real</H3>
+        <Steps>
+          <Step n={1} title="Abre ficha do cliente">
+            Em <Code>/leads</Code> ou <Code>/clientes</Code>, clica em qualquer um.
+          </Step>
+          <Step n={2} title="Botão + NOVA AÇÃO">
+            No bloco &quot;Histórico de ações&quot;.
+          </Step>
+          <Step n={3} title="Tipo = E-mail">
+            Sistema carrega o template do perfil do cliente (fiel = convite VIP,
+            esquecido = lembrete de revisão, abandono = oferta de 30% desconto,
+            econômico = pacote preço fechado). Você pode editar o HTML antes de enviar.
+          </Step>
+          <Step n={4} title="Verifica o banner verde/amarelo">
+            Banner verde = Resend OK, envio vai REAL. Banner amarelo = não tem chave,
+            modo simulação (registra ação mas não envia).
+          </Step>
+          <Step n={5} title="Clica ENVIAR E-MAIL REAL">
+            E-mail sai pro destinatário, ação fica em <Code>/acoes</Code> com
+            status <code>concluida_sucesso</code> e Message ID do Resend no desfecho.
+          </Step>
+        </Steps>
+
+        <H3>Modo simulação (sem chave Resend)</H3>
+        <Callout type="warning">
+          Se não configurar Resend, o sistema <b>NÃO envia e-mail</b> — mas continua
+          funcionando em modo simulação: registra a ação no histórico com status
+          <Code>planejada</Code> e desfecho explícito <i>&quot;SIMULAÇÃO — e-mail NÃO foi
+          enviado&quot;</i>. Nada de status verde enganoso.
+        </Callout>
+
+        <H3>Auditoria LGPD</H3>
+        <p>
+          Cada envio cria 1 linha em <Code>public.email_logs</Code>:
+        </p>
+        <ul className="list-disc list-inside text-sm text-slate ml-2 space-y-1">
+          <li>Remetente + destinatário + assunto</li>
+          <li>Preview do corpo (200 chars — não loga corpo completo se contém dados sensíveis)</li>
+          <li>Provider (resend/mock), Message ID, status (sent/delivered/bounced/failed)</li>
+          <li>sent_by_user_id (quem disparou) + timestamps</li>
+        </ul>
+        <p className="text-xs text-slate">
+          RLS: usuário comum vê só os e-mails que ele mesmo mandou. Admin/gestor vê tudo.
+        </p>
       </>
     ),
   },
@@ -433,6 +737,198 @@ const SECTIONS: Section[] = [
           {' '}<Code>docs/deliverables/Relatorio_Desafio_2_ML.pdf</Code>. O notebook do
           treino está em <Code>services/ml/notebooks/ford_segmentation.ipynb</Code>.
         </Callout>
+      </>
+    ),
+  },
+
+  // ===== DADOS REAIS =====
+  {
+    id: 'dados-reais-ford',
+    icon: Database,
+    title: 'Dados reais Ford BR (175k VINs)',
+    summary: '174.554 VINs reais importados — sistema rodando 100% sobre o dataset Ford',
+    body: (
+      <>
+        <Lead>
+          A Ford disponibilizou dois arquivos oficiais com dados reais que substituem
+          os dados sintéticos no nosso pipeline: o catálogo da Ranger 26MY (D1) e o
+          log de manutenção de 175k veículos no Brasil (D2).
+        </Lead>
+
+        <H3>📋 Arquivo D1 — Data sheet da Ranger 26MY</H3>
+        <p>
+          Planilha oficial Ford com <b>262 itens de equipamento</b> organizados em
+          14 seções (Engine, Wheels, Connectivity, Safety, High tech, 4X4, Comfort,
+          Lights, etc.) para as 3 versões da Ranger 26MY:
+        </p>
+        <Grid cols={3}>
+          <FeatureCard icon={Car} title="XLT 3.0L V6">
+            Versão de entrada · 78 equipamentos de série · 2283 kg · rodas aro 17
+          </FeatureCard>
+          <FeatureCard icon={Car} title="Limited 3.0L V6">
+            Versão intermediária · 93 equipamentos · 2357 kg · rodas aro 18 ·
+            ar climatizador, retrovisor cromado
+          </FeatureCard>
+          <FeatureCard icon={Car} title="Limited + 3.0L V6">
+            Topo da linha · 95 equipamentos · rodas aro 20 · centralização de faixa, MyKey
+          </FeatureCard>
+        </Grid>
+        <Callout type="success">
+          Importadas via <Code>scripts/import-ford-d1-ranger.py</Code> com confiança ALTA
+          e source <Code>manufacturer:ford-official</Code>. Aparecem em <Code>/veiculos</Code>
+          marcadas como verificadas por humano.
+        </Callout>
+
+        <H3>🆕 Schema Ford agora é o oficial do sistema</H3>
+        <p>
+          A tabela <Code>clients</Code> foi adaptada pra usar EXATAMENTE os mesmos campos
+          do dataset Ford BR. Cadastros antigos sintéticos continuam coexistindo, mas:
+        </p>
+        <Grid cols={2}>
+          <FeatureCard icon={Database} title="Campos canônicos Ford">
+            <Code>vin_hash</Code>, <Code>model_name</Code>, <Code>model_year</Code>,
+            {' '}<Code>dealer_code_venda</Code>, <Code>sales_date</Code>,
+            {' '}<Code>warranty_start_date</Code>, <Code>km_max</Code>, <Code>num_revisoes</Code>,
+            {' '}<Code>dealer_loyalty</Code>, <Code>perfil_real</Code>.
+          </FeatureCard>
+          <FeatureCard icon={Users} title="Cadastro com dropdown de modelos Ford">
+            <Code>/clientes/novo</Code> agora pede só campos disponíveis no faturamento real:
+            modelo (RANGER/KA/EcoSport/Territory/...), ano, DealerCode, datas. Sócio-demográfico
+            é opcional (collapsed).
+          </FeatureCard>
+          <FeatureCard icon={Search} title="Filtros por modelo + origem">
+            Lista de clientes agora distingue <b>Ford BR real</b> (174k VINs) vs
+            <b>cadastros manuais</b>. Filtros: modelo, perfil_real, origem.
+          </FeatureCard>
+          <FeatureCard icon={Award} title="Bloco Ford BR na ficha">
+            Quando o cliente é real, <Code>/clientes/[id]</Code> mostra: KM máx, revisões,
+            dealer loyalty, dias desde última revisão, datas de venda/entrega/garantia.
+          </FeatureCard>
+        </Grid>
+
+        <H3>📊 Arquivo D2 — vin_share_Desafio_02.xlsx</H3>
+        <Grid cols={4}>
+          <StatBlock value="175k" label="VINs únicos no Brasil" />
+          <StatBlock value="600k" label="Service orders" />
+          <StatBlock value="435" label="Concessionárias" />
+          <StatBlock value="20" label="Modelos diferentes" />
+        </Grid>
+        <p>
+          Modelos mais frequentes: <b>Ranger</b> (342k orders), <b>Ka</b> (134k),
+          {' '}EcoSport (45k), Territory (27k), Bronco Sport (17k), Maverick (15k),
+          Transit (12k), F-150, Mustang, Edge, Mach-E.
+          {' '}Período: vendas <i>02/2020 → 09/2025</i>, serviços <i>01/2022 → 04/2024</i>.
+        </p>
+
+        <H3>Pipeline ETL</H3>
+        <PipelineList>
+          <PipelineStep n={1} name="Conversão XLSX → Parquet" desc="600k linhas comprimidas em 48 MB · 100× mais rápido pra carregar" />
+          <PipelineStep n={2} name="Agregação por VIN_Hash" desc="cada VIN vira 1 linha com 18 features comportamentais" />
+          <PipelineStep n={3} name="Derivação de labels reais" desc="regras heurísticas geram perfis (fiel/esquecido/econômico/abandono) a partir do comportamento observado" />
+          <PipelineStep n={4} name="Re-treino XGBoost" desc="modelo classifier_real_v1 treinado com 140k amostras reais" />
+          <PipelineStep n={5} name="Pré-computa KPIs" desc="agregados servidos via /metrics/ford-real (cache 5min)" />
+        </PipelineList>
+
+        <H3>Modelo treinado nos dados reais</H3>
+        <Grid cols={4}>
+          <StatBlock value="62.7%" label="accuracy no test set" />
+          <StatBlock value="0.60" label="F1 weighted" />
+          <StatBlock value="76%" label="F1 esquecido (classe forte)" />
+          <StatBlock value="0%" label="data leakage — auditado" />
+        </Grid>
+
+        <H3>Insights de negócio extraídos</H3>
+        <ul className="list-disc list-inside space-y-1 text-sm text-slate ml-2">
+          <li><b>55% dos clientes Ford BR são &quot;esquecidos&quot;</b> — perdem timing de revisão mas não abandonam por completo. Estratégia certa: lembretes proativos via WhatsApp + ofertas de busca/entrega.</li>
+          <li><b>Ka tem o maior abandono absoluto</b> (14.697 VINs) — modelo de entrada, perfil mais propenso a buscar oficina barata.</li>
+          <li><b>Ranger é a base de fidelização</b> — 20.873 fiéis de 78k VINs. Picape engaja por uso profissional.</li>
+          <li><b>F-150 e Mustang têm churn praticamente zero</b> — clientes premium fidelizados naturalmente.</li>
+        </ul>
+
+        <Callout type="info">
+          Veja todos os números em <Code>/visao-ford</Code> — dashboard agregado sobre
+          a base real.
+        </Callout>
+      </>
+    ),
+  },
+
+  // ===== HYBRID =====
+  {
+    id: 'classificacao-hibrida',
+    icon: Brain,
+    title: 'Classificação híbrida ML + IA',
+    summary: 'Por que combinamos os dois e quando cada um pesa mais',
+    body: (
+      <>
+        <Lead>
+          ML puro tem limites (60% de acurácia, ignora texto). IA pura também (caro, lento,
+          não-determinístico). O sistema combina os dois — ML é baseline rápido e barato,
+          IA é crítico contextual quando você pede ou quando o ML está em zona cinza.
+        </Lead>
+
+        <H3>Por que o ensemble?</H3>
+        <Grid cols={2}>
+          <FeatureCard icon={Activity} title="ML sozinho">
+            Rápido (50ms), grátis, determinístico — mas ignora texto livre,
+            histórico de ações, e tem confiança limitada em casos ambíguos.
+          </FeatureCard>
+          <FeatureCard icon={Sparkles} title="IA sozinha">
+            Vê contexto rico, explica o raciocínio — mas custa $$$, demora 2-5s,
+            pode alucinar, e LGPD trata decisão totalmente automatizada por LLM
+            com mais rigor.
+          </FeatureCard>
+        </Grid>
+
+        <H3>Como funciona o ensemble</H3>
+        <Steps>
+          <Step n={1} title="ML roda primeiro (sempre)">
+            XGBoost dá a predição baseline com confiança. Custo zero, latência baixa.
+          </Step>
+          <Step n={2} title="IA roda se você pediu OU se ML está incerto">
+            Quando o vendedor clica em <b>Reclassificar ML + IA</b> na ficha do cliente,
+            OU quando a confiança do ML é &lt; 60%, o LLM é acionado com contexto
+            completo: features + notas livres do vendedor + histórico de ações.
+          </Step>
+          <Step n={3} title="Concordância → fusão de probabilidades">
+            Se ML e IA chegam no mesmo perfil, as probabilidades viram uma média
+            ponderada (peso da IA cresce com sua confiança auto-reportada).
+            Resultado é mais robusto que cada modelo sozinho.
+          </Step>
+          <Step n={4} title="Divergência → revisão humana">
+            Se discordam, o sistema mostra <b>os dois lados a lado</b> + raciocínio
+            da IA + sinais qualitativos detectados. O perfil final vai com quem tem
+            maior confiança individual, mas marca <code>human_review_needed=true</code>
+            pra você confirmar antes de tomar ação.
+          </Step>
+        </Steps>
+
+        <H3>O que a IA enxerga que o ML não vê</H3>
+        <Grid cols={3}>
+          <StatBlock value="Notas" label="Texto livre do vendedor — reclamações, intenções, contexto" />
+          <StatBlock value="Ações" label="Histórico de toques anteriores + desfechos (sucesso/recusa)" />
+          <StatBlock value="Sinais" label="Tags qualitativas extraídas do texto (ex: menciona_preco_alto)" />
+        </Grid>
+
+        <H3>Custos por chamada</H3>
+        <SourceTable2 />
+
+        <Callout type="success">
+          <b>Defaults seguros:</b> em listagens (carteira/leads), você vê só o ML
+          (rápido + grátis). Pra abrir o crítico de IA, é 1 clique na ficha do cliente
+          — quando você precisa da resposta robusta antes de uma ligação importante.
+        </Callout>
+
+        <H3>Onde isso está no código</H3>
+        <ul className="list-disc list-inside space-y-1 text-sm text-slate ml-2">
+          <li><Code>apps/api/src/modules/retention/ai-classifier.ts</Code> — prompt + chamada LLM</li>
+          <li><Code>apps/api/src/modules/retention/hybrid-classifier.ts</Code> — lógica do ensemble</li>
+          <li><Code>POST /clients/:id/reclassify</Code> — endpoint que dispara o híbrido</li>
+          <li><Code>PATCH /clients/:id/notas</Code> — atualiza notas livres do consultor</li>
+          <li>Migration <Code>20260514_010_hybrid_classifier.sql</Code> — colunas <code>source</code>,
+            {' '}<code>raciocinio</code>, <code>signals_detected</code>, <code>ml_perfil</code>,
+            {' '}<code>ai_perfil</code>, <code>concordancia</code></li>
+        </ul>
       </>
     ),
   },
@@ -727,6 +1223,35 @@ function BadgeRow({ color, label, desc }: { color: string; label: string; desc: 
     </div>
   );
 }
+function SourceTable2() {
+  const rows = [
+    ['ML (XGBoost)',           'Sempre, em background',                     'Sem custo',          '50ms'],
+    ['IA crítico (gpt-4o-mini)', 'Quando solicitado ou ML confidence < 60%','~$0.01-0.05',        '2-5s'],
+    ['Ensemble (ML + IA)',     'Quando IA roda',                            'Custo do LLM apenas','+1s pra mesclar'],
+  ];
+  return (
+    <div className="overflow-x-auto my-3">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-ford-blue text-white">
+            <th className="px-3 py-2 text-left rounded-tl-lg">Componente</th>
+            <th className="px-3 py-2 text-left">Quando roda</th>
+            <th className="px-3 py-2 text-left">Custo</th>
+            <th className="px-3 py-2 text-left rounded-tr-lg">Latência</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className={i % 2 ? 'bg-gray-50' : ''}>
+              {r.map((c, j) => <td key={j} className="px-3 py-2 border-b border-gray-200 text-slate">{c}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function SourceTable() {
   const rows = [
     ['FIPE.online', 'Preço oficial BR + identidade exata', 'Verde', 'Mensal'],

@@ -7,7 +7,7 @@ import { FordLogo } from '@/components/FordLogo';
 
 export default function Login() {
   const router = useRouter();
-  const [email, setEmail] = useState('admin@3amit.com.br');
+  const [email, setEmail] = useState('admin@faroai.com.br');
   const [password, setPassword] = useState('Ford2026!');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +64,7 @@ export default function Login() {
         </div>
 
         <div className="relative text-xs text-white/40">
-          © 2026 · Equipe 3am IT · FIAP · Built for Ford
+          © 2026 · Equipe Faro AI · FIAP · Built for Ford
         </div>
       </div>
 
@@ -114,7 +114,7 @@ export default function Login() {
 
           <div className="mt-8 pt-6 border-t border-white/10">
             <div className="text-[10px] uppercase tracking-[0.25em] text-white/40 mb-2">Demo</div>
-            <code className="text-xs text-white/60 font-mono">admin@3amit.com.br · Ford2026!</code>
+            <code className="text-xs text-white/60 font-mono">admin@faroai.com.br · Ford2026!</code>
           </div>
         </div>
       </div>

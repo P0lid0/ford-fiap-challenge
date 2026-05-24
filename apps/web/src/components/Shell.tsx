@@ -4,26 +4,26 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   LogOut, BarChart3, Users, AlertTriangle, Car, Sparkles, Settings, Plus,
-  ChevronRight, Bell, Megaphone, BookOpen,
+  ChevronRight, Bell, Megaphone, BookOpen, Database,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { FordLogo } from './FordLogo';
+import { FaroLogo } from './FaroLogo';
 
 type NavItem = { href: string; label: string; icon: any; group?: string };
 
 const NAV: NavItem[] = [
-  { href: '/carteira',          label: 'Carteira',        icon: BarChart3,     group: 'Visão' },
-  { href: '/leads',             label: 'Leads',           icon: AlertTriangle, group: 'Visão' },
-  { href: '/clientes',          label: 'Clientes',        icon: Users,         group: 'Retenção' },
-  { href: '/acoes',             label: 'Ações & Campanhas', icon: Megaphone,   group: 'Retenção' },
-  { href: '/insights',          label: 'Insights IA',     icon: Sparkles,      group: 'Retenção' },
-  { href: '/veiculos',          label: 'Concorrência',    icon: Car,           group: 'Catálogo' },
-  { href: '/veiculos/adicionar',label: 'Adicionar carro', icon: Plus,          group: 'Catálogo' },
+  { href: '/carteira',          label: 'Carteira',        icon: BarChart3,     group: 'Retenção (D2)' },
+  { href: '/leads',             label: 'Leads',           icon: AlertTriangle, group: 'Retenção (D2)' },
+  { href: '/clientes',          label: 'Clientes',        icon: Users,         group: 'Retenção (D2)' },
+  { href: '/acoes',             label: 'Ações & Campanhas', icon: Megaphone,   group: 'Retenção (D2)' },
+  { href: '/veiculos',          label: 'Concorrência',    icon: Car,           group: 'Catálogo (D1)' },
+  { href: '/veiculos/adicionar',label: 'Adicionar carro', icon: Plus,          group: 'Catálogo (D1)' },
   { href: '/ajuda',             label: 'Documentação',    icon: BookOpen,      group: 'Sistema' },
   { href: '/configuracoes',     label: 'Configurações',   icon: Settings,      group: 'Sistema' },
 ];
 
-const GROUPS = ['Visão', 'Retenção', 'Catálogo', 'Sistema'] as const;
+const GROUPS = ['Retenção (D2)', 'Catálogo (D1)', 'Sistema'] as const;
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -58,13 +58,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="absolute inset-0 opacity-30 pointer-events-none"
              style={{ background: 'radial-gradient(circle at 20% 0%, #1E4B8E 0%, transparent 50%)' }} />
 
-        {/* logo + brand */}
+        {/* logo + brand — Faro AI (produto) + Ford × FIAP (parceria do challenge) */}
         <div className="relative px-5 pt-6 pb-5 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <FordLogo size="sm" />
+          {/* Faro AI — marca principal do sistema */}
+          <div className="flex items-center gap-3 mb-3">
+            <FaroLogo size="sm" monochrome />
             <div>
-              <div className="text-[10px] uppercase tracking-[0.25em] text-white/60 leading-tight">FIAP</div>
-              <div className="text-sm font-bold leading-tight">Challenge 2026</div>
+              <div className="text-base font-black leading-tight tracking-tight">FARO <span className="font-light text-white/80">AI</span></div>
+              <div className="text-[9px] uppercase tracking-[0.25em] text-white/50 leading-tight mt-0.5">Inteligência automotiva</div>
+            </div>
+          </div>
+          {/* Parceria Ford × FIAP — secundário */}
+          <div className="flex items-center gap-2 pt-3 border-t border-white/5">
+            <FordLogo size="xs" />
+            <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 leading-tight">
+              Ford × FIAP<br />Challenge 2026
             </div>
           </div>
         </div>
@@ -131,7 +139,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         {/* top bar fina — sticky pra acompanhar scroll do conteúdo */}
         <header className="sticky top-0 z-10 backdrop-blur-md bg-white/70 border-b border-gray-200/60 px-8 py-3 flex items-center justify-between">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500">FordIQ</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-gray-500">Faro AI</div>
             <div className="text-base font-semibold text-charcoal">{currentLabel}</div>
           </div>
           <div className="flex items-center gap-2">

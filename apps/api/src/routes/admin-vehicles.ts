@@ -192,6 +192,81 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       .sort((a, b) => b.codigo.localeCompare(a.codigo));
   });
 
+  // ====================================================================
+  // REFRESH SÓ DO PREÇO — só FIPE, rápido, barato, sem mexer em mais nada
+  // Endpoint dedicado pra "atualizar preço": muitos veículos vêm sem preço
+  // ou com preço de meses atrás. Esta rota só busca o valor FIPE atual
+  // e atualiza preco_brl + fipe_codigo + fipe_mes_referencia.
+  // ====================================================================
+  app.post('/competitive/vehicles/:id/refresh-price', {
+    schema: {
+      tags: ['Desafio 1 — Inteligência Competitiva'],
+      summary: 'Atualiza apenas o preço (FIPE) do veículo — sem mexer em specs',
+      params: z.object({ id: z.string().uuid() }),
+    },
+  }, async (req, reply) => {
+    requireUser(req);
+    const { id } = req.params as any;
+    const sb = adminClient();
+
+    const { data: vehicle, error: vErr } = await sb
+      .from('vehicles')
+      .select('id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources')
+      .eq('id', id).maybeSingle();
+    if (vErr) throw vErr;
+    if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
+
+    // 1. Tenta a busca completa FIPE (marca + modelo+versao + ano)
+    let fipeResult;
+    try {
+      const query = `${vehicle.modelo} ${vehicle.versao}`.trim();
+      fipeResult = await fipe.findVehicle(vehicle.marca, query, vehicle.ano);
+    } catch (e: any) {
+      req.log.warn({ err: e, vehicle: vehicle.id }, '[refresh-price] FIPE lookup failed');
+      reply.code(502);
+      return {
+        error: 'fipe_unavailable',
+        message: `Não consegui consultar FIPE: ${e.message}`,
+      };
+    }
+
+    if (!fipeResult) {
+      reply.code(404);
+      return {
+        error: 'not_in_fipe',
+        message: `FIPE não tem essa combinação cadastrada (${vehicle.marca} ${vehicle.modelo} ${vehicle.versao} ${vehicle.ano}).`,
+      };
+    }
+
+    const novoPreco = fipe.parseValor(fipeResult.Valor);
+    const precoAntigo = vehicle.preco_brl;
+
+    // 2. Atualiza só os campos relacionados a preço/FIPE
+    const novasFontes = { ...(vehicle.data_sources ?? {}) };
+    novasFontes.preco_brl = 'fipe';
+
+    const { data, error } = await sb.from('vehicles').update({
+      preco_brl: novoPreco,
+      fipe_codigo: fipeResult.CodigoFipe,
+      fipe_mes_referencia: fipeResult.MesReferencia,
+      data_sources: novasFontes,
+    }).eq('id', id).select(
+      'id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources'
+    ).single();
+
+    if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
+
+    return {
+      ok: true,
+      preco_antigo: precoAntigo,
+      preco_novo: novoPreco,
+      diff: precoAntigo != null ? novoPreco - precoAntigo : null,
+      mes_referencia: fipeResult.MesReferencia,
+      fipe_codigo: fipeResult.CodigoFipe,
+      vehicle: data,
+    };
+  });
+
   // === SEARCH via códigos FIPE diretos — confiabilidade máxima ===
   app.post('/competitive/search/fipe', {
     schema: {
@@ -440,12 +515,15 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       equipamentos: it.equipamentos ?? [],
       preco_brl: it.preco_brl ?? null,
       pais_origem: it.pais_origem ?? null,
-      fontes: ['import'],
-      data_sources: { _all: 'import' },
-      verificado_manualmente: true,
+      // Preserva fontes/data_sources se o payload trouxer (ex: import oficial Ford);
+      // senão marca como import genérico.
+      fontes: Array.isArray(it.fontes) && it.fontes.length ? it.fontes : ['import'],
+      data_sources: it.data_sources ?? { _all: 'import' },
+      notas: it.notas ?? null,
+      verificado_manualmente: it.verificado_manualmente ?? true,
       verificado_por: u.id,
       verificado_em: new Date().toISOString(),
-      confianca_geral: 'alta',
+      confianca_geral: it.confianca_geral ?? 'alta',
     }));
 
     const { data, error } = await sb.from('vehicles').upsert(rows, { onConflict: 'hash_dedupe' }).select();

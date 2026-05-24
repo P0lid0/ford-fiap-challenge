@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:archimate="http://www.archimatetool.com/archimate"
-                 name="FordIQ — Inteligência Competitiva + Retenção VIN Share"
+                 name="Faro AI — Inteligência Competitiva + Retenção VIN Share"
                  id="id-ford-fiap-2026"
                  version="5.0.0">
   <metadata>
     <schema>Dublin Core</schema>
     <schemaversion>1.1</schemaversion>
-    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">FordIQ Architecture</dc:title>
+    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Faro AI Architecture</dc:title>
     <dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Equipe FIAP — Guilherme (554962), Pedro (555556), Fabrício (558216), Vitor (554893), Matheus (555447)</dc:creator>
     <dc:date xmlns:dc="http://purl.org/dc/elements/1.1/">2026-05-15</dc:date>
-    <dc:description xmlns:dc="http://purl.org/dc/elements/1.1/">Modelo TOGAF/ArchiMate 3.1 da solução FordIQ para o Ford × FIAP Challenge 2026.</dc:description>
+    <dc:description xmlns:dc="http://purl.org/dc/elements/1.1/">Modelo TOGAF/ArchiMate 3.1 da solução Faro AI para o Ford × FIAP Challenge 2026.</dc:description>
   </metadata>
 
-  <purpose>Arquitetura completa do FordIQ: visão estratégica, negócio, sistema e tecnologia. Modela a entrega da Sprint Única (24/05/2026).</purpose>
+  <purpose>arquitetura completa do Faro AI: visão estratégica, negócio, sistema e tecnologia. Modela a entrega da Sprint Única (24/05/2026).</purpose>
 
   <!-- ================== FOLDER: STRATEGY ================== -->
   <folder name="Strategy" id="folder-strategy" type="strategy">
@@ -66,16 +66,16 @@
   <!-- ================== FOLDER: APPLICATION ================== -->
   <folder name="Application" id="folder-app" type="application">
     <!-- Components -->
-    <element xsi:type="archimate:ApplicationComponent" id="comp-web" name="FordIQ Web (Next.js 15)">
+    <element xsi:type="archimate:ApplicationComponent" id="comp-web" name="Faro AI Web (Next.js 15)">
       <documentation>apps/web — interface admin e gestor. Busca, comparação, detalhe de veículo, carteira de clientes, configurações.</documentation>
     </element>
-    <element xsi:type="archimate:ApplicationComponent" id="comp-mobile" name="FordIQ Mobile (Expo + RN 0.76)">
+    <element xsi:type="archimate:ApplicationComponent" id="comp-mobile" name="Faro AI Mobile (Expo + RN 0.76)">
       <documentation>apps/mobile — app iOS/Android para consultor em loja.</documentation>
     </element>
-    <element xsi:type="archimate:ApplicationComponent" id="comp-api" name="FordIQ API Gateway (Fastify + TS)">
+    <element xsi:type="archimate:ApplicationComponent" id="comp-api" name="Faro AI API Gateway (Fastify + TS)">
       <documentation>apps/api — REST com Swagger /docs. Centraliza auth, validação, audit, integração com fontes externas e ML.</documentation>
     </element>
-    <element xsi:type="archimate:ApplicationComponent" id="comp-ml" name="FordIQ ML Service (FastAPI + XGBoost)">
+    <element xsi:type="archimate:ApplicationComponent" id="comp-ml" name="Faro AI ML Service (FastAPI + XGBoost)">
       <documentation>services/ml — clustering KMeans (Base 1) e classificador XGBoost (Base 2). Endpoint /predict com HMAC + bearer.</documentation>
     </element>
     <element xsi:type="archimate:ApplicationComponent" id="comp-aggregator" name="Aggregator de Veículos">

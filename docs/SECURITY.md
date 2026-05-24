@@ -1,6 +1,17 @@
-# Política de Segurança — Ford × FIAP Challenge 2026
+# Política de Segurança — Faro AI · Ford × FIAP Challenge 2026
 
-Documento técnico cobrindo os 5 eixos avaliativos da disciplina de Cybersecurity.
+**Equipe Faro AI** — Guilherme (RM 554962) · Pedro (RM 555556) · Fabrício (RM 558216) · Vitor (RM 554893) · Matheus (RM 555447)
+
+Documento técnico cobrindo os **5 eixos avaliativos** da disciplina de Cybersecurity:
+
+| Eixo | Pontos | Cobertura |
+|---|---|---|
+| 1. Validação e sanitização de entrada | 20 | ✅ Zod, sanitização XSS/SQL/cmd, rate-limit, multipart |
+| 2. Autenticação e autorização | 20 | ✅ JWT Supabase, RBAC 3 níveis, RLS Postgres |
+| 3. Proteção de APIs e serviços | 20 | ✅ TLS 1.3, rate-limit, CORS allowlist, HMAC payloads |
+| 4. Dados e privacidade | 25 | ✅ AES-256 at rest, VIN_Hash, anonimização ML, LGPD |
+| 5. Monitoramento, logs e auditoria | 15 | ✅ Logs estruturados, audit_log, observabilidade |
+| **Total** | **100** | |
 
 ---
 

@@ -8,7 +8,11 @@ import { requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 import { AVAILABLE_MODELS, clearKeyCache, getApiKey, type Provider } from '../lib/ai.js';
 
-const PROVIDERS = ['openai', 'anthropic', 'gemini', 'fipe', 'vehicle411'] as const;
+const PROVIDERS = [
+  'openai', 'anthropic', 'gemini',     // LLMs
+  'fipe', 'vehicle411',                // Dados de veículos
+  'resend', 'email_from',              // E-mail real pras ações de retenção (D2)
+] as const;
 
 export async function aiConfigRoutes(app: FastifyInstance) {
   // === Status das chaves (não retorna os valores!) ===

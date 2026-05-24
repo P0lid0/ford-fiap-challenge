@@ -19,7 +19,7 @@ const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_R
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const ADMIN_EMAIL = 'admin@3amit.com.br';
+const ADMIN_EMAIL = 'admin@faroai.com.br';
 const ADMIN_PASSWORD = 'Ford2026!';
 
 // 1. Cria usuário
@@ -34,7 +34,7 @@ if (found) {
   const { data, error } = await sb.auth.admin.createUser({
     email: ADMIN_EMAIL, password: ADMIN_PASSWORD,
     email_confirm: true,
-    user_metadata: { full_name: 'Admin 3am IT' },
+    user_metadata: { full_name: 'Admin Faro AI' },
   });
   if (error) throw error;
   userId = data.user.id;
@@ -49,7 +49,7 @@ if (!deal) throw new Error('dealership FD001 não encontrada');
 const { error: upErr } = await sb.from('profiles').update({
   role: 'admin',
   dealership_id: deal.id,
-  full_name: 'Admin 3am IT',
+  full_name: 'Admin Faro AI',
 }).eq('id', userId);
 if (upErr) throw upErr;
 

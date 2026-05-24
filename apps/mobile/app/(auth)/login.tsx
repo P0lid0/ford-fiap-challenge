@@ -27,7 +27,7 @@ export default function Login() {
         <View style={styles.container}>
           <View style={styles.brand}>
             <Text style={styles.brandFord}>Ford</Text>
-            <Text style={styles.brandSub}>FIAP · 3am IT</Text>
+            <Text style={styles.brandSub}>FIAP · Faro AI</Text>
           </View>
           <Text style={styles.title}>{mode === 'signin' ? 'Entrar' : 'Criar conta'}</Text>
           <Text style={styles.subtitle}>Painel de retenção de clientes</Text>

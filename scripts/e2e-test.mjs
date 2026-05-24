@@ -24,7 +24,7 @@ async function login() {
   const r = await fetch(`${SB}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: { apikey: ANON, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@3amit.com.br', password: 'Ford2026!' }),
+    body: JSON.stringify({ email: 'admin@faroai.com.br', password: 'Ford2026!' }),
   });
   const j = await r.json();
   return j.access_token;

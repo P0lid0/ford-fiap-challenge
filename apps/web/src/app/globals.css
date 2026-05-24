@@ -27,6 +27,21 @@ body {
 /* === Utilitários compostos === */
 
 @layer components {
+  /* === Sistema tipográfico — usar essas classes em vez de text-* inline === */
+  .h1 { @apply text-3xl font-bold text-charcoal leading-tight tracking-tight; }
+  .h2 { @apply text-xl font-bold text-charcoal leading-tight; }
+  .h3 { @apply text-base font-bold text-charcoal; }
+  .h4 { @apply text-sm font-bold text-charcoal uppercase tracking-wider; }
+  .body { @apply text-sm text-slate leading-relaxed; }
+  .caption { @apply text-xs text-slate; }
+  .label { @apply text-[11px] uppercase tracking-[0.15em] text-gray-500 font-bold; }
+  .label-strong { @apply text-[11px] uppercase tracking-[0.15em] text-ford-blue font-bold; }
+  .eyebrow { @apply text-xs uppercase tracking-[0.25em] text-ford-blue font-bold; }
+
+  /* === Spacing helpers — use em vez de mb-X ad-hoc === */
+  .stack-section > * + * { margin-top: 1.5rem; } /* 24px entre seções de uma page */
+  .stack-card > * + * { margin-top: 1rem; }      /* 16px entre cards dentro de seção */
+
   .ford-script {
     font-family: 'Dancing Script', 'Brush Script MT', cursive;
     font-weight: 700;
