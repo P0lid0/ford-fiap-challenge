@@ -55,9 +55,9 @@ export function BrandCombo({ value, onChange, placeholder = 'Selecione a marca�
               onClick={() => { onChange(m.nome); setOpen(false); setQuery(''); }}
               className="w-full flex items-center gap-2 px-4 py-2 hover:bg-gray-50 transition text-left">
               {m.tem_scraping ? (
-                <Globe className="w-3.5 h-3.5 text-success" title="Site oficial disponível" />
+                <span title="Site oficial disponível" className="inline-flex"><Globe className="w-3.5 h-3.5 text-success" /></span>
               ) : (
-                <Cpu className="w-3.5 h-3.5 text-gray-400" title="Apenas FIPE + IA" />
+                <span title="Apenas FIPE + IA" className="inline-flex"><Cpu className="w-3.5 h-3.5 text-gray-400" /></span>
               )}
               <span className="flex-1 text-sm">{m.nome}</span>
               {value === m.nome && <Check className="w-4 h-4 text-ford-blue" />}

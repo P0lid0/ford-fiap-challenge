@@ -1,33 +1,24 @@
 #!/usr/bin/env node
 // Smoke test E2E completo: login → /me → cria cliente → predict → IA insight
-import { readFileSync, existsSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Só fala HTTP com a API (API_URL, default http://127.0.0.1:3333); o login é
+// feito em POST /auth/login com o admin de demo (ADMIN_EMAIL/ADMIN_PASSWORD).
+import { apiUrl } from './lib/env.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, '..');
-const envPath = join(root, '.env.local');
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-  }
-}
-
-const SB = process.env.SUPABASE_URL;
-const ANON = process.env.SUPABASE_ANON_KEY;
-const API = 'http://127.0.0.1:3333';
+const API = apiUrl();
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@faroai.com.br';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Ford2026!';
 
 function dot(...args) { console.log(...args); }
 
 async function login() {
-  const r = await fetch(`${SB}/auth/v1/token?grant_type=password`, {
+  const r = await fetch(`${API}/auth/login`, {
     method: 'POST',
-    headers: { apikey: ANON, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@faroai.com.br', password: 'Ford2026!' }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
   });
+  if (!r.ok) throw new Error(`login falhou: ${r.status} ${await r.text()}`);
   const j = await r.json();
-  return j.access_token;
+  return j.token;
 }
 
 async function api(path, token, opts = {}) {
@@ -58,9 +49,11 @@ dot('\n--- DESAFIO 2 — Retenção ---');
 const newClient = await api('/clients', token, {
   method: 'POST',
   body: JSON.stringify({
+    // Identificação Ford (obrigatória desde a migration 011) + legado opcional
+    model_name: 'RANGER', model_year: 2025, sales_date: '2025-03-10',
     idade: 34, genero: 'M', regiao: 'sudeste',
     renda_mensal_brl: 7500, estado_civil: 'solteiro', score_credito: 620,
-    modelo_comprado: 'Ranger', versao_comprada: 'XL', preco_pago_brl: 198000,
+    versao_comprada: 'XL', preco_pago_brl: 198000,
     financiamento: 'financiado', parcelas: 60,
     canal_aquisicao: 'concessionaria', primeiro_carro: true,
     test_drive_realizado: true, nome_cliente: 'Joao Demo',

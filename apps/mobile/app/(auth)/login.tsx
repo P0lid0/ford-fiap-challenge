@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { supabase } from '../../lib/supabase';
+import { login, register } from '../../lib/auth';
 import { colors, radius, spacing, typography } from '../../lib/theme';
 
 export default function Login() {
@@ -13,9 +13,11 @@ export default function Login() {
   async function submit() {
     setLoading(true);
     try {
-      const fn = mode === 'signin' ? supabase.auth.signInWithPassword : supabase.auth.signUp;
-      const { error } = await fn({ email, password });
-      if (error) Alert.alert('Erro', error.message);
+      // Sucesso: a sessão é persistida e o _layout redireciona para (tabs).
+      if (mode === 'signin') await login(email, password);
+      else await register(email, password);
+    } catch (e) {
+      Alert.alert('Erro', e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }

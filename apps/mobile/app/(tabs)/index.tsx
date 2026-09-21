@@ -6,7 +6,7 @@ import { Card } from '../../components/Card';
 import { PerfilBadge } from '../../components/PerfilBadge';
 import { Screen } from '../../components/Screen';
 import { api } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
+import { logout } from '../../lib/auth';
 import { colors, radius, spacing, typography } from '../../lib/theme';
 
 export default function Carteira() {
@@ -46,7 +46,7 @@ export default function Carteira() {
       subtitle="KPIs da concessionária + clientes recentes"
       action={
         <Pressable
-          onPress={() => supabase.auth.signOut()}
+          onPress={() => logout()}
           style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}
         >
           <Ionicons name="log-out-outline" size={22} color={colors.gray600} />

@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { getToken } from './auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333';
 
@@ -18,8 +18,7 @@ export type AiFunction =
   | 'catalog_autofill';
 
 async function authedHeaders(fn?: AiFunction): Promise<HeadersInit> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = getToken();
   const aiModel = getPreferredAiModel();
   return {
     'Content-Type': 'application/json',
@@ -31,8 +30,7 @@ async function authedHeaders(fn?: AiFunction): Promise<HeadersInit> {
 
 // Pra multipart uploads: NÃO setar Content-Type (browser põe boundary).
 async function authedHeadersNoJson(): Promise<HeadersInit> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

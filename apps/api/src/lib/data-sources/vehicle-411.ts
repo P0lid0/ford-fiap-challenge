@@ -17,7 +17,7 @@
  * com `vehicle411` — confiança média (entre manufacturer e AI).
  */
 import { fetchWithTimeout } from './_http.js';
-import { adminClient } from '../supabase.js';
+import { sql } from '../db.js';
 
 const RAPIDAPI_HOST = '411-vehicle-data.p.rapidapi.com';
 const BASE = `https://${RAPIDAPI_HOST}`;
@@ -31,9 +31,9 @@ async function getToken(): Promise<string | null> {
   if (process.env.VEHICLE411_API_KEY) return process.env.VEHICLE411_API_KEY;
   if (_tokenCache && _tokenCache.expires > Date.now()) return _tokenCache.token;
   try {
-    const { data } = await adminClient()
-      .from('ai_keys').select('api_key').eq('provider', 'vehicle411').maybeSingle();
-    const tok = data?.api_key ?? null;
+    // provider é PK em ai_keys → no máximo 1 linha (equivale ao antigo maybeSingle)
+    const rows = await sql<{ api_key: string }[]>`select api_key from ai_keys where provider = 'vehicle411'`;
+    const tok = rows[0]?.api_key ?? null;
     _tokenCache = { token: tok, expires: Date.now() + TOKEN_TTL };
     return tok;
   } catch {

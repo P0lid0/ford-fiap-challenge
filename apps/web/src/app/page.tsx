@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Loader2, ShieldCheck, Zap, BarChart3 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { login, getSession } from '@/lib/auth';
 import { FordLogo } from '@/components/FordLogo';
 
 export default function Login() {
@@ -13,17 +13,15 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.replace('/carteira');
-    });
+    // Sessão guardada no localStorage → pula o login.
+    if (getSession()) router.replace('/carteira');
   }, [router]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null); setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      await login(email, password);
       router.replace('/carteira');
     } catch (e: any) {
       setError(e.message ?? String(e));

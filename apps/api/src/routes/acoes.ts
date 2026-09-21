@@ -11,7 +11,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { requireUser } from '../plugins/auth.js';
-import { adminClient, publicClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
+import { canWriteDealership, dealershipFilter, writeDealershipFilter } from '../lib/scope.js';
 import { logAudit } from '../lib/audit.js';
 import { sendEmail, templateFor } from '../lib/email.js';
 
@@ -48,6 +49,17 @@ const CampaignBody = z.object({
   limit: z.number().int().min(1).max(500).default(100),
 });
 
+/**
+ * Remove chaves com valor undefined (campos opcionais do Zod). O supabase-js
+ * omitia essas chaves do JSON; o driver `postgres` rejeita undefined em
+ * `sql(obj)`, então filtramos antes de montar o insert/update.
+ */
+function semUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) if (v !== undefined) out[k] = v;
+  return out as Partial<T>;
+}
+
 export async function acoesRoutes(app: FastifyInstance) {
 
   // ===== CRIAR ação individual =====
@@ -64,23 +76,26 @@ export async function acoesRoutes(app: FastifyInstance) {
       return { error: 'no_dealership', message: 'usuário não está vinculado a uma concessionária' };
     }
     const body = req.body as z.infer<typeof CreateAcaoBody>;
-    const sb = adminClient();
 
-    // Confirma que o client pertence à mesma dealership (defense in depth além da RLS)
-    const { data: client } = await sb.from('clients')
-      .select('id, dealership_id').eq('id', body.client_id).maybeSingle();
+    // Confirma que o client pertence à mesma dealership (defense in depth)
+    const [client] = await sql<{ id: string; dealership_id: string | null }[]>`
+      select id, dealership_id from public.clients where id = ${body.client_id}
+    `;
     if (!client || client.dealership_id !== u.dealership_id) {
       reply.code(404);
       return { error: 'client_not_found' };
     }
 
-    const { data, error } = await sb.from('acoes_retencao').insert({
+    const row = semUndefined({
       ...body,
       dealership_id: u.dealership_id,
       actor_id: u.id,
       completed_at: body.status?.startsWith('concluida_') ? new Date().toISOString() : null,
-    }).select().single();
-    if (error) {
+    });
+    let data: any;
+    try {
+      [data] = await sql`insert into public.acoes_retencao ${sql(row)} returning *`;
+    } catch (error: any) {
       req.log.error({ error }, '[acoes] insert failed');
       reply.code(400);
       return { error: 'insert_failed', message: error.message };
@@ -112,22 +127,43 @@ export async function acoesRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const q = req.query as any;
-    const sb = publicClient(u.jwt);
 
-    let query = sb.from('acoes_retencao')
-      .select('*, clients!inner(id, modelo_comprado, versao_comprada, nome_cliente)',
-              { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(q.offset, q.offset + q.limit - 1);
+    // Antes o RLS limitava o analista à própria dealership; aqui é explícito.
+    // Filtros opcionais viram fragmentos (vazios quando ausentes).
+    const where = sql`
+      where true
+        ${dealershipFilter(u, 'a.dealership_id')}
+        ${q.client_id ? sql`and a.client_id = ${q.client_id}` : sql``}
+        ${q.status ? sql`and a.status = ${q.status}` : sql``}
+        ${q.tipo ? sql`and a.tipo = ${q.tipo}` : sql``}
+        ${q.perfil_alvo ? sql`and a.perfil_alvo = ${q.perfil_alvo}` : sql``}
+    `;
 
-    if (q.client_id) query = query.eq('client_id', q.client_id);
-    if (q.status) query = query.eq('status', q.status);
-    if (q.tipo) query = query.eq('tipo', q.tipo);
-    if (q.perfil_alvo) query = query.eq('perfil_alvo', q.perfil_alvo);
-
-    const { data, error, count } = await query;
-    if (error) throw error;
-    return { total: count ?? 0, results: data ?? [] };
+    // Embed N:1 `clients!inner(...)` do PostgREST → objeto único via json_build_object.
+    // `{ count: 'exact' }` → count total à parte (independente da página).
+    const [data, [countRow]] = await Promise.all([
+      sql`
+        select a.*,
+          json_build_object(
+            'id', c.id,
+            'modelo_comprado', c.modelo_comprado,
+            'versao_comprada', c.versao_comprada,
+            'nome_cliente', c.nome_cliente
+          ) as clients
+        from public.acoes_retencao a
+        join public.clients c on c.id = a.client_id
+        ${where}
+        order by a.created_at desc
+        limit ${q.limit} offset ${q.offset}
+      `,
+      sql<{ count: number }[]>`
+        select count(*)::int as count
+        from public.acoes_retencao a
+        join public.clients c on c.id = a.client_id
+        ${where}
+      `,
+    ]);
+    return { total: countRow?.count ?? 0, results: data ?? [] };
   });
 
   // ===== ATUALIZAR ação (status, desfecho, etc) =====
@@ -142,18 +178,30 @@ export async function acoesRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const body = req.body as z.infer<typeof UpdateAcaoBody>;
-    const sb = adminClient();
 
-    const updates: any = { ...body };
+    const updates: any = semUndefined({ ...body });
     if (body.status?.startsWith('concluida_')) {
       updates.completed_at = new Date().toISOString();
     }
 
-    const { data, error } = await sb.from('acoes_retencao')
-      .update(updates).eq('id', id).select().single();
-    if (error || !data) {
+    // Antiga policy acoes_update_owner_or_manager (009): só o autor ou
+    // gestor/admin editam — e sempre dentro da própria dealership (admin: tudo).
+    // `.single()` → 0 linhas era erro; mantemos o 404 nos dois casos (falha ou não encontrada).
+    const autorFilter = u.role === 'admin' || u.role === 'gestor' ? sql`` : sql`and actor_id = ${u.id}`;
+    let data: any;
+    try {
+      [data] = await sql`
+        update public.acoes_retencao set ${sql(updates)}
+        where id = ${id} ${autorFilter} ${writeDealershipFilter(u)}
+        returning *
+      `;
+    } catch (error: any) {
       reply.code(404);
       return { error: 'not_found_or_failed', message: error?.message };
+    }
+    if (!data) {
+      reply.code(404);
+      return { error: 'not_found_or_failed', message: 'ação não encontrada' };
     }
 
     await logAudit({
@@ -182,15 +230,24 @@ export async function acoesRoutes(app: FastifyInstance) {
       return { error: 'forbidden', message: 'apenas gestor/admin pode criar campanhas' };
     }
     const b = req.body as z.infer<typeof CampaignBody>;
-    const sb = adminClient();
 
-    // Busca clientes alvo
-    let q = sb.from('clients')
-      .select('id, predictions(perfil_predito, risco_evasao)')
-      .eq('dealership_id', u.dealership_id)
-      .limit(b.limit);
-    const { data: clients, error: cerr } = await q;
-    if (cerr) throw cerr;
+    // Busca clientes alvo — embed 1:N `predictions(...)` → array via json_agg
+    // (mais recente primeiro; o código usa predictions[0]).
+    const clients = await sql<{
+      id: string;
+      predictions: { perfil_predito: string; risco_evasao: number }[];
+    }[]>`
+      select c.id,
+        coalesce((
+          select json_agg(json_build_object('perfil_predito', p.perfil_predito, 'risco_evasao', p.risco_evasao)
+                          order by p.created_at desc)
+          from public.predictions p
+          where p.client_id = c.id
+        ), '[]'::json) as predictions
+      from public.clients c
+      where c.dealership_id = ${u.dealership_id}
+      limit ${b.limit}
+    `;
 
     const targets = (clients ?? []).filter((c: any) => {
       const p = c.predictions?.[0];
@@ -206,19 +263,21 @@ export async function acoesRoutes(app: FastifyInstance) {
     const campaign_id = randomUUID();
     const rows = targets.map((c: any) => ({
       client_id: c.id,
-      dealership_id: u.dealership_id,
+      dealership_id: u.dealership_id!,
       actor_id: u.id,
       tipo: b.tipo,
       titulo: b.titulo,
-      descricao: b.descricao,
+      descricao: b.descricao ?? null,
       perfil_alvo: b.perfil,
       risco_no_disparo: c.predictions[0].risco_evasao,
       status: 'planejada' as const,
       campaign_id,
     }));
 
-    const { data, error } = await sb.from('acoes_retencao').insert(rows).select();
-    if (error) {
+    let data: any[];
+    try {
+      data = await sql`insert into public.acoes_retencao ${sql(rows)} returning *`;
+    } catch (error: any) {
       req.log.error({ error }, '[campaign] insert failed');
       reply.code(400);
       return { error: 'campaign_failed', message: error.message };
@@ -242,9 +301,12 @@ export async function acoesRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
-    const sb = publicClient(u.jwt);
-    const { data } = await sb.from('acoes_retencao').select('status, tipo, perfil_alvo, created_at, completed_at');
-    const rows = data ?? [];
+    // Escopo explícito (antes vinha do RLS): analista só a própria dealership.
+    const rows = await sql`
+      select status, tipo, perfil_alvo, created_at, completed_at
+      from public.acoes_retencao
+      where true ${dealershipFilter(u)}
+    `;
 
     const total = rows.length;
     const byStatus: Record<string, number> = {};
@@ -302,14 +364,18 @@ export async function acoesRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const { client_id, subject, body_html, use_template, to_override } = req.body as any;
-    const sb = adminClient();
 
-    // 1. Busca cliente
-    const { data: client, error: cErr } = await sb.from('clients')
-      .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real, dealership_id')
-      .eq('id', client_id).maybeSingle();
-    if (cErr) throw cErr;
-    if (!client) { reply.code(404); return { error: 'client_not_found' }; }
+    // 1. Busca cliente — precisa pertencer a uma dealership onde o usuário
+    //    pode escrever (a ação e o email_log são gravados nela), como em POST /acoes.
+    const [client] = await sql`
+      select id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real, dealership_id
+      from public.clients
+      where id = ${client_id}
+    `;
+    if (!client || !canWriteDealership(u, client.dealership_id)) {
+      reply.code(404);
+      return { error: 'client_not_found' };
+    }
 
     const to = to_override ?? client.email_cliente;
     if (!to) {
@@ -333,21 +399,29 @@ export async function acoesRoutes(app: FastifyInstance) {
     }
 
     // 3. Cria a ação primeiro (vincular o email_log)
-    const { data: acao, error: aErr } = await sb.from('acoes_retencao').insert({
-      id: randomUUID(),
-      client_id,
-      dealership_id: client.dealership_id,
-      tipo: 'email',
-      titulo: finalSubject,
-      descricao: `E-mail enviado para ${to}`,
-      perfil_alvo: client.perfil_real,
-      status: 'em_andamento',  // vai pra concluida_sucesso quando o envio confirmar
-      actor_id: u.id,          // coluna correta no schema (não é created_by)
-      created_at: new Date().toISOString(),
-    }).select().single();
-    if (aErr || !acao) {
+    let acao: any;
+    try {
+      [acao] = await sql`
+        insert into public.acoes_retencao ${sql({
+          id: randomUUID(),
+          client_id,
+          dealership_id: client.dealership_id,
+          tipo: 'email',
+          titulo: finalSubject,
+          descricao: `E-mail enviado para ${to}`,
+          perfil_alvo: client.perfil_real,
+          status: 'em_andamento',  // vai pra concluida_sucesso quando o envio confirmar
+          actor_id: u.id,          // coluna correta no schema (não é created_by)
+          created_at: new Date().toISOString(),
+        })} returning *
+      `;
+    } catch (aErr: any) {
       reply.code(500);
       return { error: 'acao_create_failed', message: aErr?.message };
+    }
+    if (!acao) {
+      reply.code(500);
+      return { error: 'acao_create_failed', message: undefined };
     }
 
     // 4. Envia o e-mail (Resend ou mock)
@@ -377,11 +451,19 @@ export async function acoesRoutes(app: FastifyInstance) {
         ? `⚠️ SIMULAÇÃO — e-mail NÃO foi enviado (Resend não configurado em /configuracoes). Configure a chave pra envio real.`
         : `Falha ao enviar: ${result.error}`;
 
-    await sb.from('acoes_retencao').update({
-      status: novoStatus,
-      completed_at: isReallySent ? new Date().toISOString() : null,
-      desfecho: novoDesfecho,
-    }).eq('id', acao.id);
+    // Erro aqui era ignorado pelo supabase-js (sem checagem de `error`);
+    // mantemos o comportamento pra não perder a resposta do envio.
+    try {
+      await sql`
+        update public.acoes_retencao set ${sql({
+          status: novoStatus,
+          completed_at: isReallySent ? new Date().toISOString() : null,
+          desfecho: novoDesfecho,
+        })} where id = ${acao.id}
+      `;
+    } catch (err) {
+      req.log.warn({ err: String(err) }, '[email-send] falha ao atualizar status da ação');
+    }
 
     // 6. Audit
     await logAudit({
@@ -418,9 +500,9 @@ export async function acoesRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     requireUser(req);
-    const sb = adminClient();
-    const { data: rows } = await sb.from('ai_keys')
-      .select('provider').in('provider', ['resend', 'email_from']);
+    const rows = await sql<{ provider: string }[]>`
+      select provider from public.ai_keys where provider in ${sql(['resend', 'email_from'])}
+    `;
     const has = new Set((rows ?? []).map((r: any) => r.provider));
     return {
       resend_configured: has.has('resend'),
@@ -445,12 +527,14 @@ export async function acoesRoutes(app: FastifyInstance) {
       params: z.object({ client_id: z.string().uuid() }),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { client_id } = req.params as any;
-    const sb = adminClient();
-    const { data: client } = await sb.from('clients')
-      .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real')
-      .eq('id', client_id).maybeSingle();
+    // Cliente fora do escopo do usuário cai no 404 (mesmo comportamento do RLS antigo).
+    const [client] = await sql`
+      select id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real
+      from public.clients
+      where id = ${client_id} ${dealershipFilter(u)}
+    `;
     if (!client) { reply.code(404); return { error: 'not_found' }; }
     const modelo = client.model_name ?? client.modelo_comprado ?? 'seu Ford';
     const nome = client.nome_cliente ?? 'Cliente Ford';

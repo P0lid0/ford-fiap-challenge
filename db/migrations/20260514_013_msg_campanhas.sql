@@ -18,7 +18,7 @@ create type msg_destinatario_status as enum ('pendente', 'enviado', 'falhou', 'c
 create table public.msg_campanhas (
   id uuid primary key default gen_random_uuid(),
   dealership_id uuid not null references public.dealerships(id) on delete cascade,
-  created_by uuid references auth.users(id) on delete set null,
+  created_by uuid references public.profiles(id) on delete set null,
 
   nome text not null,
   provedor msg_provedor not null default 'evolution',
@@ -46,21 +46,7 @@ create index msg_campanhas_dealership_idx on public.msg_campanhas(dealership_id)
 create index msg_campanhas_status_idx on public.msg_campanhas(status);
 create index msg_campanhas_created_idx on public.msg_campanhas(created_at desc);
 
-alter table public.msg_campanhas enable row level security;
-
-create policy "campanhas_read_own_dealership" on public.msg_campanhas
-  for select using (
-    dealership_id = (select dealership_id from public.profiles where id = auth.uid())
-    or is_admin()
-  );
-create policy "campanhas_write_managers" on public.msg_campanhas
-  for all using (
-    dealership_id = (select dealership_id from public.profiles where id = auth.uid())
-    or is_admin()
-  ) with check (
-    dealership_id = (select dealership_id from public.profiles where id = auth.uid())
-    or is_admin()
-  );
+-- Autorização (leitura/escrita só na própria dealership, admin tudo) fica na API.
 
 -- Trigger pra updated_at automático
 create or replace function public.tg_msg_campanhas_updated_at()

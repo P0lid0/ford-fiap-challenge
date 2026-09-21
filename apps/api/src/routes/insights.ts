@@ -3,7 +3,8 @@ import { requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { aiAvailable, chat } from '../lib/ai.js';
-import { publicClient, adminClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
+import { dealershipFilter } from '../lib/scope.js';
 
 const HOUR = 60 * 60 * 1000;
 const TTL_PORTFOLIO = 6 * HOUR;
@@ -13,21 +14,43 @@ function hashPayload(obj: unknown): string {
   return createHash('sha256').update(JSON.stringify(obj)).digest('hex').slice(0, 24);
 }
 
+type CachedInsight = { output: string; model_used: string; created_at: Date; expires_at: Date | null };
+
+// Cache de insights é global (não depende do escopo do usuário): o hash do
+// payload já garante que só reaproveitamos a mesma pergunta sobre os mesmos dados.
 async function cachedInsight(scope: string, resourceId: string, payloadHash: string) {
-  const { data } = await adminClient()
-    .from('ai_insights').select('output, model_used, created_at, expires_at')
-    .eq('scope', scope).eq('resource_id', resourceId).eq('payload_hash', payloadHash)
-    .maybeSingle();
+  const [data] = await sql<CachedInsight[]>`
+    select output, model_used, created_at, expires_at
+    from public.ai_insights
+    where scope = ${scope} and resource_id = ${resourceId} and payload_hash = ${payloadHash}
+  `;
   if (!data) return null;
   if (data.expires_at && new Date(data.expires_at) < new Date()) return null;
   return data;
 }
 
 async function storeInsight(scope: string, resourceId: string, payloadHash: string, model: string, output: string, ttlMs: number) {
-  await adminClient().from('ai_insights').upsert({
+  const row = {
     scope, resource_id: resourceId, payload_hash: payloadHash,
     model_used: model, output, expires_at: new Date(Date.now() + ttlMs).toISOString(),
-  }, { onConflict: 'scope,resource_id,payload_hash' });
+  };
+  // upsert em (scope, resource_id, payload_hash) — índice único ai_insights_hash_uidx
+  await sql`
+    insert into public.ai_insights ${sql(row)}
+    on conflict (scope, resource_id, payload_hash) do update set
+      model_used = excluded.model_used,
+      output = excluded.output,
+      expires_at = excluded.expires_at
+  `;
+}
+
+/** Modelo preferido do usuário para uma função de IA (ai_function_models), ou undefined. */
+async function preferredModel(userId: string, functionName: string): Promise<string | undefined> {
+  const [pref] = await sql<{ model_id: string }[]>`
+    select model_id from public.ai_function_models
+    where user_id = ${userId} and function_name = ${functionName}
+  `;
+  return pref?.model_id;
 }
 
 export async function insightRoutes(app: FastifyInstance) {
@@ -40,12 +63,21 @@ export async function insightRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const sb = publicClient(u.jwt);
 
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).single();
-    if (error || !client) { reply.code(404); return { error: 'not_found' }; }
-    const { data: pred } = await sb.from('predictions').select('*')
-      .eq('client_id', id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    // Antes o RLS escondia clientes de outra dealership (virava 404); o filtro
+    // explícito preserva esse comportamento.
+    const [client] = await sql`
+      select * from public.clients
+      where id = ${id} ${dealershipFilter(u)}
+    `;
+    if (!client) { reply.code(404); return { error: 'not_found' }; }
+    // Escopo da predição já garantido pelo cliente acima.
+    const [pred] = await sql`
+      select * from public.predictions
+      where client_id = ${id}
+      order by created_at desc
+      limit 1
+    `;
     if (!pred) { reply.code(404); return { error: 'no_prediction' }; }
 
     const payload = { client_id: id, perfil: pred.perfil_predito };
@@ -58,12 +90,7 @@ export async function insightRoutes(app: FastifyInstance) {
     }
 
     let aiModel = req.headers['x-ai-model'] as string | undefined;
-    if (!aiModel) {
-      const { adminClient } = await import('../lib/supabase.js');
-      const { data: pref } = await adminClient().from('ai_function_models')
-        .select('model_id').eq('user_id', u.id).eq('function_name', 'client_insight').maybeSingle();
-      aiModel = pref?.model_id;
-    }
+    if (!aiModel) aiModel = await preferredModel(u.id, 'client_insight');
     const r = await chat(buildClientPrompt(client, pred), 'fast', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', model: 'rule-based-fallback', output: fallbackClientText(client, pred) };
@@ -80,10 +107,25 @@ export async function insightRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
-    const sb = publicClient(u.jwt);
-    const { data: clients } = await sb.from('clients')
-      .select('id, modelo_comprado, renda_mensal_brl, predictions(perfil_predito, risco_evasao)')
-      .limit(500);
+    // Embed 1:N `predictions(...)` do PostgREST → array via json_agg (mais recente
+    // primeiro). O RLS limitava o analista à própria dealership; aqui é explícito.
+    const clients = await sql<{
+      id: string;
+      modelo_comprado: string;
+      renda_mensal_brl: number;
+      predictions: { perfil_predito: string; risco_evasao: number }[];
+    }[]>`
+      select c.id, c.modelo_comprado, c.renda_mensal_brl,
+        coalesce((
+          select json_agg(json_build_object('perfil_predito', p.perfil_predito, 'risco_evasao', p.risco_evasao)
+                          order by p.created_at desc)
+          from public.predictions p
+          where p.client_id = c.id
+        ), '[]'::json) as predictions
+      from public.clients c
+      where true ${dealershipFilter(u, 'c.dealership_id')}
+      limit 500
+    `;
 
     const safe = clients ?? [];
     const totalClients = safe.length;
@@ -105,12 +147,7 @@ export async function insightRoutes(app: FastifyInstance) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };
     }
     let aiModel = req.headers['x-ai-model'] as string | undefined;
-    if (!aiModel) {
-      const { adminClient } = await import('../lib/supabase.js');
-      const { data: pref } = await adminClient().from('ai_function_models')
-        .select('model_id').eq('user_id', u.id).eq('function_name', 'portfolio_insight').maybeSingle();
-      aiModel = pref?.model_id;
-    }
+    if (!aiModel) aiModel = await preferredModel(u.id, 'portfolio_insight');
     const r = await chat(buildPortfolioPrompt(totalClients, perfilCounts, avgRisco), 'smart', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };

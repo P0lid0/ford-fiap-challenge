@@ -1,5 +1,5 @@
 // Tipos compartilhados entre API, Mobile, e (referência para) ML.
-// Mantenha em sincronia com supabase/migrations/*.sql.
+// Mantenha em sincronia com db/migrations/*.sql.
 
 export const CLIENT_PROFILES = ['fiel', 'abandono', 'esquecido', 'economico'] as const;
 export type ClientProfile = typeof CLIENT_PROFILES[number];

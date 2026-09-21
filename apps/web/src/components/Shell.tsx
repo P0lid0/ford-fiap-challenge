@@ -6,7 +6,7 @@ import {
   LogOut, BarChart3, Users, AlertTriangle, Car, Sparkles, Settings, Plus,
   ChevronRight, Bell, Megaphone, BookOpen, Database,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { getSession, logout as endSession } from '@/lib/auth';
 import { FordLogo } from './FordLogo';
 import { FaroLogo } from './FaroLogo';
 
@@ -32,17 +32,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<string>('');
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace('/');
-      else {
-        setEmail(data.session.user.email ?? '');
-        setRole((data.session.user.user_metadata?.role as string) ?? 'analista');
-      }
-    });
+    // Sem sessão no localStorage → volta pro login.
+    const session = getSession();
+    if (!session) router.replace('/');
+    else {
+      setEmail(session.user.email ?? '');
+      setRole(session.user.role ?? 'analista');
+    }
   }, [router]);
 
-  async function logout() {
-    await supabase.auth.signOut();
+  function logout() {
+    endSession();
     router.replace('/');
   }
 

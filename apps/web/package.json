@@ -10,7 +10,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.47.10",
     "@ford/types": "workspace:*",
     "@ford/ui": "workspace:*",
     "next": "15.1.3",

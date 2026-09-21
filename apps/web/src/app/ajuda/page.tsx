@@ -21,7 +21,7 @@ const GLOSSARY: { term: string; def: string }[] = [
   { term: 'FIPE', def: 'Tabela de preço médio de veículos no Brasil, mantida pela Fundação Instituto de Pesquisas Econômicas. Atualizada mensalmente.' },
   { term: '411 Vehicle Data', def: 'API comercial (RapidAPI) com specs detalhadas de veículos USA — bom pra Ford, Chevrolet, RAM, Jeep. Cobertura BR limitada.' },
   { term: 'NHTSA vPIC', def: 'Vehicle Product Information Catalog do governo americano. Free, global, ótimo pra decodificar VIN.' },
-  { term: 'RLS', def: 'Row Level Security — recurso nativo do Postgres. Garante que analistas de uma loja só veem dados da loja deles, mesmo se tentarem queries diretas.' },
+  { term: 'Isolamento por dealership', def: 'Regra aplicada na camada da API (lib/scope.ts): toda query filtra por dealership_id conforme o papel do usuário. Analista só vê a loja dele; gestor lê tudo e escreve só na própria loja; admin vê e escreve tudo.' },
   { term: 'HMAC', def: 'Hash-based Message Authentication Code. Usamos HMAC-SHA256 pra assinar payloads entre API gateway e ML service — garante integridade e previne manipulação.' },
   { term: 'Pseudonimização', def: 'Substituir identificadores diretos (UUID da loja, nome) por hashes irreversíveis antes de mandar pra modelo. LGPD compliance.' },
   { term: 'Tier rápido / smart', def: 'Convenção interna: tier "fast" usa modelos baratos (gpt-4o-mini, claude-haiku) pra extração e gap-fill. Tier "smart" usa modelos topo (gpt-4o, claude-sonnet) pra análises complexas.' },
@@ -43,7 +43,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'Quanto custa rodar o sistema por mês?',
-    a: 'MVP: ~US$ 50-100/mês. Supabase Pro $25 + hosting $20 + LLMs (gpt-4o-mini sob demanda) $30-100 + RapidAPI 411 free/$19. Custo escalável conforme uso de IA — fácil baixar removendo modelos premium se necessário.',
+    a: 'MVP: ~US$ 50-100/mês. PostgreSQL gerenciado ~$25 + hosting $20 + LLMs (gpt-4o-mini sob demanda) $30-100 + RapidAPI 411 free/$19. Custo escalável conforme uso de IA — fácil baixar removendo modelos premium se necessário.',
   },
   {
     q: 'Posso usar o sistema sem chave OpenAI?',
@@ -686,7 +686,7 @@ const SECTIONS: Section[] = [
           <li>sent_by_user_id (quem disparou) + timestamps</li>
         </ul>
         <p className="text-xs text-slate">
-          RLS: usuário comum vê só os e-mails que ele mesmo mandou. Admin/gestor vê tudo.
+          Isolamento na API: usuário comum vê só os e-mails que ele mesmo mandou. Admin/gestor vê tudo.
         </p>
       </>
     ),
@@ -980,8 +980,8 @@ const SECTIONS: Section[] = [
         </ul>
 
         <Callout type="success">
-          Chaves são armazenadas <b>criptografadas</b> no Supabase com RLS admin-only.
-          Apenas o service_role do backend lê pra fazer as chamadas.
+          Chaves são armazenadas <b>criptografadas</b> no PostgreSQL e só as rotas admin as expõem.
+          Apenas o backend lê os valores pra fazer as chamadas.
         </Callout>
 
         <H3>Aba &quot;Modelo por função&quot;</H3>
@@ -1007,17 +1007,17 @@ const SECTIONS: Section[] = [
         <H3>Em uma frase</H3>
         <Lead>
           Validação Zod em tudo, JWT + RBAC, pseudonimização de PII no pipeline de ML,
-          HMAC nas chamadas entre serviços, RLS por concessionária e trilha de auditoria
+          HMAC nas chamadas entre serviços, isolamento por concessionária na API e trilha de auditoria
           de toda ação crítica.
         </Lead>
 
         <Grid cols={2}>
           <SecCard icon={Eye} title="Validação de entrada">
-            Todas as rotas usam Zod schemas. SQL injection impossível (prepared statements
-            via PostgREST). XSS bloqueado (React escapa automaticamente).
+            Todas as rotas usam Zod schemas. SQL injection impossível (queries parametrizadas
+            no driver PostgreSQL). XSS bloqueado (React escapa automaticamente).
           </SecCard>
           <SecCard icon={Lock} title="Autenticação">
-            JWT Supabase validado contra <Code>/auth/v1/user</Code>. RBAC com 3 papéis
+            JWT próprio (HS256) emitido por <Code>/auth/login</Code>, senha com bcrypt. RBAC com 3 papéis
             (analista/gestor/admin). Rotas sensíveis exigem admin.
           </SecCard>
           <SecCard icon={Shield} title="Pseudonimização">
@@ -1026,7 +1026,7 @@ const SECTIONS: Section[] = [
           </SecCard>
           <SecCard icon={Activity} title="Auditoria">
             Toda alteração de chave de IA, criação/exclusão de cliente, exclusão de veículo
-            é logada em <Code>audit_log</Code> com IP + user-agent. RLS admin-only na leitura.
+            é logada em <Code>audit_log</Code> com IP + user-agent. Leitura restrita a admin na API.
           </SecCard>
         </Grid>
 

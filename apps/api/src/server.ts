@@ -9,6 +9,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import { serializerCompiler, validatorCompiler, jsonSchemaTransform, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { env, allowedOrigins } from './config.js';
 import { authPlugin, requireUser } from './plugins/auth.js';
+import { authRoutes } from './routes/auth.js';
 import { vehicleRoutes } from './routes/vehicles.js';
 import { adminVehicleRoutes } from './routes/admin-vehicles.js';
 import { clientRoutes } from './routes/clients.js';
@@ -28,9 +29,10 @@ const app = Fastify({
     serializers: {
       req: (req) => ({ method: req.method, url: req.url, ip: req.ip }),
     },
-    redact: ['req.headers.authorization', 'req.headers.cookie', '*.SUPABASE_SERVICE_ROLE_KEY', '*.ANTHROPIC_API_KEY'],
+    redact: ['req.headers.authorization', 'req.headers.cookie', '*.password', '*.password_hash', '*.JWT_SECRET', '*.DATABASE_URL', '*.ANTHROPIC_API_KEY'],
   },
-  trustProxy: true,
+  // Só confia em X-Forwarded-* quando TRUST_PROXY está configurado (ver config.ts).
+  trustProxy: env.TRUST_PROXY,
 }).withTypeProvider<ZodTypeProvider>();
 
 app.setValidatorCompiler(validatorCompiler);
@@ -49,7 +51,7 @@ await app.register(helmet, {
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'", env.SUPABASE_URL],
+      connectSrc: ["'self'"],
       frameAncestors: ["'none'"],
     },
   } : false, // dev: false (não atrapalha Swagger UI inline)
@@ -91,6 +93,7 @@ await app.register(swagger, {
     security: [{ bearer: [] }],
     tags: [
       { name: 'meta', description: 'Health / introspection' },
+      { name: 'auth', description: 'Login / registro (JWT próprio)' },
       { name: 'Desafio 1 — Inteligência Competitiva', description: 'Catálogo + comparação' },
       { name: 'Desafio 2 — Retenção', description: 'Clientes, predições, leads, KPIs' },
       { name: 'Diferencial — Insights de IA', description: 'Claude API: XAI e portfolio' },
@@ -126,6 +129,7 @@ app.get('/me', { schema: { tags: ['meta'] } }, async (req) => {
   return { id: u.id, email: u.email, role: u.role, dealership_id: u.dealership_id };
 });
 
+await app.register(authRoutes);
 await app.register(vehicleRoutes);
 await app.register(adminVehicleRoutes);
 await app.register(clientRoutes);

@@ -1,14 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { env } from '../config.js';
-import { publicClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
+import { verifyToken, type UserRole } from '../lib/auth.js';
 
-type AuthUser = {
+export type AuthUser = {
   id: string;
   email: string;
-  role: 'analista' | 'gestor' | 'admin';
+  full_name: string | null;
+  role: UserRole;
   dealership_id: string | null;
-  jwt: string;
 };
 
 declare module 'fastify' {
@@ -18,8 +18,12 @@ declare module 'fastify' {
 }
 
 /**
- * Hook que valida o JWT do Supabase e popula `request.user`.
+ * Hook que valida o JWT emitido pela própria API (lib/auth.ts) e popula
+ * `request.user` com o profile atual do banco.
  * Em rotas que precisam de auth, importe `requireUser(req)` no handler.
+ *
+ * O profile é recarregado a cada request (não confiamos só nos claims):
+ * mudança de role/dealership ou remoção do usuário vale imediatamente.
  *
  * Por que helpers e não `req.requireUser()`?
  * Fastify v5 mudou o binding de `this` em decorateRequest — funções dependentes
@@ -31,38 +35,25 @@ export const authPlugin = fp(async function authPluginImpl(app: FastifyInstance)
   app.addHook('preHandler', async (req) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) return;
-    const jwt = header.slice(7).trim();
-    if (!jwt) return;
+    const token = header.slice(7).trim();
+    if (!token) return;
 
     try {
-      req.log.info('[auth] validating jwt');
-      // Valida o JWT chamando direto /auth/v1/user (mais confiável que SDK).
-      const ures = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-        headers: { apikey: env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${jwt}` },
-      });
-      req.log.info({ status: ures.status }, '[auth] supabase response');
-      if (!ures.ok) {
-        const body = await ures.text();
-        req.log.warn({ status: ures.status, body: body.slice(0, 200) }, '[auth] /auth/v1/user rejected token');
+      const claims = await verifyToken(token);
+      if (!claims) {
+        req.log.warn('[auth] token inválido ou expirado');
         return;
       }
-      const user = await ures.json() as { id: string; email?: string };
-      req.log.info({ uid: user.id }, '[auth] jwt validated');
 
-      const client = publicClient(jwt);
-      const { data: profile } = await client
-        .from('profiles')
-        .select('role, dealership_id')
-        .eq('id', user.id)
-        .single();
+      const [profile] = await sql<AuthUser[]>`
+        select id, email, full_name, role, dealership_id
+        from public.profiles
+        where id = ${claims.sub}
+      `;
+      // Sem linha (usuário removido) → segue sem user; rota devolve 401.
+      if (!profile) return;
 
-      req.user = {
-        id: user.id,
-        email: user.email ?? '',
-        role: (profile?.role as AuthUser['role']) ?? 'analista',
-        dealership_id: profile?.dealership_id ?? null,
-        jwt,
-      };
+      req.user = profile;
     } catch (err) {
       req.log?.warn({ err: String(err) }, '[auth] failed to validate JWT');
     }

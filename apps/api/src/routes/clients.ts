@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUser } from '../plugins/auth.js';
+import { requireUser, type AuthUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { adminClient, publicClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
+import { canReadAll, dealershipFilter, writeDealershipFilter } from '../lib/scope.js';
 import { logAudit } from '../lib/audit.js';
 import { predict } from '../modules/retention/ml-client.js';
 import { classifyHybrid } from '../modules/retention/hybrid-classifier.js';
@@ -77,6 +78,63 @@ function hashCpf(cpf: string): string {
   return createHash('sha256').update(cpf + 'ford-fiap-pepper').digest('hex');
 }
 
+/** Linha devolvida por public.leads_ranqueados (018_leads_ranking_fn). */
+type LeadRow = {
+  id: string;
+  nome_cliente: string | null;
+  vin_hash: string | null;
+  model_name: string | null;
+  model_year: number | null;
+  dealer_code_venda: number | null;
+  perfil_real: string | null;
+  dias_desde_ultima_revisao: number | null;
+  warranty_start_date: string | null;
+  dealer_loyalty: number | null;
+  num_revisoes: number | null;
+  risco_composto: number;
+  sinais: string[] | null;
+};
+
+/**
+ * Chamada da função de ranking (antigo `.rpc('leads_ranqueados', ...)`).
+ * Parâmetros nomeados com cast explícito — o driver manda os valores sem tipo
+ * e o cast garante a resolução da assinatura da função.
+ */
+function leadsRanqueados(p: {
+  risco_min: number;
+  filtro_perfil: string | null;
+  filtro_modelo: string | null;
+  filtro_dealer: number | null;
+  filtro_sinal: string | null;
+  limite: number;
+  /** Escopo por dealership (020_leads_ranking_dealership); null = rede inteira. */
+  filtro_dealership: string | null;
+}) {
+  return sql<LeadRow[]>`
+    select * from public.leads_ranqueados(
+      risco_min         => ${p.risco_min}::numeric,
+      filtro_perfil     => ${p.filtro_perfil}::text,
+      filtro_modelo     => ${p.filtro_modelo}::text,
+      filtro_dealer     => ${p.filtro_dealer}::integer,
+      filtro_sinal      => ${p.filtro_sinal}::text,
+      limite            => ${p.limite}::integer,
+      filtro_dealership => ${p.filtro_dealership}::uuid
+    )
+  `;
+}
+
+/**
+ * Escopo de leads por papel (mesma regra de dealershipFilter):
+ *   admin/gestor            → { dealership: null } (rede inteira);
+ *   analista                → { dealership: u.dealership_id };
+ *   analista sem dealership → null (não vê nada; a rota devolve []).
+ */
+function leadsEscopo(u: AuthUser): { dealership: string | null } | null {
+  if (canReadAll(u)) return { dealership: null };
+  if (!u.dealership_id) return null;
+  return { dealership: u.dealership_id };
+}
+
 export async function clientRoutes(app: FastifyInstance) {
   // Cadastrar venda + disparar predição automática
   app.post('/clients', {
@@ -94,13 +152,14 @@ export async function clientRoutes(app: FastifyInstance) {
 
     const body = req.body as z.infer<typeof CreateClientBody>;
     const { cpf, vin_hash, ...rest } = body;
-    const sb = adminClient(); // service_role pra criar mesmo sem RLS-friendly profile
 
     // Gera VIN_Hash determinístico se não veio
     const vinFinal = vin_hash
       || createHash('sha256').update(`${rest.model_name}-${rest.model_year}-${rest.sales_date}-${Date.now()}-${u.id}`).digest('hex').slice(0, 64);
 
-    const insertRow: any = {
+    // O insert sempre usa a dealership do próprio usuário (equivale ao antigo
+    // `with check` da policy de insert) — não há como gravar em outra.
+    const insertRow: Record<string, unknown> = {
       dealership_id: u.dealership_id,
       created_by: u.id,
       vin_hash: vinFinal,
@@ -134,11 +193,13 @@ export async function clientRoutes(app: FastifyInstance) {
       test_drive_realizado: rest.test_drive_realizado ?? null,
     };
 
-    const { data: client, error } = await sb.from('clients').insert(insertRow).select().single();
-    if (error) {
+    let client: any;
+    try {
+      [client] = await sql`insert into public.clients ${sql(insertRow)} returning *`;
+    } catch (error) {
       req.log.error({ error }, '[create client] failed');
       reply.code(400);
-      return { error: 'insert_failed', message: error.message };
+      return { error: 'insert_failed', message: (error as Error).message };
     }
 
     // Dispara predição síncrona — só faz se tiver dados sintéticos completos
@@ -161,24 +222,27 @@ export async function clientRoutes(app: FastifyInstance) {
       });
     }
 
-    // predictions é insert-only pelo service_role (RLS bloqueia user).
+    // Falha ao gravar a predição não derruba o cadastro (só loga), como antes.
     let predRow: any = null;
     if (prediction) {
-      const r = await adminClient().from('predictions').insert({
-        client_id: client.id,
-        model_version: prediction.model_version,
-        perfil_predito: prediction.perfil_predito,
-        prob_fiel: prediction.probabilidades.fiel,
-        prob_abandono: prediction.probabilidades.abandono,
-        prob_esquecido: prediction.probabilidades.esquecido,
-        prob_economico: prediction.probabilidades.economico,
-        risco_evasao: prediction.risco_evasao,
-        confianca: prediction.confianca,
-        recomendacoes_acao: prediction.recomendacoes_acao,
-        source: 'ml_only',
-      }).select().single();
-      if (r.error) req.log.error({ err: r.error }, 'failed to insert prediction');
-      else predRow = r.data;
+      try {
+        [predRow] = await sql`insert into public.predictions ${sql({
+          client_id: client.id,
+          model_version: prediction.model_version,
+          perfil_predito: prediction.perfil_predito,
+          prob_fiel: prediction.probabilidades.fiel,
+          prob_abandono: prediction.probabilidades.abandono,
+          prob_esquecido: prediction.probabilidades.esquecido,
+          prob_economico: prediction.probabilidades.economico,
+          risco_evasao: prediction.risco_evasao,
+          confianca: prediction.confianca,
+          recomendacoes_acao: prediction.recomendacoes_acao ?? [],
+          source: 'ml_only',
+        })} returning *`;
+      } catch (err) {
+        req.log.error({ err }, 'failed to insert prediction');
+        predRow = null;
+      }
     }
 
     await logAudit({
@@ -211,30 +275,52 @@ export async function clientRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { perfil, perfil_real, model_name, is_ford_real, risco_min, search, limit, offset } = req.query as any;
-    const sb = adminClient();
 
-    let q = sb
-      .from('clients')
-      .select('id, vin_hash, model_name, model_year, dealer_code_venda, sales_date, ' +
-              'num_revisoes, dias_desde_ultima_revisao, dealer_loyalty, perfil_real, ' +
-              'is_ford_real, nome_cliente, modelo_comprado, versao_comprada, preco_pago_brl, ' +
-              'financiamento, parcelas, created_at, ' +
-              'predictions(perfil_predito, risco_evasao, confianca, created_at, source)',
-              { count: 'exact' });
+    // Isolamento por dealership (antiga policy clients_select_dealership):
+    // admin/gestor veem a rede inteira; analista só a própria concessionária.
+    // O mesmo `where` serve para a query de contagem.
+    const where = sql`
+      where true
+      ${dealershipFilter(u, 'c.dealership_id')}
+      ${typeof is_ford_real === 'boolean' ? sql`and c.is_ford_real = ${is_ford_real}` : sql``}
+      ${perfil_real ? sql`and c.perfil_real = ${perfil_real}` : sql``}
+      ${model_name ? sql`and c.model_name = ${model_name}` : sql``}
+      ${search
+        // OR sobre vin_hash (prefixo) ou nome_cliente (qualquer posição)
+        ? sql`and (c.vin_hash ilike ${search + '%'} or c.nome_cliente ilike ${'%' + search + '%'})`
+        : sql``}
+    `;
 
-    if (typeof is_ford_real === 'boolean') q = q.eq('is_ford_real', is_ford_real);
-    if (perfil_real) q = q.eq('perfil_real', perfil_real);
-    if (model_name) q = q.eq('model_name', model_name);
-    if (search) {
-      // OR sobre vin_hash ou nome_cliente
-      q = q.or(`vin_hash.ilike.${search}%,nome_cliente.ilike.%${search}%`);
-    }
+    // Embed 1:N `predictions(...)` do PostgREST → array via json_agg
+    // (mais recente primeiro). `count: 'exact'` → contagem separada, sem paginação.
+    const [data, countRows] = await Promise.all([
+      sql`
+        select c.id, c.vin_hash, c.model_name, c.model_year, c.dealer_code_venda, c.sales_date,
+               c.num_revisoes, c.dias_desde_ultima_revisao, c.dealer_loyalty, c.perfil_real,
+               c.is_ford_real, c.nome_cliente, c.modelo_comprado, c.versao_comprada, c.preco_pago_brl,
+               c.financiamento, c.parcelas, c.created_at,
+               coalesce((
+                 select json_agg(json_build_object(
+                   'perfil_predito', p.perfil_predito,
+                   'risco_evasao', p.risco_evasao,
+                   'confianca', p.confianca,
+                   'created_at', p.created_at,
+                   'source', p.source
+                 ) order by p.created_at desc)
+                 from public.predictions p
+                 where p.client_id = c.id
+               ), '[]'::json) as predictions
+        from public.clients c
+        ${where}
+        order by c.created_at desc
+        limit ${limit} offset ${offset}
+      `,
+      sql<{ count: number }[]>`select count(*)::int as count from public.clients c ${where}`,
+    ]);
 
-    q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-    const { data, error, count } = await q;
-    if (error) throw error;
+    const count = countRows[0]?.count ?? 0;
 
-    let filtered = data ?? [];
+    let filtered: any[] = data ?? [];
     if (perfil) {
       filtered = filtered.filter((c: any) =>
         c.predictions?.some((p: any) => p.perfil_predito === perfil));
@@ -243,7 +329,7 @@ export async function clientRoutes(app: FastifyInstance) {
       filtered = filtered.filter((c: any) =>
         c.predictions?.some((p: any) => p.risco_evasao >= risco_min));
     }
-    return { total: count ?? 0, results: filtered };
+    return { total: count, results: filtered };
   });
 
   // Detalhe + histórico de predições
@@ -256,14 +342,25 @@ export async function clientRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const sb = publicClient(u.jwt);
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).single();
-    if (error || !client) { reply.code(404); return { error: 'not_found' }; }
+    // Antes o RLS escondia clientes de outra dealership (virava 404); o filtro
+    // explícito preserva esse comportamento.
+    const [client] = await sql`
+      select * from public.clients
+      where id = ${id} ${dealershipFilter(u)}
+    `;
+    if (!client) { reply.code(404); return { error: 'not_found' }; }
 
-    const { data: predictions } = await sb
-      .from('predictions').select('*').eq('client_id', id).order('created_at', { ascending: false });
-    const { data: history } = await sb
-      .from('client_history').select('*').eq('client_id', id).order('observado_em', { ascending: false });
+    // Escopo já garantido pelo cliente acima (predictions/history seguem o client).
+    const predictions = await sql`
+      select * from public.predictions
+      where client_id = ${id}
+      order by created_at desc
+    `;
+    const history = await sql`
+      select * from public.client_history
+      where client_id = ${id}
+      order by observado_em desc
+    `;
 
     return { client, predictions: predictions ?? [], history: history ?? [] };
   });
@@ -302,12 +399,15 @@ export async function clientRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { risco_min, perfil, modelo, dealer_code, sinal, limit } = req.query as any;
-    const sb = adminClient();
 
-    // RPC roda agregação dentro do Postgres (Postgrest tem limite de 1000 linhas)
-    const { data, error } = await sb.rpc('leads_ranqueados', {
+    // A função roda a agregação dentro do Postgres. admin/gestor veem a rede
+    // inteira; analista só a própria dealership (analista sem dealership → []).
+    const escopo = leadsEscopo(u);
+    if (!escopo) return [];
+    const data = await leadsRanqueados({
+      filtro_dealership: escopo.dealership,
       risco_min,
       filtro_perfil: perfil ?? null,
       filtro_modelo: modelo ?? null,
@@ -315,10 +415,9 @@ export async function clientRoutes(app: FastifyInstance) {
       filtro_sinal: sinal ?? null,
       limite: limit,
     });
-    if (error) throw error;
 
     // Mapeia pro formato que a UI espera
-    return (data ?? []).map((r: any) => ({
+    return (data ?? []).map((r) => ({
       id: r.id,
       nome_cliente: r.nome_cliente,
       vin_hash: r.vin_hash,
@@ -342,25 +441,24 @@ export async function clientRoutes(app: FastifyInstance) {
       summary: 'Estatísticas agregadas de leads (volume por urgência + sinais mais comuns)',
     },
   }, async (req) => {
-    requireUser(req);
-    const sb = adminClient();
-    const { data, error } = await sb.rpc('leads_ranqueados', {
+    const u = requireUser(req);
+    const escopo = leadsEscopo(u);
+    const linhas = !escopo ? [] : await leadsRanqueados({
+      filtro_dealership: escopo.dealership,
       risco_min: 0.4, filtro_perfil: null, filtro_modelo: null,
       filtro_dealer: null, filtro_sinal: null, limite: 1_000_000,
     });
-    if (error) throw error;
-    const linhas = data ?? [];
-    const alto = linhas.filter((r: any) => r.risco_composto >= 0.7).length;
-    const medio = linhas.filter((r: any) => r.risco_composto >= 0.5 && r.risco_composto < 0.7).length;
-    const baixo = linhas.filter((r: any) => r.risco_composto >= 0.4 && r.risco_composto < 0.5).length;
+    const alto = linhas.filter((r) => r.risco_composto >= 0.7).length;
+    const medio = linhas.filter((r) => r.risco_composto >= 0.5 && r.risco_composto < 0.7).length;
+    const baixo = linhas.filter((r) => r.risco_composto >= 0.4 && r.risco_composto < 0.5).length;
     // Contagem por sinal
     const porSinal: Record<string, number> = {};
-    for (const r of linhas as any[]) {
+    for (const r of linhas) {
       for (const s of (r.sinais ?? [])) porSinal[s] = (porSinal[s] ?? 0) + 1;
     }
     // Por perfil
     const porPerfil: Record<string, number> = {};
-    for (const r of linhas as any[]) {
+    for (const r of linhas) {
       const p = r.perfil_real ?? 'desconhecido';
       porPerfil[p] = (porPerfil[p] ?? 0) + 1;
     }
@@ -386,15 +484,22 @@ export async function clientRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const { notas } = req.body as any;
-    const sb = adminClient();
-    const { data, error } = await sb.from('clients')
-      .update({ notas })
-      .eq('id', id)
-      .select('id, notas')
-      .single();
-    if (error || !data) {
+    // Escrita só na própria dealership (antiga policy clients_update_own_dealership);
+    // cliente fora do escopo cai no 404 abaixo (0 linhas).
+    let data: { id: string; notas: string | null } | undefined;
+    try {
+      [data] = await sql<{ id: string; notas: string | null }[]>`
+        update public.clients set notas = ${notas}
+        where id = ${id} ${writeDealershipFilter(u)}
+        returning id, notas
+      `;
+    } catch (error) {
       reply.code(404);
-      return { error: 'not_found_or_failed', message: error?.message };
+      return { error: 'not_found_or_failed', message: (error as Error).message };
+    }
+    if (!data) {
+      reply.code(404);
+      return { error: 'not_found_or_failed', message: 'cliente não encontrado' };
     }
     await logAudit({
       actor_id: u.id, action: 'client.notas_updated', entity: 'clients',
@@ -421,20 +526,21 @@ export async function clientRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const body = (req.body ?? {}) as any;
-    const sb = adminClient();
 
     // Carrega cliente + notas + histórico recente de ações
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).single();
-    if (error || !client) { reply.code(404); return { error: 'not_found' }; }
+    const [client] = await sql`select * from public.clients where id = ${id}`;
+    if (!client) { reply.code(404); return { error: 'not_found' }; }
     if (client.dealership_id !== u.dealership_id && u.role !== 'admin') {
       reply.code(403); return { error: 'forbidden' };
     }
 
-    const { data: acoes } = await sb.from('acoes_retencao')
-      .select('tipo, titulo, descricao, status, desfecho, created_at')
-      .eq('client_id', id)
-      .order('created_at', { ascending: false })
-      .limit(20);
+    const acoes = await sql`
+      select tipo, titulo, descricao, status, desfecho, created_at
+      from public.acoes_retencao
+      where client_id = ${id}
+      order by created_at desc
+      limit 20
+    `;
 
     const hybrid = await classifyHybrid({
       features: {
@@ -449,34 +555,37 @@ export async function clientRoutes(app: FastifyInstance) {
       },
       dealership_id: client.dealership_id,
       notas: client.notas,
-      acoes: acoes ?? [],
+      acoes: (acoes ?? []) as any[],
       forceAI: body.force_ai !== false,
       aiModel: body.ai_model,
       acoesPorPerfil: ACOES_POR_PERFIL,
     });
 
-    // Salva como nova predição
-    const { data: predRow, error: predErr } = await sb.from('predictions').insert({
-      client_id: id,
-      model_version: hybrid.ai ? `hybrid:${hybrid.ml.model_version}+${hybrid.ai.model_label}` : hybrid.ml.model_version,
-      perfil_predito: hybrid.perfil,
-      prob_fiel: hybrid.probabilidades.fiel,
-      prob_abandono: hybrid.probabilidades.abandono,
-      prob_esquecido: hybrid.probabilidades.esquecido,
-      prob_economico: hybrid.probabilidades.economico,
-      risco_evasao: hybrid.risco_evasao,
-      confianca: hybrid.confianca,
-      recomendacoes_acao: hybrid.recomendacoes_acao,
-      source: hybrid.source,
-      raciocinio: hybrid.raciocinio,
-      signals_detected: hybrid.signals_detected,
-      ml_perfil: hybrid.ml.perfil,
-      ai_perfil: hybrid.ai?.perfil ?? null,
-      concordancia: hybrid.concordancia,
-      ai_model: hybrid.ai?.model_label ?? null,
-    }).select().single();
-    if (predErr) {
+    // Salva como nova predição (falha só loga, como antes)
+    let predRow: any = null;
+    try {
+      [predRow] = await sql`insert into public.predictions ${sql({
+        client_id: id,
+        model_version: hybrid.ai ? `hybrid:${hybrid.ml.model_version}+${hybrid.ai.model_label}` : hybrid.ml.model_version,
+        perfil_predito: hybrid.perfil,
+        prob_fiel: hybrid.probabilidades.fiel,
+        prob_abandono: hybrid.probabilidades.abandono,
+        prob_esquecido: hybrid.probabilidades.esquecido,
+        prob_economico: hybrid.probabilidades.economico,
+        risco_evasao: hybrid.risco_evasao,
+        confianca: hybrid.confianca,
+        recomendacoes_acao: hybrid.recomendacoes_acao ?? [],
+        source: hybrid.source,
+        raciocinio: hybrid.raciocinio ?? null,
+        signals_detected: hybrid.signals_detected ?? [],
+        ml_perfil: hybrid.ml.perfil,
+        ai_perfil: hybrid.ai?.perfil ?? null,
+        concordancia: hybrid.concordancia ?? null,
+        ai_model: hybrid.ai?.model_label ?? null,
+      })} returning *`;
+    } catch (predErr) {
       req.log.error({ predErr }, '[reclassify] insert failed');
+      predRow = null;
     }
 
     await logAudit({

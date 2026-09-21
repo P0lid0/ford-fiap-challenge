@@ -1,4 +1,5 @@
-import { adminClient } from './supabase.js';
+import type postgres from 'postgres';
+import { sql } from './db.js';
 
 export type AuditEvent = {
   actor_id?: string | null;
@@ -12,15 +13,16 @@ export type AuditEvent = {
 
 export async function logAudit(ev: AuditEvent): Promise<void> {
   try {
-    await adminClient().from('audit_log').insert({
+    await sql`insert into public.audit_log ${sql({
       actor_id: ev.actor_id ?? null,
       action: ev.action,
       entity: ev.entity,
       entity_id: ev.entity_id ?? null,
-      metadata: ev.metadata ?? {},
+      // metadata é jsonb; o tipo do driver exige JSONValue, mas o objeto é livre.
+      metadata: sql.json((ev.metadata ?? {}) as postgres.JSONValue),
       ip: ev.ip ?? null,
       user_agent: ev.user_agent ?? null,
-    });
+    })}`;
   } catch (err) {
     // Audit failure não pode quebrar request — só loga.
     console.error('[audit] failed to write event', err);

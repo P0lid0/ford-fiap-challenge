@@ -19,8 +19,6 @@ _env_file = next((p for p in _ENV_CANDIDATES if p.exists()), None)
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(_env_file) if _env_file else None, extra="ignore")
 
-    supabase_url: str = ""
-    supabase_service_role_key: str = ""
     anthropic_api_key: str = ""
     claude_model_fast: str = "claude-haiku-4-5-20251001"
     claude_model_smart: str = "claude-sonnet-4-6"

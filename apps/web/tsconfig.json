@@ -15,6 +15,9 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
+      // Força o "react" do web (@types/react 19); sem isso o next resolve o 18 hoisted na raiz (mobile) e o JSX quebra.
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
       "@/*": ["./src/*"],
       "@ford/types": ["../../packages/types/src"],
       "@ford/ui": ["../../packages/ui/src"]

@@ -118,8 +118,8 @@ mostrando o schema canônico · `/leads` mostrando os sinais coloridos por lead 
 >    qualitativo — reduz erro do modelo puro.*
 > 4. ***Pronto pra usar**: nosso MVP já roda hoje com 175k clientes reais,
 >    enquanto competidor leva semanas de setup.*
-> 5. ***LGPD-first**: VIN_Hash anonimizado, audit log de e-mails, RLS no banco
->    desde o dia 1.*"
+> 5. ***LGPD-first**: VIN_Hash anonimizado, audit log de e-mails, isolamento
+>    por dealership na API desde o dia 1.*"
 
 **[Visual sugerido]**: Tabela comparativa "Faro AI vs Salesforce vs Linx vs
 DataRobot" com checks verdes onde a Faro AI ganha.
@@ -140,8 +140,8 @@ DataRobot" com checks verdes onde a Faro AI ganha.
 >
 > ***Critérios de qualidade que perseguimos:***
 > - *Performance: tela carrega em <2s, lead ranking de 175k em <1s via RPC SQL.*
-> - *Segurança: RLS no Postgres, HMAC nas requisições ML, sem PII no contexto
->   de IA.*
+> - *Segurança: JWT HS256 próprio + isolamento por dealership na API, HMAC nas
+>   requisições ML, sem PII no contexto de IA.*
 > - *Usabilidade: UI testada com vendedor de loja real, 4 cliques pra disparar
 >   ação.*
 >
@@ -183,13 +183,13 @@ Plataforma SaaS que combina:
 | Custo entrada | **Open-stack** | US$150/user | R$1k/mês | US$10k/mês |
 | Dataset Ford BR real | ✅ 175k VINs | ❌ | ❌ | ❌ |
 | IA explicável | ✅ Sinais visíveis | ⚠️ Limitada | ❌ | ⚠️ SHAP only |
-| LGPD-first | ✅ VIN_Hash + RLS | ✅ | ⚠️ | ⚠️ |
+| LGPD-first | ✅ VIN_Hash + isolamento por dealership | ✅ | ⚠️ | ⚠️ |
 | Arquitetura preparada para produção | ✅ MVP funcional | 3-6 meses | 1-2 meses | 2-3 meses |
 | Integração FIPE/FENABRAVE | ✅ Nativa | ❌ | ⚠️ | ❌ |
 
 ## Critérios de qualidade
 - **Performance**: <2s render · <1s ranking 175k leads
-- **Segurança**: RLS Postgres · HMAC payloads · audit log · LGPD-ready
+- **Segurança**: JWT próprio · isolamento por dealership na API · HMAC payloads · audit log · LGPD-ready
 - **Usabilidade**: ≤4 cliques pra ação · UI 100% PT-BR
 - **Observabilidade**: 100% das chamadas IA rastreadas (custo + provider + cache)
 

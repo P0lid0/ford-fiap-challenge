@@ -2,14 +2,16 @@
 -- Ford FIAP Challenge — Schema inicial
 -- =====================================================================
 -- Princípios:
--- 1. RLS habilitada em TODAS as tabelas. Sem exceção.
+-- 1. Isolamento por dealership/papel é feito na camada da API (lib/scope.ts),
+--    não no banco. PostgreSQL padrão, sem RLS.
 -- 2. Foreign keys com ON DELETE explícito.
 -- 3. Timestamps em UTC.
 -- 4. Cada tabela documenta a qual desafio pertence.
 -- =====================================================================
 
 -- ============== Extensões ==============
-create extension if not exists "uuid-ossp";
+-- gen_random_uuid() é nativo desde PG13; pgcrypto fica disponível para
+-- hashes/cifragem feitos em SQL (ex.: digest()).
 create extension if not exists "pgcrypto";
 
 -- ============== Enums =================
@@ -22,9 +24,11 @@ create type cliente_genero as enum ('M', 'F', 'outro');
 create type cliente_estado_civil as enum ('solteiro', 'casado', 'divorciado', 'viuvo');
 
 -- ============== profiles ==============
--- 1:1 com auth.users. Carrega papel (RBAC) e dealership do usuário.
+-- Usuário da aplicação. Carrega papel (RBAC) e dealership do usuário.
+-- Credencial (password_hash) e default do id entram na 019 — autenticação
+-- própria da API, sem FK para um schema de auth externo.
 create table public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
+  id uuid primary key,
   email text not null unique,
   full_name text,
   role user_role not null default 'analista',
@@ -39,7 +43,7 @@ create index profiles_role_idx on public.profiles(role);
 -- ============== dealerships ==============
 -- Rede de concessionárias Ford.
 create table public.dealerships (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   codigo text not null unique,
   nome text not null,
   regiao cliente_regiao not null,
@@ -60,7 +64,7 @@ alter table public.profiles
 -- Cada compra de veículo gera um cliente. Features de Base 2 (pré-compra) aqui.
 -- Pós-compra fica em client_history.
 create table public.clients (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   dealership_id uuid not null references public.dealerships(id) on delete restrict,
   created_by uuid references public.profiles(id) on delete set null,
 
@@ -97,7 +101,7 @@ create index clients_data_compra_idx on public.clients(data_compra);
 -- ============== client_history (Base 1) ==============
 -- Comportamento pós-compra. NUNCA usado em classificação.
 create table public.client_history (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
 
   num_revisoes_realizadas smallint not null default 0 check (num_revisoes_realizadas >= 0),
@@ -117,7 +121,7 @@ create index client_history_client_idx on public.client_history(client_id);
 -- ============== predictions ==============
 -- Saída do classificador ML para cada cliente.
 create table public.predictions (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
   model_version text not null,
 
@@ -141,7 +145,7 @@ create index predictions_risco_idx on public.predictions(risco_evasao desc);
 -- ============== vehicles (Desafio 1) ==============
 -- Catálogo de veículos da concorrência. Cache de scraping/LLM.
 create table public.vehicles (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   schema_version text not null default '1.0.0',
 
   marca text not null,
@@ -176,7 +180,7 @@ create index vehicles_categoria_idx on public.vehicles(categoria);
 -- ============== ai_insights ==============
 -- Cache de respostas Claude (XAI por cliente, portfolio por analista).
 create table public.ai_insights (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   scope text not null check (scope in ('client', 'portfolio', 'vehicle_summary')),
   resource_id text not null,
   payload_hash text not null,
@@ -221,23 +225,3 @@ create trigger clients_updated_at before update on public.clients
   for each row execute function set_updated_at();
 create trigger vehicles_updated_at before update on public.vehicles
   for each row execute function set_updated_at();
-
--- ============== Auto-criação de profile ==============
--- Quando um auth.users é criado, automaticamente cria um profile.
-create or replace function public.handle_new_user() returns trigger
-language plpgsql security definer set search_path = public as $$
-begin
-  insert into public.profiles (id, email, full_name)
-  values (
-    new.id,
-    new.email,
-    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1))
-  )
-  on conflict (id) do nothing;
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created after insert on auth.users
-  for each row execute function public.handle_new_user();

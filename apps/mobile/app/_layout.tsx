@@ -1,22 +1,21 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { supabase } from '../lib/supabase';
+import { getSession, onAuthStateChange, type Session } from '../lib/auth';
 import { colors } from '../lib/theme';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+    getSession().then(s => {
+      setSession(s);
       setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    return onAuthStateChange(s => setSession(s));
   }, []);
 
   useEffect(() => {

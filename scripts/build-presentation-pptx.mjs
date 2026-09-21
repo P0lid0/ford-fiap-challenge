@@ -495,12 +495,12 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     { titulo: 'Backend (Gateway)', cor: FORD_BLUE, items: [
       'Fastify + TypeScript + Zod',
       '30+ rotas REST documentadas',
-      'JWT (Supabase) · RBAC 3 roles',
+      'JWT próprio (HS256) · RBAC 3 roles',
       'Swagger UI em /docs',
     ]},
     { titulo: 'Dados & ML', cor: '00A896', items: [
-      'Postgres (Supabase) · 18 migrations',
-      'RLS por dealership + role',
+      'PostgreSQL · 19 migrations',
+      'Isolamento por dealership + role na API',
       'FastAPI + XGBoost (ML service)',
       'HMAC X-Payload-Signature',
     ]},
@@ -603,7 +603,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
 
   const eixos = [
     { p: '20', t: 'Validação & Sanitização', d: 'Zod em todas rotas · sem SQL raw · rate-limit 120 req/min · Helmet · multipart 30MB' },
-    { p: '20', t: 'Autenticação & RBAC', d: 'JWT Supabase com expiração · 3 papéis (analista/gestor/admin) · RLS Postgres por dealership' },
+    { p: '20', t: 'Autenticação & RBAC', d: 'JWT próprio (HS256) com expiração · bcrypt · 3 papéis (analista/gestor/admin) · isolamento por dealership na API' },
     { p: '20', t: 'Proteção de APIs', d: 'HTTPS/TLS 1.3 · CORS allowlist · HMAC X-Payload-Signature no ML · throttling' },
     { p: '25', t: 'Dados & Privacidade', d: 'AES-256 at rest · VIN_Hash (pseudonimização) · sem PII em prompts de IA · LGPD-ready' },
     { p: '15', t: 'Monitoramento & Logs', d: 'audit_log estruturado · sem stack trace ao cliente · email_logs LGPD · trilha completa' },
@@ -656,7 +656,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
   const stack = [
     'React Native 0.76 + Expo SDK 52',
     'Expo Router (file-based, deep links)',
-    'AsyncStorage + Supabase JS',
+    'AsyncStorage + JWT da API',
     'TypeScript estrito · @ford/ui + @ford/types',
     'iOS + Android (multiplataforma)',
   ];
@@ -676,7 +676,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     fontFace: 'Calibri', fontSize: 16, bold: true, color: NAVY,
   });
   const telas = [
-    { t: 'Login', d: 'Auth Supabase + persistent session' },
+    { t: 'Login', d: 'Auth própria (JWT) + persistent session' },
     { t: 'Carteira (Home)', d: 'KPIs + lista clientes recentes' },
     { t: 'Leads', d: 'Lista priorizada por risco' },
     { t: 'Veículos', d: 'Catálogo + busca + filtros' },
@@ -716,7 +716,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     ['Custo entrada',           'Open-stack',     'US$150/user',  'R$ 1k/mês',  'US$ 10k/mês'],
     ['Dataset Ford BR real',    '✓ 175k VINs',    '—',            '—',           '—'],
     ['IA explicável (sinais)',  '✓',              'Parcial',      '—',           'SHAP only'],
-    ['LGPD-first',              '✓ VIN_Hash+RLS', '✓',            'Parcial',     'Parcial'],
+    ['LGPD-first',              '✓ VIN_Hash+isolamento', '✓',            'Parcial',     'Parcial'],
     ['Arquitetura prod-ready',  'MVP funcional', '3-6 meses',    '1-2 meses',   '2-3 meses'],
     ['Integração FIPE',         '✓ Nativa',       '—',            'Parcial',     '—'],
   ];
@@ -817,7 +817,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Performance: <2s render · <1s ranking 175k leads\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
-    { text: 'Segurança: RLS · HMAC · audit log · LGPD-ready\n', options: { color: '2A3A4A', fontSize: 10 } },
+    { text: 'Segurança: isolamento por dealership · HMAC · audit log · LGPD-ready\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Usabilidade: ≤4 cliques pra ação · 100% PT-BR\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },

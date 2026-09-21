@@ -2,36 +2,26 @@
 /**
  * Popula o catálogo com a linha Ford BR (2018+).
  * Usa /competitive/search/fipe para garantir dados FIPE oficiais.
+ *
+ * Só fala HTTP com a API (API_URL, default http://127.0.0.1:3333); o login é
+ * feito em POST /auth/login com o admin de demo (ADMIN_EMAIL/ADMIN_PASSWORD).
  */
-import { readFileSync, existsSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { apiUrl } from './lib/env.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, '..');
-const envPath = join(root, '.env.local');
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-  }
-}
+const API = apiUrl();
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@faroai.com.br';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Ford2026!';
 
-const API = process.env.API_URL || 'http://127.0.0.1:3333';
-const SB_URL = process.env.SUPABASE_URL;
-const ANON = process.env.SUPABASE_ANON_KEY;
-
-if (!SB_URL || !ANON) { console.error('falta SUPABASE_URL/ANON_KEY'); process.exit(1); }
-
-// === Login admin ===
+// === Login admin (JWT próprio da API) ===
 async function getToken() {
-  const r = await fetch(`${SB_URL}/auth/v1/token?grant_type=password`, {
+  const r = await fetch(`${API}/auth/login`, {
     method: 'POST',
-    headers: { apikey: ANON, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'admin@faroai.com.br', password: 'Ford2026!' }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
   });
+  if (!r.ok) throw new Error(`login falhou: ${r.status} ${await r.text()}`);
   const j = await r.json();
-  return j.access_token;
+  return j.token;
 }
 
 async function authedGet(path, token) {

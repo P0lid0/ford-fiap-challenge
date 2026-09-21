@@ -33,7 +33,7 @@ create table if not exists public.acoes_retencao (
   id            uuid primary key default gen_random_uuid(),
   client_id     uuid not null references public.clients(id) on delete cascade,
   dealership_id uuid not null references public.dealerships(id) on delete cascade,
-  actor_id      uuid references auth.users(id) on delete set null,
+  actor_id      uuid references public.profiles(id) on delete set null,
 
   tipo          acao_tipo not null,
   status        acao_status not null default 'planejada',
@@ -63,30 +63,11 @@ create index if not exists idx_acoes_created on public.acoes_retencao(created_at
 create index if not exists idx_acoes_campaign on public.acoes_retencao(campaign_id) where campaign_id is not null;
 
 -- ============================================================
--- RLS
+-- Autorização (na API, lib/scope.ts):
+--   leitura/insert: analista só na própria dealership; gestor lê a rede,
+--   escreve na própria dealership; admin tudo.
+--   update: só o autor (actor_id) ou gestor/admin.
 -- ============================================================
-alter table public.acoes_retencao enable row level security;
-
--- analistas/gestores veem ações da própria concessionária
-create policy "acoes_read_own_dealership" on public.acoes_retencao
-  for select using (
-    dealership_id = (select dealership_id from public.profiles where id = auth.uid())
-    or is_admin()
-  );
-
--- mesma regra para insert
-create policy "acoes_insert_own_dealership" on public.acoes_retencao
-  for insert with check (
-    dealership_id = (select dealership_id from public.profiles where id = auth.uid())
-    or is_admin()
-  );
-
--- update só do próprio autor, ou admin/gestor
-create policy "acoes_update_owner_or_manager" on public.acoes_retencao
-  for update using (
-    actor_id = auth.uid()
-    or current_user_role() in ('gestor', 'admin')
-  );
 
 -- ============================================================
 -- View consolidada: ações por cliente com contagens por status

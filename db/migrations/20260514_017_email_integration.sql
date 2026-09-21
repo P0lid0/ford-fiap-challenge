@@ -24,7 +24,7 @@ comment on column public.clients.email_cliente is
 
 -- ============== Audit log de e-mails enviados ==============
 create table if not exists public.email_logs (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   acao_id uuid references public.acoes_retencao(id) on delete set null,
   client_id uuid not null references public.clients(id) on delete cascade,
   sent_by uuid references public.profiles(id) on delete set null,
@@ -53,22 +53,9 @@ create index if not exists email_logs_created_idx on public.email_logs(created_a
 comment on table public.email_logs is
   'Auditoria LGPD de e-mails enviados pelo sistema. Cada envio gera 1 linha com remetente, destinatário, status e ID do provider.';
 
--- ============== RLS ==============
-alter table public.email_logs enable row level security;
-
--- Leitura: usuário vê os e-mails que ele mesmo mandou. Admin/gestor vê tudo.
-drop policy if exists email_logs_read on public.email_logs;
-create policy email_logs_read on public.email_logs
-  for select to authenticated using (
-    sent_by = auth.uid()
-    or exists (
-      select 1 from public.profiles p
-      where p.id = auth.uid() and p.role in ('admin', 'gestor')
-    )
-  );
-
--- Inserção só via service_role (API faz auditoria ao enviar)
--- → sem policy de INSERT pra authenticated, bloqueado por padrão
+-- ============== Acesso ==============
+-- Leitura (na API, lib/scope.ts): usuário vê os e-mails que ele mesmo mandou
+-- (sent_by = id). Admin/gestor vê tudo. Inserção só pela API ao enviar.
 
 -- ============== Comentários nas configurações ==============
 -- Não precisa de tabela nova — reusamos public.ai_keys com providers:

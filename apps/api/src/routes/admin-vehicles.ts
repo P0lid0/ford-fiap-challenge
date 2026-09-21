@@ -9,7 +9,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireUser } from '../plugins/auth.js';
-import { adminClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
+import type { Fragment } from '../lib/scope.js';
 import { fipe } from '../lib/data-sources/fipe.js';
 import { SUPPORTED_MANUFACTURER_BRANDS, fetchManufacturerSpecs } from '../lib/data-sources/manufacturer.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
@@ -40,6 +41,26 @@ const VehicleCreateSchema = VehicleUpdateSchema.extend({
   categoria: z.string().min(2),
 });
 
+/**
+ * Colunas de `vehicles` que o upsert manual/lote envia. No `on conflict`
+ * atualizamos todas as colunas do payload (exceto `hash_dedupe`, que é gerada) —
+ * mesmo comportamento do antigo `upsert(..., { onConflict: 'hash_dedupe' })`.
+ */
+function excludedSet(cols: string[]): Fragment {
+  return cols.reduce<Fragment>(
+    (acc, c, i) => (i === 0 ? sql`${sql(c)} = excluded.${sql(c)}` : sql`${acc}, ${sql(c)} = excluded.${sql(c)}`),
+    sql``,
+  );
+}
+
+/** Mensagem que o PostgREST devolvia quando `.single()` não encontrava exatamente 1 linha. */
+const SINGLE_ROW_MSG = 'JSON object requested, multiple (or no) rows returned';
+
+/** Remove chaves `undefined` (o driver recusa undefined como parâmetro). */
+function compact<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}
+
 export async function adminVehicleRoutes(app: FastifyInstance) {
   // === GET individual por ID ===
   app.get('/competitive/vehicles/:id', {
@@ -51,8 +72,14 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     requireUser(req);
     const { id } = req.params as any;
-    const { data, error } = await adminClient().from('vehicles').select('*').eq('id', id).single();
-    if (error || !data) { reply.code(404); return { error: 'not_found' }; }
+    // Catálogo é leitura livre pra qualquer autenticado (sem filtro de dealership).
+    let data;
+    try {
+      [data] = await sql`select * from public.vehicles where id = ${id}`;
+    } catch (err) {
+      req.log.warn({ err }, '[get vehicle] query failed');
+    }
+    if (!data) { reply.code(404); return { error: 'not_found' }; }
     return data;
   });
 
@@ -70,12 +97,14 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       return { error: 'forbidden', message: `role '${u.role}' não pode excluir (precisa admin ou gestor)` };
     }
     const { id } = req.params as any;
-    const { error, count } = await adminClient()
-      .from('vehicles').delete({ count: 'exact' }).eq('id', id);
-    if (error) {
-      req.log.error({ err: error }, '[delete vehicle] supabase error');
+    let count: number;
+    try {
+      const deleted = await sql`delete from public.vehicles where id = ${id} returning 1`;
+      count = deleted.length;
+    } catch (error: any) {
+      req.log.error({ err: error }, '[delete vehicle] db error');
       reply.code(400);
-      return { error: 'delete_failed', message: error.message, hint: (error as any).hint, code: (error as any).code };
+      return { error: 'delete_failed', message: error.message, hint: error.hint, code: error.code };
     }
     if (count === 0) {
       reply.code(404);
@@ -99,8 +128,13 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     requireUser(req);
     const { id } = req.params as any;
     const body = (req.body ?? {}) as any;
-    const sb = adminClient();
-    const { data: existing } = await sb.from('vehicles').select('*').eq('id', id).single();
+    // O antigo `.single()` ignorava o erro e caía no 404; mantemos isso.
+    let existing;
+    try {
+      [existing] = await sql`select * from public.vehicles where id = ${id}`;
+    } catch (err) {
+      req.log.warn({ err }, '[refresh] query failed');
+    }
     if (!existing) { reply.code(404); return { error: 'not_found' }; }
 
     const aggregated = await aggregateVehicle({
@@ -135,7 +169,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const newSources = { ...aggregated.data_sources };
     for (const [k, v] of Object.entries(oldSources)) if (v === 'manual') newSources[k] = 'manual';
 
-    const { data, error } = await sb.from('vehicles').update({
+    const patch = compact({
       categoria: aggregated.categoria,
       motor, dimensoes, transmissao, desempenho,
       equipamentos: aggregated.equipamentos,
@@ -146,9 +180,20 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       fipe_codigo: aggregated.fipe_codigo,
       fipe_mes_referencia: aggregated.fipe_mes_referencia,
       confianca_geral: aggregated.confianca_geral,
-    }).eq('id', id).select().single();
+    });
 
-    if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
+    let data;
+    try {
+      [data] = await sql`
+        update public.vehicles set ${sql(patch)}
+        where id = ${id}
+        returning *
+      `;
+    } catch (err: any) {
+      reply.code(400); return { error: 'update_failed', message: err.message };
+    }
+    // `.single()` sem linha (veículo sumiu entre o select e o update) era 400.
+    if (!data) { reply.code(400); return { error: 'update_failed', message: SINGLE_ROW_MSG }; }
     return data;
   });
 
@@ -207,13 +252,13 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     requireUser(req);
     const { id } = req.params as any;
-    const sb = adminClient();
 
-    const { data: vehicle, error: vErr } = await sb
-      .from('vehicles')
-      .select('id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources')
-      .eq('id', id).maybeSingle();
-    if (vErr) throw vErr;
+    // Erro de banco propaga (antes era `throw vErr`); 0 linhas → 404.
+    const [vehicle] = await sql`
+      select id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources
+      from public.vehicles
+      where id = ${id}
+    `;
     if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
 
     // 1. Tenta a busca completa FIPE (marca + modelo+versao + ano)
@@ -245,16 +290,23 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const novasFontes = { ...(vehicle.data_sources ?? {}) };
     novasFontes.preco_brl = 'fipe';
 
-    const { data, error } = await sb.from('vehicles').update({
+    const patch = {
       preco_brl: novoPreco,
       fipe_codigo: fipeResult.CodigoFipe,
       fipe_mes_referencia: fipeResult.MesReferencia,
       data_sources: novasFontes,
-    }).eq('id', id).select(
-      'id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources'
-    ).single();
-
-    if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
+    };
+    let data;
+    try {
+      [data] = await sql`
+        update public.vehicles set ${sql(patch)}
+        where id = ${id}
+        returning id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources
+      `;
+    } catch (err: any) {
+      reply.code(400); return { error: 'update_failed', message: err.message };
+    }
+    if (!data) { reply.code(400); return { error: 'update_failed', message: SINGLE_ROW_MSG }; }
 
     return {
       ok: true,
@@ -281,7 +333,6 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     requireUser(req);
     const { marca_codigo, modelo_codigo, ano_codigo } = req.body as any;
-    const sb = adminClient();
 
     // 1. Busca preço FIPE direto pelos códigos (100% determinístico)
     let fipeData;
@@ -297,21 +348,31 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const modeloBase = modeloPartes[0] ?? fipeData.Modelo;
     const versao = modeloPartes.slice(1).join(' ') || 'Padrão';
 
-    // 2. Verifica cache
-    const { data: existing } = await sb.from('vehicles').select('*')
-      .eq('fipe_codigo', fipeData.CodigoFipe).eq('ano', anoInt).maybeSingle();
+    // 2. Verifica cache — o antigo `.maybeSingle()` só devolvia dado com
+    // exatamente 1 linha (2+ virava erro ignorado → seguia pro agregador).
+    const cached = await sql`
+      select * from public.vehicles
+      where fipe_codigo = ${fipeData.CodigoFipe} and ano = ${anoInt}
+      limit 2
+    `;
+    const existing = cached.length === 1 ? cached[0] : undefined;
     if (existing) return { source: 'cache', vehicle: existing };
 
     // 3. Roda agregador com dados FIPE já em mãos (manufacturer + IA pra gaps)
     const u = requireUser(req);
     let aiModel = req.headers['x-ai-model'] as string | undefined;
     if (!aiModel) {
-      const { data: pref } = await sb.from('ai_function_models')
-        .select('model_id').eq('user_id', u.id).eq('function_name', 'vehicle_search').maybeSingle();
+      // PK (user_id, function_name) → no máximo 1 linha.
+      const [pref] = await sql<{ model_id: string }[]>`
+        select model_id from public.ai_function_models
+        where user_id = ${u.id} and function_name = 'vehicle_search'
+      `;
       aiModel = pref?.model_id;
     }
-    const { data: prefExtract } = await sb.from('ai_function_models')
-      .select('model_id').eq('user_id', u.id).eq('function_name', 'manufacturer_extract').maybeSingle();
+    const [prefExtract] = await sql<{ model_id: string }[]>`
+      select model_id from public.ai_function_models
+      where user_id = ${u.id} and function_name = 'manufacturer_extract'
+    `;
     const aggregated = await aggregateVehicle({
       marca: fipeData.Marca, modelo: modeloBase, versao, ano: anoInt,
       aiModel, manufacturerAiModel: prefExtract?.model_id,
@@ -320,7 +381,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       reply.code(404); return { error: 'no_data' };
     }
 
-    const { data, error } = await sb.from('vehicles').upsert({
+    const row = compact({
       marca: aggregated.marca, modelo: aggregated.modelo, versao: aggregated.versao,
       ano: aggregated.ano, categoria: aggregated.categoria,
       motor: aggregated.motor, dimensoes: aggregated.dimensoes,
@@ -330,9 +391,19 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       fontes: aggregated.fontes, data_sources: aggregated.data_sources,
       fipe_codigo: aggregated.fipe_codigo, fipe_mes_referencia: aggregated.fipe_mes_referencia,
       confianca_geral: aggregated.confianca_geral,
-    }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
+    });
+    const cols = Object.keys(row);
 
-    if (error) { reply.code(400); return { error: 'upsert_failed', message: error.message }; }
+    let data;
+    try {
+      [data] = await sql`
+        insert into public.vehicles ${sql(row)}
+        on conflict (hash_dedupe) do update set ${excludedSet(cols)}
+        returning *
+      `;
+    } catch (err: any) {
+      reply.code(400); return { error: 'upsert_failed', message: err.message };
+    }
     return { source: 'fresh', vehicle: data };
   });
 
@@ -368,9 +439,8 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const body = req.body as z.infer<typeof VehicleCreateSchema>;
-    const sb = adminClient();
 
-    const { data, error } = await sb.from('vehicles').upsert({
+    const row = {
       marca: body.marca,
       modelo: body.modelo,
       versao: body.versao,
@@ -392,9 +462,17 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       editado_por: u.id,
       editado_em: new Date().toISOString(),
       confianca_geral: 'alta',
-    }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
+    };
+    const cols = Object.keys(row);
 
-    if (error) {
+    let data;
+    try {
+      [data] = await sql`
+        insert into public.vehicles ${sql(row)}
+        on conflict (hash_dedupe) do update set ${excludedSet(cols)}
+        returning *
+      `;
+    } catch (error: any) {
       req.log.error({ error }, 'create vehicle failed');
       reply.code(400);
       return { error: 'create_failed', message: error.message };
@@ -414,11 +492,16 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const updates = req.body as any;
-    const sb = adminClient();
+    const updates = compact(req.body as Record<string, unknown>) as any;
 
     // Marca campos modificados como `manual` em data_sources
-    const { data: current } = await sb.from('vehicles').select('data_sources').eq('id', id).single();
+    // (antes o erro/ausência era ignorado aqui e o update abaixo é que falhava).
+    let current;
+    try {
+      [current] = await sql`select data_sources from public.vehicles where id = ${id}`;
+    } catch (err) {
+      req.log.warn({ err }, '[patch vehicle] query failed');
+    }
     const newSources = { ...(current?.data_sources ?? {}) };
     for (const k of ['marca', 'modelo', 'versao', 'ano', 'categoria', 'preco_brl', 'pais_origem']) {
       if (k in updates) newSources[k] = 'manual';
@@ -432,7 +515,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     }
     if (updates.equipamentos) newSources['equipamentos'] = 'manual';
 
-    const { data, error } = await sb.from('vehicles').update({
+    const patch = {
       ...updates,
       data_sources: newSources,
       verificado_manualmente: true,
@@ -441,12 +524,21 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       editado_por: u.id,
       editado_em: new Date().toISOString(),
       confianca_geral: 'alta',
-    }).eq('id', id).select().single();
+    };
 
-    if (error) {
+    let data;
+    try {
+      [data] = await sql`
+        update public.vehicles set ${sql(patch)}
+        where id = ${id}
+        returning *
+      `;
+    } catch (err: any) {
       reply.code(400);
-      return { error: 'update_failed', message: error.message };
+      return { error: 'update_failed', message: err.message };
     }
+    // `.single()` sem linha (id inexistente) era 400 update_failed, não 404.
+    if (!data) { reply.code(400); return { error: 'update_failed', message: SINGLE_ROW_MSG }; }
     return data;
   });
 
@@ -463,7 +555,6 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const { format, content } = req.body as any;
-    const sb = adminClient();
 
     let items: any[] = [];
     try {
@@ -503,9 +594,10 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       return { error: 'empty', message: 'nenhum item válido' };
     }
 
+    // marca/modelo ausentes viram null (como o PostgREST fazia) → not-null do banco → 400.
     const rows = items.map((it: any) => ({
-      marca: it.marca,
-      modelo: it.modelo,
+      marca: it.marca ?? null,
+      modelo: it.modelo ?? null,
       versao: it.versao ?? 'Padrão',
       ano: it.ano ?? 2025,
       categoria: it.categoria ?? 'sedan',
@@ -527,10 +619,18 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       confianca_geral: it.confianca_geral ?? 'alta',
     }));
 
-    const { data, error } = await sb.from('vehicles').upsert(rows, { onConflict: 'hash_dedupe' }).select();
-    if (error) {
+    // Upsert em lote: todas as linhas têm as mesmas chaves (montadas acima).
+    const cols = Object.keys(rows[0]!);
+    let data: any[];
+    try {
+      data = await sql`
+        insert into public.vehicles ${sql(rows)}
+        on conflict (hash_dedupe) do update set ${excludedSet(cols)}
+        returning *
+      `;
+    } catch (err: any) {
       reply.code(400);
-      return { error: 'import_failed', message: error.message };
+      return { error: 'import_failed', message: err.message };
     }
     return { inserted: data?.length ?? 0, vehicles: data ?? [] };
   });

@@ -15,7 +15,7 @@ Plataforma única que resolve os **dois desafios da Ford**:
 | Disciplina | Entregável | Caminho |
 |---|---|---|
 | 1. SOA / Web Services | API REST Fastify + Swagger | `apps/api/` |
-| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**18 migrations**) |
+| 1. SOA / Web Services | Migrations versionadas | `db/migrations/` (**20 migrations**) |
 | 2. Mobile & IoT | App React Native + Expo Router | `apps/mobile/` |
 | 3. Testing / QA | Frontend web Next.js 15 | `apps/web/` |
 | 4. Cybersecurity | Documento de segurança (5 eixos) | `docs/SECURITY.md` |
@@ -54,11 +54,14 @@ Plataforma única que resolve os **dois desafios da Ford**:
 │  apps/mobile — React Native + Expo Router        │
 │  Login · Tabs · Cliente [id] · Compare           │
 └──────────────────┬───────────────────────────────┘
-                   │ HTTPS + JWT (Supabase Auth)
+                   │ HTTPS + JWT próprio (HS256, emitido pela API)
 ┌──────────────────▼───────────────────────────────┐
 │  apps/api — Node.js + Fastify + TypeScript + Zod │
 │  30+ rotas REST · Swagger UI em /docs            │
+│  /auth/login /auth/register /me                  │
 │  /clients /vehicles /leads /metrics /acoes ...   │
+│  Auth: bcrypt + jose · isolamento por dealership │
+│  e papel em lib/scope.ts (analista/gestor/admin) │
 └──────┬───────────────────────┬───────────────────┘
        │                       │
        │              ┌────────▼─────────────────┐
@@ -68,9 +71,10 @@ Plataforma única que resolve os **dois desafios da Ford**:
        │              └──────────────────────────┘
        │
 ┌──────▼───────────────────────────────────────────┐
-│  Supabase Postgres (managed)                     │
-│  18 migrations · RLS por dealership × role       │
-│  profiles · dealerships · clients · vehicles     │
+│  PostgreSQL padrão (driver `postgres`, porsager) │
+│  20 migrations em db/migrations · sem RLS        │
+│  profiles (password_hash) · dealerships          │
+│  clients · vehicles                              │
 │  catalog_items · vehicle_catalog_values          │
 │  acoes_retencao · email_logs · audit_log         │
 │  predictions · ai_insights · ai_keys             │
@@ -82,7 +86,7 @@ Plataforma única que resolve os **dois desafios da Ford**:
 ```
 ford-fiap-challenge/
 ├── apps/
-│   ├── api/                     # Fastify + Zod + Swagger + Supabase (30+ rotas)
+│   ├── api/                     # Fastify + Zod + Swagger + postgres (30+ rotas)
 │   ├── mobile/                  # Expo + Expo Router + AsyncStorage (9 telas)
 │   └── web/                     # Next.js 15 (painel operacional)
 ├── services/ml/                 # FastAPI + scikit-learn + XGBoost
@@ -93,11 +97,12 @@ ford-fiap-challenge/
 ├── packages/
 │   ├── types/                   # tipos compartilhados TS
 │   └── ui/                      # design tokens Ford (cores, tipografia, spacing)
-├── supabase/
-│   └── migrations/              # 18 migrations versionadas + RLS + seeds
+├── db/
+│   └── migrations/              # 20 migrations versionadas (schema + seeds)
 ├── scripts/
-│   ├── run-migrations.mjs       # aplica SQL no Postgres
-│   ├── apply-migrations-via-api.mjs # alternativa via Management API
+│   ├── lib/env.mjs              # lê DATABASE_URL do ambiente ou de .env.local
+│   ├── db-migrate.mjs           # aplica db/migrations/ (schema_migrations, --status)
+│   ├── db-seed-admin.mjs        # cria/atualiza o admin de demo (bcrypt)
 │   ├── seed-vehicles.mjs        # popula vehicles
 │   ├── import-ford-real-clients.mjs # importa 175k VINs Ford BR
 │   ├── populate-catalog-canonico.mjs # popula schema 262 atributos
@@ -108,7 +113,7 @@ ford-fiap-challenge/
 │   ├── SECURITY.md              # política de segurança (entrega D4)
 │   ├── SETUP.md
 │   └── deliverables/            # PPTX, PDFs, DOCX, .archimate
-└── .github/workflows/ci.yml     # lint + typecheck + train smoke + gitleaks
+└── .github/workflows/ci.yml     # typecheck + migrations em Postgres + train smoke + gitleaks
 ```
 
 ---
@@ -117,34 +122,42 @@ ford-fiap-challenge/
 
 ### 1. Pré-requisitos
 - Node ≥ 20 + pnpm ≥ 9 + Python 3.11
+- **PostgreSQL ≥ 13** rodando (local ou container) com um banco criado, ex.:
+  `createdb faroai` — ou `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=faroai postgres:16`.
+  A migration 001 habilita `pgcrypto`; `gen_random_uuid()` é nativo.
 
-### 2. Variáveis de ambiente
-```bash
-cp .env.example .env.local
-```
-Preencha `.env.local` com:
-- `SUPABASE_URL` — URL do projeto Supabase
-- `SUPABASE_ANON_KEY` — anon JWT
-- `SUPABASE_SERVICE_ROLE_KEY` — service_role JWT
-- `SUPABASE_JWT_SECRET` — para validar JWT no backend
-- `SUPABASE_DB_PASSWORD` (opcional) — para `pnpm db:migrate`
-- `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback rule-based
-
-### 3. Instalar dependências
+### 2. Instalar dependências
 ```bash
 pnpm install
 ```
 
-### 4. Banco de dados — aplicar as 18 migrations
-**Opção A — Script automatizado (recomendado):**
+### 3. Variáveis de ambiente
 ```bash
-SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
+cp .env.example .env.local
+```
+Preencha `.env.local` (raiz do monorepo — a API e os scripts leem daí):
+- `DATABASE_URL` — ex.: `postgres://postgres:postgres@127.0.0.1:5432/faroai`
+- `JWT_SECRET` — mínimo 32 chars; gere com
+  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+- `JWT_EXPIRES_IN` (opcional, default `12h`)
+- `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback rule-based
+
+Para o web/mobile, `apps/web/.env.local` e `apps/mobile/.env.local` só precisam de
+`EXPO_PUBLIC_API_URL=http://localhost:3333` (o `next.config.js` expõe esse valor como `NEXT_PUBLIC_API_URL`).
+
+### 4. Banco de dados — migrations + seeds
+```bash
+pnpm db:migrate          # aplica as 20 migrations de db/migrations/ (idempotente)
+pnpm db:migrate:status   # lista aplicadas/pendentes sem alterar nada
+pnpm db:seed:admin       # cria/atualiza admin@faroai.com.br / Ford2026! (role admin)
+pnpm db:seed             # popula vehicles (Ranger Raptor + concorrentes)
 ```
 
-**Opção B — Manual via SQL Editor:**
-1. Supabase Dashboard → SQL Editor → New Query
-2. Cole o conteúdo de cada arquivo em `supabase/migrations/` (em ordem)
-3. Click em Run
+`scripts/db-migrate.mjs` registra cada arquivo em `public.schema_migrations`
+e roda cada um numa transação própria: se uma falhar, nada dela fica aplicado
+e basta corrigir e rodar de novo. O admin pode ser customizado com
+`ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` e `ADMIN_DEALERSHIP_CODIGO`
+(default `FD001`, criada pela migration 003).
 
 ### 5. Treinar o modelo ML
 ```bash
@@ -167,7 +180,7 @@ cd services/ml && python -m uvicorn src.main:app --reload --port 8001
 pnpm dev:api          # http://localhost:3333
 
 # Terminal 3 — Web (painel operacional)
-pnpm dev:web          # http://localhost:3000
+pnpm --filter @ford/web dev   # http://localhost:3000
 
 # Terminal 4 — Mobile (Expo)
 pnpm dev:mobile       # QR code para Expo Go
@@ -186,6 +199,9 @@ email: admin@faroai.com.br
 senha: Ford2026!
 role:  admin
 ```
+Criado pelo `pnpm db:seed:admin`. O login (`POST /auth/login`) devolve um JWT
+HS256 que web e mobile mandam em `Authorization: Bearer`; `POST /auth/register`
+cria usuários com role `analista`.
 
 ---
 
@@ -215,10 +231,10 @@ Documento completo em **[`docs/SECURITY.md`](docs/SECURITY.md)**. Cobre os 5 eix
 
 | Eixo | Pontos | Status |
 |---|---|---|
-| 1. Validação & Sanitização | 20 | ✅ Zod em todas rotas · sem SQL raw · rate-limit · multipart 30MB |
-| 2. Autenticação & RBAC | 20 | ✅ JWT Supabase · 3 roles · RLS Postgres |
-| 3. Proteção de APIs | 20 | ✅ TLS 1.3 · CORS allowlist · HMAC payloads |
-| 4. Dados & Privacidade | 25 | ✅ AES-256 at rest · VIN_Hash · LGPD-ready |
+| 1. Validação & Sanitização | 20 | ✅ Zod em todas rotas · SQL parametrizado (tagged template) · rate-limit · multipart 30MB |
+| 2. Autenticação & RBAC | 20 | ✅ JWT HS256 próprio + bcrypt · 3 roles · isolamento por dealership na API |
+| 3. Proteção de APIs | 20 | ✅ TLS via reverse proxy (deploy) · CORS allowlist · HMAC payloads · helmet |
+| 4. Dados & Privacidade | 25 | ✅ VIN_Hash · pseudonimização no ML · isolamento por dealership · LGPD-ready |
 | 5. Monitoramento & Auditoria | 15 | ✅ audit_log estruturado · email_logs · sem stack trace |
 
 ---
@@ -230,6 +246,8 @@ Swagger UI completo: **http://localhost:3333/docs**
 | Método | Rota | Descrição |
 |---|---|---|
 | GET | `/health` | Liveness |
+| POST | `/auth/login` | E-mail + senha → JWT + usuário |
+| POST | `/auth/register` | Cria usuário (role `analista`) e devolve a sessão |
 | GET | `/me` | Perfil + role + dealership autenticado |
 | GET | `/competitive/vehicles` | Lista veículos |
 | GET | `/competitive/lookup?marca=&modelo=&fields=…` | Lookup com seleção dinâmica de campos |
@@ -253,7 +271,8 @@ Swagger UI completo: **http://localhost:3333/docs**
 
 ## ✅ Status final
 
-- **18 migrations** versionadas em `supabase/migrations/`
+- **20 migrations** versionadas em `db/migrations/` (PostgreSQL padrão, sem Supabase — ver `DECISIONS.md`)
+- **Auth própria**: JWT HS256 + bcrypt, isolamento por dealership/papel na API (`apps/api/src/lib/scope.ts`)
 - **175.554 VINs reais Ford BR** importados na base
 - **786 valores canônicos** populados (262 atributos × 3 Ranger 26MY)
 - **135.839 leads** detectados via risco composto

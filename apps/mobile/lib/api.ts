@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { supabase } from './supabase';
+import { getToken } from './auth';
 
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ||
@@ -7,8 +7,7 @@ const API_URL =
   'http://localhost:3333';
 
 async function authedHeaders(): Promise<HeadersInit> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = await getToken();
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),

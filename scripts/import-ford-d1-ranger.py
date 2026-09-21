@@ -1,22 +1,28 @@
 """Importa as 3 versões da Ford Ranger 26MY do data sheet oficial Ford
-direto pra tabela vehicles do Supabase.
+direto pra tabela public.vehicles do PostgreSQL.
+
+Gera um arquivo .sql (INSERT ... ON CONFLICT (hash_dedupe) DO UPDATE) a partir
+de services/ml/data/ford-d1-ranger-26my.json e executa via psql contra a
+DATABASE_URL (ambiente ou .env.local na raiz). Sem dependências além do psql.
 
 Marcadas como verificado_manualmente=true, confianca_geral='alta',
 fontes incluem 'manufacturer:ford-official' (datasheet enviado pela Ford
 no Ford × FIAP Challenge 2026).
+
+Uso:
+    python scripts/import-ford-d1-ranger.py             # gera e aplica
+    python scripts/import-ford-d1-ranger.py --dry-run   # só gera o .sql
 """
-import sys, os, json, hashlib
+import sys, os, json
 sys.stdout.reconfigure(encoding="utf-8")
 import re
-import urllib.request
-from urllib.error import HTTPError
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 
-SUPABASE_REF = "wafphrldcghbqxdclypp"
-PAT = os.environ.get("SUPABASE_ACCESS_TOKEN")
-if not PAT:
-    sys.exit("Defina SUPABASE_ACCESS_TOKEN no ambiente antes de rodar este script.")
-
-DATA_PATH = "C:/Users/pedro.martins/ford-fiap-challenge/services/ml/data/ford-d1-ranger-26my.json"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DATA_PATH = REPO_ROOT / "services" / "ml" / "data" / "ford-d1-ranger-26my.json"
 
 # ============================================================
 # Mapeamento Ford section → nossa categoria de equipamento
@@ -227,45 +233,91 @@ def build_vehicle(sections: dict, trim_key: str, versao_label: str, peso_kg: int
         "notas": notas,
     }
 
-def get_supabase_jwt():
-    """Login no Supabase com email/senha do admin pra pegar JWT."""
-    # Lê .env.local pra credenciais
-    env_path = "C:/Users/pedro.martins/ford-fiap-challenge/.env.local"
-    env = {}
-    if os.path.exists(env_path):
-        for line in open(env_path, encoding="utf-8"):
+def load_database_url() -> str:
+    """DATABASE_URL do ambiente, senão de .env.local na raiz do monorepo."""
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    env_path = REPO_ROOT / ".env.local"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
             m = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", line.strip())
-            if m: env[m.group(1)] = m.group(2).strip('"\'')
-    supabase_url = env.get("SUPABASE_URL")
-    anon = env.get("SUPABASE_ANON_KEY")
-    if not supabase_url or not anon:
-        raise RuntimeError("SUPABASE_URL ou SUPABASE_ANON_KEY faltando em .env.local")
-    # admin demo
-    body = json.dumps({"email": "admin@faroai.com.br", "password": "Ford2026!"}).encode()
-    req = urllib.request.Request(
-        f"{supabase_url}/auth/v1/token?grant_type=password",
-        data=body, method="POST")
-    req.add_header("apikey", anon)
-    req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.loads(r.read())
-        return data["access_token"]
+            if m and m.group(1) == "DATABASE_URL":
+                return m.group(2).strip().strip("\"'")
+    sys.exit("DATABASE_URL ausente (defina no ambiente ou em .env.local na raiz).")
 
-def post_import(items: list) -> dict:
-    """Manda lote pro endpoint /competitive/vehicles/import via API local."""
-    jwt = get_supabase_jwt()
-    api_url = "http://localhost:3333/competitive/vehicles/import"
-    body = json.dumps({"format": "json", "content": json.dumps(items, ensure_ascii=False)}).encode()
-    req = urllib.request.Request(api_url, data=body, method="POST")
-    req.add_header("Authorization", f"Bearer {jwt}")
-    req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.loads(r.read())
-    except HTTPError as e:
-        raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8')[:500]}")
+def find_psql() -> str:
+    """psql do PATH, ou PSQL=<caminho> no ambiente."""
+    cand = os.environ.get("PSQL") or shutil.which("psql")
+    if not cand:
+        sys.exit("psql não encontrado no PATH (defina PSQL=<caminho do psql.exe>).")
+    return cand
+
+# ============================================================
+# Geração do SQL (sem driver: literais escapados + psql)
+# ============================================================
+def sql_str(v) -> str:
+    if v is None:
+        return "NULL"
+    return "'" + str(v).replace("'", "''") + "'"
+
+def sql_jsonb(obj) -> str:
+    return sql_str(json.dumps(obj, ensure_ascii=False)) + "::jsonb"
+
+def sql_text_array(items) -> str:
+    if not items:
+        return "'{}'::text[]"
+    return "array[" + ", ".join(sql_str(i) for i in items) + "]::text[]"
+
+def sql_int(v) -> str:
+    return "NULL" if v is None else str(int(v))
+
+VEHICLE_COLS = [
+    "marca", "modelo", "versao", "ano", "categoria",
+    "motor", "dimensoes", "transmissao", "desempenho", "equipamentos",
+    "preco_brl", "pais_origem", "fontes", "data_sources",
+    "verificado_manualmente", "confianca_geral", "notas",
+]
+
+def vehicle_values(v: dict) -> str:
+    return "(" + ", ".join([
+        sql_str(v["marca"]), sql_str(v["modelo"]), sql_str(v["versao"]),
+        sql_int(v["ano"]), sql_str(v["categoria"]),
+        sql_jsonb(v["motor"]), sql_jsonb(v["dimensoes"]), sql_jsonb(v["transmissao"]),
+        sql_jsonb(v["desempenho"]), sql_text_array(v["equipamentos"]),
+        sql_int(v["preco_brl"]), sql_str(v["pais_origem"]),
+        sql_text_array(v["fontes"]), sql_jsonb(v["data_sources"]),
+        "true" if v["verificado_manualmente"] else "false",
+        sql_str(v["confianca_geral"]), sql_str(v["notas"]),
+    ]) + ")"
+
+def build_sql(vehicles: list) -> str:
+    """Upsert por hash_dedupe (marca|modelo|versao|ano), igual ao endpoint
+    /competitive/vehicles/import que este script usava antes."""
+    update_cols = [c for c in VEHICLE_COLS if c not in ("marca", "modelo", "versao", "ano")]
+    sets = ",\n  ".join(f"{c} = excluded.{c}" for c in update_cols)
+    return (
+        "-- gerado por scripts/import-ford-d1-ranger.py\n"
+        "begin;\n"
+        f"insert into public.vehicles ({', '.join(VEHICLE_COLS)})\nvalues\n"
+        + ",\n".join(vehicle_values(v) for v in vehicles)
+        + "\non conflict (hash_dedupe) do update set\n  "
+        + sets
+        + ",\n  verificado_em = now()\n"
+        "returning id, marca, modelo, versao, array_length(equipamentos, 1) as equipamentos, confianca_geral;\n"
+        "commit;\n"
+    )
+
+def run_psql(sql_path: Path) -> None:
+    env = dict(os.environ, PGCLIENTENCODING="UTF8")
+    cmd = [find_psql(), load_database_url(), "-v", "ON_ERROR_STOP=1", "-f", str(sql_path)]
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8")
+    if r.stdout:
+        print(r.stdout.rstrip())
+    if r.returncode != 0:
+        raise RuntimeError(f"psql saiu com {r.returncode}:\n{r.stderr.strip()[:800]}")
 
 def main():
+    dry_run = "--dry-run" in sys.argv
     data = json.load(open(DATA_PATH, encoding="utf-8"))
     sections = data["sections"]
 
@@ -293,14 +345,20 @@ def main():
             print(f"    [{cat}]: {len(items)}")
         payloads.append(v)
 
-    print(f"\n→ Enviando {len(payloads)} veículos pra /competitive/vehicles/import …")
+    sql_path = Path(tempfile.gettempdir()) / "ford-d1-ranger-26my.sql"
+    sql_path.write_text(build_sql(payloads), encoding="utf-8")
+    print(f"\n→ SQL gerado em {sql_path}")
+    if dry_run:
+        print("  (--dry-run: nada aplicado)")
+        return
+
+    print(f"→ Aplicando {len(payloads)} veículos via psql …")
     try:
-        result = post_import(payloads)
-        print(f"  ✓ {result.get('inserted', 0)} inseridos")
-        for v in result.get("vehicles", []):
-            print(f"    • {v.get('marca')} {v.get('modelo')} {v.get('versao')} → id={v.get('id')[:8]}…  {len(v.get('equipamentos', []))} equipamentos · confiança {v.get('confianca_geral')}")
+        run_psql(sql_path)
+        print("  ✓ upsert concluído")
     except Exception as e:
         print(f"  ✗ Erro: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

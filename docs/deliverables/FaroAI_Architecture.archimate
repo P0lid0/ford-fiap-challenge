@@ -82,10 +82,13 @@
       <documentation>apps/api/src/lib/data-sources/aggregator.ts — orquestra FIPE → manufacturer HTML → e-book PDF → 411 → AI fallback, com provenance por campo.</documentation>
     </element>
     <element xsi:type="archimate:ApplicationComponent" id="comp-auth" name="Auth Plugin (JWT + RBAC)">
-      <documentation>apps/api/src/plugins/auth.ts — valida JWT Supabase, popula request.user, helpers requireUser/requireRole.</documentation>
+      <documentation>apps/api/src/plugins/auth.ts — valida o JWT HS256 emitido pela própria API (lib/auth.ts, jose), carrega o profile no PostgreSQL, popula request.user, helpers requireUser/requireRole.</documentation>
     </element>
     <element xsi:type="archimate:ApplicationComponent" id="comp-audit-log" name="Audit Log Service">
-      <documentation>apps/api/src/lib/audit.ts + tabela audit_log com RLS admin-only.</documentation>
+      <documentation>apps/api/src/lib/audit.ts + tabela audit_log (leitura restrita a admin via requireRole na API).</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" id="comp-auth-local" name="Auth própria (JWT HS256 + bcrypt na API)">
+      <documentation>apps/api/src/lib/auth.ts + routes/auth.ts — hash bcrypt (cost 12) em profiles.password_hash, emissão/validação de JWT HS256 (jose) com claims sub/email/role/dealership_id. Sem provedor externo de identidade.</documentation>
     </element>
 
     <!-- Services -->
@@ -102,7 +105,6 @@
     <element xsi:type="archimate:ApplicationComponent" id="ext-411" name="411 Vehicle Data (RapidAPI)"/>
     <element xsi:type="archimate:ApplicationComponent" id="ext-manufacturer" name="Sites Oficiais Fabricantes (HTML + PDF e-books)"/>
     <element xsi:type="archimate:ApplicationComponent" id="ext-llm" name="LLM Providers (OpenAI, Anthropic, Gemini)"/>
-    <element xsi:type="archimate:ApplicationComponent" id="ext-supabase-auth" name="Supabase Auth"/>
 
     <!-- Data Objects -->
     <element xsi:type="archimate:DataObject" id="do-vehicle" name="vehicles (Postgres JSONB)"/>
@@ -110,7 +112,7 @@
     <element xsi:type="archimate:DataObject" id="do-lead" name="leads"/>
     <element xsi:type="archimate:DataObject" id="do-pred" name="ai_predictions"/>
     <element xsi:type="archimate:DataObject" id="do-audit" name="audit_log"/>
-    <element xsi:type="archimate:DataObject" id="do-ai-keys" name="ai_keys (RLS admin-only)"/>
+    <element xsi:type="archimate:DataObject" id="do-ai-keys" name="ai_keys (admin-only via requireRole na API)"/>
     <element xsi:type="archimate:DataObject" id="do-model" name="classifier_base2.joblib"/>
   </folder>
 
@@ -125,15 +127,19 @@
     </element>
     <element xsi:type="archimate:Node" id="node-web-host" name="Web Host (Vercel)"/>
     <element xsi:type="archimate:Node" id="node-mobile-stores" name="App Stores (iOS App Store + Google Play)"/>
-    <element xsi:type="archimate:Node" id="node-supabase" name="Supabase Managed (Postgres + Auth + Storage)"/>
+    <element xsi:type="archimate:Node" id="node-postgres" name="PostgreSQL Host (Postgres 18 padrão)">
+      <documentation>Instância PostgreSQL padrão (self-hosted ou gerenciada) acessada pela API via driver postgres (porsager). Migrations em db/migrations aplicadas por scripts/db-migrate.mjs.</documentation>
+    </element>
 
     <!-- Devices -->
     <element xsi:type="archimate:Device" id="dev-desktop" name="Estações da Concessionária"/>
     <element xsi:type="archimate:Device" id="dev-smartphone" name="Smartphone do Consultor"/>
 
     <!-- System software -->
-    <element xsi:type="archimate:SystemSoftware" id="ss-postgres" name="PostgreSQL 15 (Supabase)"/>
-    <element xsi:type="archimate:SystemSoftware" id="ss-rls" name="Row Level Security (RLS) por dealership"/>
+    <element xsi:type="archimate:SystemSoftware" id="ss-postgres" name="PostgreSQL 18 (padrão)"/>
+    <element xsi:type="archimate:SystemSoftware" id="ss-scope" name="Isolamento por dealership na API (lib/scope.ts)">
+      <documentation>apps/api/src/lib/scope.ts — dealershipFilter/assertCanWriteDealership aplicados em todas as queries por role (admin/gestor/analista). Substitui o RLS de banco.</documentation>
+    </element>
     <element xsi:type="archimate:SystemSoftware" id="ss-tls" name="TLS 1.2+ (Let's Encrypt via Caddy/Nginx)"/>
     <element xsi:type="archimate:SystemSoftware" id="ss-fastify" name="Fastify 5 + Helmet + Rate-Limit"/>
     <element xsi:type="archimate:SystemSoftware" id="ss-pino" name="Pino (logs estruturados com redact)"/>
@@ -143,7 +149,7 @@
     <element xsi:type="archimate:CommunicationNetwork" id="net-internal" name="Rede interna (API ↔ ML, HMAC + bearer)"/>
 
     <!-- Tech services -->
-    <element xsi:type="archimate:TechnologyService" id="tsvc-db" name="Persistência Postgres + RLS"/>
+    <element xsi:type="archimate:TechnologyService" id="tsvc-db" name="Persistência PostgreSQL (isolamento por dealership na API)"/>
     <element xsi:type="archimate:TechnologyService" id="tsvc-auth-jwt" name="Emissão e Validação de JWT"/>
     <element xsi:type="archimate:TechnologyService" id="tsvc-hmac" name="Assinatura HMAC-SHA256 entre serviços"/>
     <element xsi:type="archimate:TechnologyService" id="tsvc-tls" name="Terminação TLS"/>
@@ -227,7 +233,7 @@
     <element xsi:type="archimate:ServingRelationship" id="rel-ext-4" source="ext-manufacturer" target="comp-aggregator"/>
     <element xsi:type="archimate:ServingRelationship" id="rel-ext-5" source="ext-llm" target="comp-aggregator"/>
     <element xsi:type="archimate:ServingRelationship" id="rel-ext-6" source="ext-llm" target="comp-ml"/>
-    <element xsi:type="archimate:ServingRelationship" id="rel-ext-7" source="ext-supabase-auth" target="comp-auth"/>
+    <element xsi:type="archimate:ServingRelationship" id="rel-ext-7" source="comp-auth-local" target="comp-auth"/>
 
     <!-- Application services realized by components -->
     <element xsi:type="archimate:RealizationRelationship" id="rel-asvc-1" source="comp-api" target="asvc-rest"/>
@@ -251,14 +257,14 @@
     <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-2" source="node-ml-host" target="comp-ml"/>
     <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-3" source="node-web-host" target="comp-web"/>
     <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-4" source="node-mobile-stores" target="comp-mobile"/>
-    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-5" source="node-supabase" target="do-vehicle"/>
-    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-6" source="node-supabase" target="do-client"/>
-    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-7" source="node-supabase" target="do-lead"/>
-    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-8" source="node-supabase" target="do-audit"/>
-    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-9" source="node-supabase" target="do-ai-keys"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-5" source="node-postgres" target="do-vehicle"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-6" source="node-postgres" target="do-client"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-7" source="node-postgres" target="do-lead"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-8" source="node-postgres" target="do-audit"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="rel-tech-9" source="node-postgres" target="do-ai-keys"/>
 
     <element xsi:type="archimate:RealizationRelationship" id="rel-tsvc-1" source="ss-postgres" target="tsvc-db"/>
-    <element xsi:type="archimate:RealizationRelationship" id="rel-tsvc-2" source="ext-supabase-auth" target="tsvc-auth-jwt"/>
+    <element xsi:type="archimate:RealizationRelationship" id="rel-tsvc-2" source="comp-auth-local" target="tsvc-auth-jwt"/>
     <element xsi:type="archimate:RealizationRelationship" id="rel-tsvc-3" source="ss-tls" target="tsvc-tls"/>
 
     <element xsi:type="archimate:CompositionRelationship" id="rel-net-1" source="net-internet" target="node-api-host"/>
@@ -425,7 +431,7 @@
       <child xsi:type="archimate:DiagramObject" id="va-12" archimateElement="ext-nhtsa">
         <bounds x="940" y="320" width="200" height="55"/>
       </child>
-      <child xsi:type="archimate:DiagramObject" id="va-13" archimateElement="ext-supabase-auth">
+      <child xsi:type="archimate:DiagramObject" id="va-13" archimateElement="comp-auth-local">
         <bounds x="940" y="390" width="200" height="55"/>
       </child>
 
@@ -473,13 +479,13 @@
         <bounds x="600" y="440" width="200" height="55"/>
       </child>
 
-      <child xsi:type="archimate:DiagramObject" id="vt-9" archimateElement="node-supabase">
+      <child xsi:type="archimate:DiagramObject" id="vt-9" archimateElement="node-postgres">
         <bounds x="880" y="240" width="200" height="80"/>
       </child>
       <child xsi:type="archimate:DiagramObject" id="vt-10" archimateElement="ss-postgres">
         <bounds x="880" y="340" width="200" height="55"/>
       </child>
-      <child xsi:type="archimate:DiagramObject" id="vt-11" archimateElement="ss-rls">
+      <child xsi:type="archimate:DiagramObject" id="vt-11" archimateElement="ss-scope">
         <bounds x="880" y="410" width="200" height="55"/>
       </child>
 

@@ -11,9 +11,9 @@ produtivo.
 | Eixo | Pontos | Cobertura |
 |---|---|---|
 | 1. Validação e sanitização de entrada | 20 | ✅ Zod, sanitização XSS/SQL/cmd, rate-limit, multipart |
-| 2. Autenticação e autorização | 20 | ✅ JWT Supabase, RBAC 3 níveis, RLS Postgres |
+| 2. Autenticação e autorização | 20 | ✅ JWT HS256 próprio + bcrypt, RBAC 3 níveis, isolamento por dealership na API |
 | 3. Proteção de APIs e serviços | 20 | ✅ TLS 1.3, rate-limit, CORS allowlist, HMAC payloads |
-| 4. Dados e privacidade | 25 | ✅ AES-256 at rest, VIN_Hash, anonimização ML, LGPD-ready |
+| 4. Dados e privacidade | 25 | ✅ CPF/VIN hasheados, anonimização ML, isolamento por dealership, LGPD-ready |
 | 5. Monitoramento, logs e auditoria | 15 | ✅ Logs estruturados, audit_log, observabilidade |
 | **Total** | **100** | |
 
@@ -42,9 +42,15 @@ body: z.object({
 
 ### SQL Injection
 
-**Não usamos SQL raw.** Toda comunicação com Postgres passa por:
-- `@supabase/supabase-js` (PostgREST com parâmetros bindados)
-- Migrations em arquivos `.sql` versionados (não recebem input)
+**Nenhuma query é montada por concatenação de string.** Toda comunicação com o
+PostgreSQL passa por:
+- driver `postgres` (porsager) via tagged template — ``sql`... where id = ${id}` ``
+  sempre vira parâmetro bindado (`$1`), nunca texto interpolado; inserts/updates
+  usam `sql(obj)` e listas usam `in ${sql(arr)}` / `= any(${arr})`
+- Identificadores dinâmicos (ex.: coluna do filtro por dealership em
+  `lib/scope.ts`) vêm de constantes do código, nunca do request
+- `sql.unsafe` existe **só** no runner de migrations (`scripts/db-migrate.mjs`),
+  que lê arquivos `.sql` versionados (não recebem input)
 
 ### XSS / Command Injection
 
@@ -78,12 +84,28 @@ app.setErrorHandler((err, req, reply) => {
 
 ## 2. Autenticação e Autorização (20 pts)
 
-### JWT
+### Senhas e JWT (auth própria — `apps/api/src/lib/auth.ts`)
 
-- Auth via **Supabase Auth** (JWT assinado HS256)
-- Validação no plugin `apps/api/src/plugins/auth.ts`:
-  - Token validado contra `/auth/v1/user` (não confiamos no payload sem revalidar)
-  - Expiração padrão Supabase: 1 hora (refresh token separado)
+- **Senha**: bcrypt com cost 12 (`bcryptjs`), armazenada em
+  `profiles.password_hash` (migration `20260514_019_auth_local.sql`).
+  `NULL` = login desabilitado.
+- **Sessão**: JWT **HS256** assinado com `JWT_SECRET` (≥ 32 chars, validado
+  pelo Zod em `config.ts`) usando `jose`. Claims: `sub` = `profiles.id`,
+  `email`, `role`, `dealership_id`, `iat`, `exp`. Expiração `JWT_EXPIRES_IN`
+  (default **12h**); não há refresh token — expirou, loga de novo.
+- **Login** (`POST /auth/login`, `routes/auth.ts`): rate-limit próprio de
+  20 req/min por IP; mensagem genérica `invalid credentials` tanto para e-mail
+  inexistente quanto senha errada; quando o e-mail não existe, ainda executa
+  `bcrypt.compare` contra um hash dummy para **não vazar por timing** quais
+  e-mails estão cadastrados. Login e registro geram evento em `audit_log`.
+- **Registro** (`POST /auth/register`): senha mínima de 8 chars, role fixo
+  `analista` (elevação só por admin direto no banco), 409 se o e-mail já existe.
+- **Validação por request** (`plugins/auth.ts`): lê `Authorization: Bearer`,
+  verifica assinatura/expiração e **recarrega o profile do banco** — mudança
+  de role/dealership ou remoção do usuário vale imediatamente, sem esperar o
+  token expirar. Token inválido → segue sem `req.user` → rota devolve 401.
+- Web guarda `{token, user}` em `localStorage` (`faroai.session`); mobile em
+  `AsyncStorage`. O segredo nunca sai da API.
 
 ### RBAC
 
@@ -97,6 +119,31 @@ Três roles definidos em `user_role` enum (migration `20260514_001_init.sql`):
 
 Helper `requireRole(req, 'gestor')` em rotas sensíveis. DELETE de veículo e
 configuração de chaves de IA exigem `admin`.
+
+### Isolamento por dealership (substitui o RLS)
+
+A API conecta ao PostgreSQL com um único role, então o isolamento de dados
+entre concessionárias é aplicado **em código**, em toda rota que lê ou escreve
+dados de cliente — helpers em `apps/api/src/lib/scope.ts`:
+
+| Papel | Leitura | Escrita |
+|---|---|---|
+| `admin` | tudo | tudo |
+| `gestor` | rede inteira (clients, client_history, predictions, acoes_retencao, email_logs) | só a própria dealership |
+| `analista` | só `dealership_id = user.dealership_id`; em `email_logs` só `sent_by = user.id` | só a própria dealership |
+
+- `dealershipFilter(u, col)` gera o fragmento `and <col> = $n` para analista
+  (vazio para admin/gestor; `and false` para analista sem dealership — não vê nada)
+- `assertCanWriteDealership(u, id)` / `resolveWriteDealership(u, id)` lançam
+  **403** antes de qualquer insert/update fora do escopo (equivale ao antigo
+  `with check`)
+- `vehicles`, `catalog_items`, `dealerships`: leitura para qualquer
+  autenticado; escrita conforme `requireRole` da rota
+- `ai_keys` / `ai_config` / `audit_log`: só `admin`
+
+As regras estão documentadas também na migration `20260514_002_rls_policies.sql`
+(mantida com esse nome pelo histórico; hoje só cria índice e explica a decisão).
+Ver ADR em `DECISIONS.md` (2026-09-17).
 
 ---
 
@@ -141,10 +188,15 @@ server {
 }
 ```
 
-A API já tem `trustProxy: true` em `server.ts`, então respeita `X-Forwarded-*`.
+Atrás do proxy, configure `TRUST_PROXY` no `.env.local` da API (ex.:
+`TRUST_PROXY=127.0.0.1` ou `TRUST_PROXY=loopback`) para que `req.ip` use
+`X-Forwarded-For`. O default é `false`: sem proxy confiável, aceitar o header
+permitiria forjar o IP e burlar o rate-limit de `/auth/login`.
 
-Supabase e RapidAPI (411 Vehicle Data) **já são HTTPS-only** — não há tráfego
-plain entre nosso backend e os serviços externos.
+RapidAPI (411 Vehicle Data) e as APIs de LLM **já são HTTPS-only** — não há
+tráfego plain entre nosso backend e os serviços externos. A conexão
+API → PostgreSQL deve usar `sslmode=require` na `DATABASE_URL` quando o banco
+não estiver no mesmo host/rede privada.
 
 ### Rate limiting
 
@@ -191,10 +243,17 @@ Previne manipulação de payload em trânsito e replay com body alterado.
 
 ### Criptografia em repouso
 
-- **Supabase Postgres**: AES-256 em repouso (gerenciado pela plataforma — disk encryption + WAL encryption)
+- **PostgreSQL**: criptografia em repouso depende da infraestrutura onde o
+  banco roda (disco cifrado no host/container ou o padrão do provedor
+  gerenciado). É pendência de deploy produtivo — ver checklist abaixo.
 - **CPF**: nunca armazenado em claro. `apps/api/src/routes/clients.ts:30` aplica `sha256(cpf + CLIENT_CPF_PEPPER)` antes de gravar. Lookup é feito comparando hashes.
-- **Chaves de API (OpenAI, Anthropic, Gemini, FIPE, 411)**: em tabela `ai_keys` com RLS admin-only. Para deploy produtivo, recomendamos migrar pra **Supabase Vault** (criptografia de coluna).
-- **JWTs**: nunca persistidos no backend (validação stateless).
+- **Senhas**: só o hash bcrypt (cost 12) em `profiles.password_hash`; o valor
+  em claro nunca é logado (`redact` do Pino cobre `*.password` e `*.password_hash`).
+- **Chaves de API (OpenAI, Anthropic, Gemini, FIPE, 411)**: em tabela `ai_keys`,
+  expostas só por rotas `admin` (`requireRole`). Para deploy produtivo,
+  recomendamos cifrar a coluna com `pgcrypto` (`pgp_sym_encrypt`) ou mover para
+  um secret manager.
+- **JWTs**: nunca persistidos no backend (validação stateless com `JWT_SECRET`).
 
 ### Política de retenção e descarte
 
@@ -207,7 +266,7 @@ Previne manipulação de payload em trânsito e replay com body alterado.
 | `leads` | 24 meses após status `convertido` ou `descartado` | Cron mensal |
 | Logs do Pino | 30 dias (rotação) | logrotate ou agregador de logs (DataDog/CloudWatch) |
 
-Implementação: arquivo `supabase/migrations/20260514_009_retention_jobs.sql` (TODO — agendar via Supabase Cron extension).
+Implementação: migration de retenção em `db/migrations/` (TODO — agendar via `pg_cron` ou um cron do host chamando `psql`).
 
 ### Anonimização / pseudonimização
 
@@ -217,17 +276,17 @@ Pipeline de ML **nunca recebe PII**:
 - Variáveis usadas: idade, gênero, região, renda, score, perfil de compra
 
 Para dashboards agregados: queries de KPI agrupam por `dealership_id` mas não
-listam clientes individuais sem permissão explícita (RLS).
+listam clientes individuais fora do escopo do usuário (`lib/scope.ts`).
 
 ### Proteção contra exposição
 
-- Logs do Pino com `redact: ['req.headers.authorization', 'req.headers.cookie', '*.SUPABASE_SERVICE_ROLE_KEY', '*.ANTHROPIC_API_KEY']`
+- Logs do Pino com `redact: ['req.headers.authorization', 'req.headers.cookie', '*.password', '*.password_hash', '*.JWT_SECRET', '*.DATABASE_URL', '*.ANTHROPIC_API_KEY']`
 - `.env.local` no `.gitignore`
 - Swagger UI disponível em dev em `/docs` — para deploy produtivo, desabilitar
   ou proteger com auth (basic auth no reverse proxy)
 - Mensagens de erro genéricas pra cliente (sem stack/SQL/internal paths)
-- RLS no Supabase isola dados por `dealership_id` — analista de uma loja não
-  vê dados de outra
+- Filtro por `dealership_id` aplicado pela API em toda query de dados de
+  cliente — analista de uma loja não vê dados de outra (eixo 2)
 
 ---
 
@@ -252,13 +311,13 @@ redacted (Authorization, cookies, chaves).
 
 ### Trilha de auditoria
 
-Tabela `audit_log` com RLS admin-only. Helper em `apps/api/src/lib/audit.ts`
+Tabela `audit_log` lida só por rotas `admin`. Helper em `apps/api/src/lib/audit.ts`
 registra:
 - Alteração de chave de IA (`provider`, `actor_id`, IP, user-agent)
 - Criação/edição/exclusão de cliente
 - Exclusão de veículo
 - Refresh manual (com URL custom do e-book)
-- Login/logout (via Supabase Auth → `auth.audit_log_entries`)
+- Login e registro (`auth.login` / `auth.register` em `routes/auth.ts`, com IP + user-agent)
 
 Eventos críticos têm metadata estruturada pra investigação posterior.
 
@@ -272,12 +331,14 @@ devem ser concluídos antes de afirmar deploy produtivo final.
 - [ ] Definir DNS apontando pro host
 - [ ] Caddy ou Nginx + Let's Encrypt instalado
 - [ ] Variáveis de ambiente (`.env.production`) populadas
+- [ ] `JWT_SECRET` gerado com 32+ bytes aleatórios e guardado em secret manager (rotacionar invalida todas as sessões)
+- [ ] `DATABASE_URL` com usuário dedicado (não superuser) e `sslmode=require`
 - [ ] `NODE_ENV=production` (ativa CSP estrita no helmet)
 - [ ] `ML_SERVICE_TOKEN` rotacionado (não usar `change-me`)
 - [ ] `CLIENT_CPF_PEPPER` rotacionado e armazenado em secret manager
 - [ ] Swagger UI desabilitado ou protegido (basic auth no proxy)
 - [ ] `audit_log` retention job agendado
-- [ ] Backup automático Supabase ativo (PITR)
+- [ ] Backup do PostgreSQL agendado (`pg_dump`/PITR) e disco cifrado em repouso
 - [ ] Monitoramento de uptime + alertas configurados
 
 ---
@@ -287,8 +348,8 @@ devem ser concluídos antes de afirmar deploy produtivo final.
 | Ameaça | Mitigação |
 |--------|-----------|
 | **S**poofing | JWT validado server-side, sem trust em payload direto |
-| **T**ampering | HMAC nas chamadas API→ML, RLS no DB |
+| **T**ampering | HMAC nas chamadas API→ML, JWT assinado (HS256), SQL parametrizado |
 | **R**epudiation | Audit log com IP + user-agent |
-| **I**nformation Disclosure | Erros genéricos, logs redacted, RLS, pseudonimização |
+| **I**nformation Disclosure | Erros genéricos, logs redacted, filtro por dealership na API, login sem vazamento por timing, pseudonimização |
 | **D**enial of Service | Rate limit, body size limit, timeout em fetches externos |
-| **E**levation of Privilege | RBAC + RLS Postgres (defense in depth) |
+| **E**levation of Privilege | RBAC (`requireRole`) + profile recarregado do banco a cada request + registro sempre como `analista` |

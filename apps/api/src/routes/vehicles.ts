@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
-import { adminClient, publicClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
 import { compareVehicles, type Vehicle, COMPARABLE_FIELDS } from '../modules/competitive/compare.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
 import { chat } from '../lib/ai.js';
@@ -14,7 +14,32 @@ import { chat } from '../lib/ai.js';
  *     usuário escolher livremente quais campos retornar (requisito Ford).
  *   - Campo ausente vem como `null` explícito.
  *   - Comparação computa winner_index por critério (max/min/none).
+ *
+ * Tenancy: vehicles, catalog_items e vehicle_catalog_values são catálogo
+ * compartilhado — leitura livre pra qualquer usuário autenticado (era assim
+ * no RLS antigo), então basta `requireUser`; não há filtro por dealership.
  */
+
+/** Linha completa de `vehicles` (select *) — colunas extras além do tipo Vehicle. */
+type VehicleRow = Vehicle & Record<string, any>;
+
+/** Item do schema canônico (catalog_items) nas colunas usadas pelas rotas. */
+type CatalogItemRow = {
+  id: string;
+  secao: string;
+  ordem: number;
+  ordem_global: number;
+  nome: string;
+  tipo: string;
+  unidade: string | null;
+  descricao?: string | null;
+};
+
+/** Padrão LIKE como o PostgREST interpretava: `*` vira `%`. */
+function likePattern(s: string): string {
+  return s.replace(/\*/g, '%');
+}
+
 export async function vehicleRoutes(app: FastifyInstance) {
   // Listagem com filtros
   app.get('/competitive/vehicles', {
@@ -29,17 +54,19 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    const u = requireUser(req);
+    requireUser(req);
     const { marca, modelo, categoria, limit } = req.query as any;
 
-    let q = publicClient(u.jwt).from('vehicles').select('*').order('marca').limit(limit);
-    if (marca) q = q.ilike('marca', marca);
-    if (modelo) q = q.ilike('modelo', modelo);
-    if (categoria) q = q.eq('categoria', categoria);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    return data ?? [];
+    const rows = await sql<VehicleRow[]>`
+      select * from public.vehicles
+      where true
+        ${marca ? sql`and marca ilike ${likePattern(marca)}` : sql``}
+        ${modelo ? sql`and modelo ilike ${likePattern(modelo)}` : sql``}
+        ${categoria ? sql`and categoria = ${categoria}` : sql``}
+      order by marca asc
+      limit ${limit}
+    `;
+    return rows;
   });
 
   // Lookup com fields dinâmicos — requisito explícito Ford
@@ -58,20 +85,17 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
+    requireUser(req);
     const { marca, modelo, versao, ano, fields } = req.query as any;
 
-    let q = publicClient(u.jwt)
-      .from('vehicles')
-      .select('*')
-      .ilike('marca', marca)
-      .ilike('modelo', modelo);
-    if (versao) q = q.ilike('versao', versao);
-    if (ano) q = q.eq('ano', ano);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    if (!data || data.length === 0) {
+    const data = await sql<VehicleRow[]>`
+      select * from public.vehicles
+      where marca ilike ${likePattern(marca)}
+        and modelo ilike ${likePattern(modelo)}
+        ${versao ? sql`and versao ilike ${likePattern(versao)}` : sql``}
+        ${ano ? sql`and ano = ${ano}` : sql``}
+    `;
+    if (data.length === 0) {
       reply.code(404);
       return { error: 'not_found', message: 'nenhum veículo combina com a query' };
     }
@@ -93,15 +117,13 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
+    requireUser(req);
     const { vehicle_ids, fields } = req.body as any;
 
-    const { data, error } = await publicClient(u.jwt)
-      .from('vehicles')
-      .select('*')
-      .in('id', vehicle_ids);
-    if (error) throw error;
-    if (!data || data.length < 2) {
+    const data = await sql<VehicleRow[]>`
+      select * from public.vehicles where id = any(${vehicle_ids}::uuid[])
+    `;
+    if (data.length < 2) {
       reply.code(400);
       return { error: 'bad_request', message: 'necessário 2 ou mais veículos válidos' };
     }
@@ -130,26 +152,26 @@ export async function vehicleRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     requireUser(req);
-    const { data, error } = await adminClient()
-      .from('catalog_items')
-      .select('id, secao, ordem, ordem_global, nome, tipo, unidade, descricao')
-      .order('ordem_global', { ascending: true });
-    if (error) throw error;
+    const data = await sql<CatalogItemRow[]>`
+      select id, secao, ordem, ordem_global, nome, tipo, unidade, descricao
+      from public.catalog_items
+      order by ordem_global asc
+    `;
     // agrupa por seção pra o front consumir mais fácil
     const bySection: Record<string, any[]> = {};
-    for (const r of data ?? []) {
+    for (const r of data) {
       const sec = r.secao || '(sem secao)';
       bySection[sec] ??= [];
       bySection[sec].push(r);
     }
     return {
-      total: (data ?? []).length,
+      total: data.length,
       sections: Object.entries(bySection).map(([secao, items]) => ({
         secao,
         count: items.length,
         items,
       })),
-      flat: data ?? [],
+      flat: data,
     };
   });
 
@@ -165,36 +187,40 @@ export async function vehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     requireUser(req);
     const { vehicle_ids } = req.body as any;
-    const sb = adminClient();
 
     // 1. veículos (header)
-    const { data: vehicles, error: vErr } = await sb
-      .from('vehicles')
-      .select('id, marca, modelo, versao, ano, categoria, preco_brl')
-      .in('id', vehicle_ids);
-    if (vErr) throw vErr;
-    if (!vehicles || vehicles.length === 0) {
+    const vehicles = await sql<{
+      id: string; marca: string; modelo: string; versao: string; ano: number;
+      categoria: string; preco_brl: number | null;
+    }[]>`
+      select id, marca, modelo, versao, ano, categoria, preco_brl
+      from public.vehicles
+      where id = any(${vehicle_ids}::uuid[])
+    `;
+    if (vehicles.length === 0) {
       reply.code(404);
       return { error: 'not_found', message: 'nenhum veículo encontrado' };
     }
 
     // 2. catalog_items (linhas)
-    const { data: items, error: iErr } = await sb
-      .from('catalog_items')
-      .select('id, secao, ordem, ordem_global, nome, tipo, unidade')
-      .order('ordem_global', { ascending: true });
-    if (iErr) throw iErr;
+    const items = await sql<CatalogItemRow[]>`
+      select id, secao, ordem, ordem_global, nome, tipo, unidade
+      from public.catalog_items
+      order by ordem_global asc
+    `;
 
     // 3. valores preenchidos
-    const { data: values, error: valErr } = await sb
-      .from('vehicle_catalog_values')
-      .select('vehicle_id, item_id, valor, confianca, fonte')
-      .in('vehicle_id', vehicle_ids);
-    if (valErr) throw valErr;
+    const values = await sql<{
+      vehicle_id: string; item_id: string; valor: string | null; confianca: string; fonte: string | null;
+    }[]>`
+      select vehicle_id, item_id, valor, confianca, fonte
+      from public.vehicle_catalog_values
+      where vehicle_id = any(${vehicle_ids}::uuid[])
+    `;
 
     // index: itemId -> vehicleId -> valor
     const byItem: Record<string, Record<string, { valor: string | null; confianca: string; fonte: string | null }>> = {};
-    for (const v of values ?? []) {
+    for (const v of values) {
       const bucket = byItem[v.item_id] ?? (byItem[v.item_id] = {});
       bucket[v.vehicle_id] = {
         valor: v.valor,
@@ -205,7 +231,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
 
     // monta rows agrupados por seção
     const sections: Record<string, any[]> = {};
-    for (const it of items ?? []) {
+    for (const it of items) {
       const sec = it.secao || '(sem secao)';
       sections[sec] ??= [];
       // valores ordenados conforme vehicle_ids do pedido
@@ -223,7 +249,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
 
     return {
       vehicles,
-      total_items: (items ?? []).length,
+      total_items: items.length,
       sections: Object.entries(sections).map(([secao, rows]) => ({
         secao,
         count: rows.length,
@@ -246,32 +272,32 @@ export async function vehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     requireUser(req);
     const { id } = req.params as any;
-    const sb = adminClient();
 
-    const { data: vehicle, error: vErr } = await sb
-      .from('vehicles')
-      .select('id, marca, modelo, versao, ano')
-      .eq('id', id).maybeSingle();
-    if (vErr) throw vErr;
+    // id é PK → no máximo 1 linha (equivale ao antigo maybeSingle).
+    const [vehicle] = await sql<{ id: string; marca: string; modelo: string; versao: string; ano: number }[]>`
+      select id, marca, modelo, versao, ano from public.vehicles where id = ${id}
+    `;
     if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
 
-    const { data: items, error: iErr } = await sb
-      .from('catalog_items')
-      .select('id, secao, ordem, ordem_global, nome, tipo, unidade')
-      .order('ordem_global', { ascending: true });
-    if (iErr) throw iErr;
+    const items = await sql<CatalogItemRow[]>`
+      select id, secao, ordem, ordem_global, nome, tipo, unidade
+      from public.catalog_items
+      order by ordem_global asc
+    `;
 
-    const { data: values, error: valErr } = await sb
-      .from('vehicle_catalog_values')
-      .select('item_id, valor, confianca, fonte, updated_at')
-      .eq('vehicle_id', id);
-    if (valErr) throw valErr;
+    const values = await sql<{
+      item_id: string; valor: string | null; confianca: string; fonte: string | null; updated_at: Date;
+    }[]>`
+      select item_id, valor, confianca, fonte, updated_at
+      from public.vehicle_catalog_values
+      where vehicle_id = ${id}
+    `;
 
-    const valueByItem = new Map((values ?? []).map(v => [v.item_id, v]));
+    const valueByItem = new Map(values.map(v => [v.item_id, v]));
 
     const sections: Record<string, any[]> = {};
     let filled = 0;
-    for (const it of items ?? []) {
+    for (const it of items) {
       const sec = it.secao || '(sem secao)';
       const val = valueByItem.get(it.id);
       sections[sec] ??= [];
@@ -293,7 +319,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
 
     return {
       vehicle,
-      total_items: (items ?? []).length,
+      total_items: items.length,
       filled,
       sections: Object.entries(sections).map(([secao, rows]) => ({
         secao,
@@ -323,16 +349,15 @@ export async function vehicleRoutes(app: FastifyInstance) {
     requireUser(req);
     const { id } = req.params as any;
     const { values } = req.body as any;
-    const sb = adminClient();
 
-    const { data: vehicle, error: vErr } = await sb
-      .from('vehicles').select('id').eq('id', id).maybeSingle();
-    if (vErr) throw vErr;
+    const [vehicle] = await sql<{ id: string }[]>`
+      select id from public.vehicles where id = ${id}
+    `;
     if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
 
     // Upsert em lote — valor null deleta o registro
     const toDelete: string[] = [];
-    const toUpsert: any[] = [];
+    const toUpsert: CatalogValueUpsert[] = [];
     for (const v of values) {
       if (v.valor == null || String(v.valor).trim() === '') {
         toDelete.push(v.item_id);
@@ -349,14 +374,13 @@ export async function vehicleRoutes(app: FastifyInstance) {
     }
 
     if (toDelete.length > 0) {
-      const { error } = await sb.from('vehicle_catalog_values')
-        .delete().eq('vehicle_id', id).in('item_id', toDelete);
-      if (error) throw error;
+      await sql`
+        delete from public.vehicle_catalog_values
+        where vehicle_id = ${id} and item_id = any(${toDelete}::uuid[])
+      `;
     }
     if (toUpsert.length > 0) {
-      const { error } = await sb.from('vehicle_catalog_values')
-        .upsert(toUpsert, { onConflict: 'vehicle_id,item_id' });
-      if (error) throw error;
+      await upsertCatalogValues(toUpsert);
     }
     return { ok: true, upserted: toUpsert.length, deleted: toDelete.length };
   });
@@ -372,32 +396,38 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }).optional(),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { id } = req.params as any;
     const overwrite = (req.body as any)?.overwrite ?? false;
-    const sb = adminClient();
 
-    const { data: vehicle, error: vErr } = await sb
-      .from('vehicles')
-      .select('id, marca, modelo, versao, ano, categoria, motor, dimensoes, transmissao, desempenho, equipamentos, preco_brl, pais_origem, notas, fontes')
-      .eq('id', id).maybeSingle();
-    if (vErr) throw vErr;
+    const [vehicle] = await sql<VehicleRow[]>`
+      select id, marca, modelo, versao, ano, categoria, motor, dimensoes, transmissao,
+             desempenho, equipamentos, preco_brl, pais_origem, notas, fontes
+      from public.vehicles
+      where id = ${id}
+    `;
     if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
 
-    const { data: items, error: iErr } = await sb
-      .from('catalog_items')
-      .select('id, secao, nome, tipo, unidade, ordem_global')
-      .order('ordem_global', { ascending: true });
-    if (iErr) throw iErr;
-    if (!items || items.length === 0) {
+    const items = await sql<CatalogItemRow[]>`
+      select id, secao, nome, tipo, unidade, ordem_global
+      from public.catalog_items
+      order by ordem_global asc
+    `;
+    if (items.length === 0) {
       reply.code(500); return { error: 'no_catalog', message: 'catalog_items vazio' };
     }
 
     // Quais itens já estão preenchidos? Se overwrite=false, mantém.
-    const existingValues = overwrite
-      ? new Map()
-      : new Map((await sb.from('vehicle_catalog_values')
-          .select('item_id, valor').eq('vehicle_id', id)).data?.map(r => [r.item_id, r.valor]) ?? []);
+    // (Falha nessa leitura era ignorada no código antigo → tratamos como vazio.)
+    let existingRows: { item_id: string; valor: string | null }[] = [];
+    if (!overwrite) {
+      try {
+        existingRows = await sql<{ item_id: string; valor: string | null }[]>`
+          select item_id, valor from public.vehicle_catalog_values where vehicle_id = ${id}
+        `;
+      } catch { existingRows = []; }
+    }
+    const existingValues = new Map(existingRows.map(r => [r.item_id, r.valor]));
 
     // Monta prompt: peça à IA pra preencher TODOS os 262 atributos com X/0/numérico/null
     const itemsForPrompt = items.map((it: any) => ({
@@ -436,9 +466,8 @@ ${JSON.stringify(itemsForPrompt)}`;
 
     let aiResp: string;
     try {
-      const userId = (req as any).user?.id;
       const aiModel = (req.headers['x-ai-model'] as string)
-        ?? (userId ? await getFunctionAiModel(userId, 'catalog_autofill') : undefined);
+        ?? await getFunctionAiModel(u.id, 'catalog_autofill');
       const r = await chat(prompt, 'smart', {
         systemOverride: 'Devolva APENAS JSON válido. Sem markdown, sem comentários.',
         modelOverride: aiModel,
@@ -466,7 +495,7 @@ ${JSON.stringify(itemsForPrompt)}`;
     }
 
     const itemValidIds = new Set(items.map((it: any) => it.id));
-    const toUpsert: any[] = [];
+    const toUpsert: CatalogValueUpsert[] = [];
     const skipped: string[] = [];
     for (const row of parsed.values ?? []) {
       if (!itemValidIds.has(row.id)) continue;
@@ -489,9 +518,7 @@ ${JSON.stringify(itemsForPrompt)}`;
     }
 
     if (toUpsert.length > 0) {
-      const { error } = await sb.from('vehicle_catalog_values')
-        .upsert(toUpsert, { onConflict: 'vehicle_id,item_id' });
-      if (error) throw error;
+      await upsertCatalogValues(toUpsert);
     }
 
     return {
@@ -504,10 +531,12 @@ ${JSON.stringify(itemsForPrompt)}`;
 
   // Helper: pega modelo de IA preferido do user para uma função
   async function getFunctionAiModel(userId: string, fn: string): Promise<string | undefined> {
-    const { adminClient } = await import('../lib/supabase.js');
-    const { data } = await adminClient().from('ai_function_models')
-      .select('model_id').eq('user_id', userId).eq('function_name', fn).maybeSingle();
-    return data?.model_id ?? undefined;
+    // (user_id, function_name) é PK → no máximo 1 linha (equivale ao antigo maybeSingle).
+    const [row] = await sql<{ model_id: string }[]>`
+      select model_id from public.ai_function_models
+      where user_id = ${userId} and function_name = ${fn}
+    `;
+    return row?.model_id ?? undefined;
   }
 
   // === BUSCA com fontes verificáveis (FIPE + NHTSA + OpenAI) ===
@@ -526,15 +555,21 @@ ${JSON.stringify(itemsForPrompt)}`;
   }, async (req, reply) => {
     const u = requireUser(req);
     const { marca, modelo, versao, ano, force_refresh } = req.body as any;
-    const sb = adminClient();
 
     // 1. Tenta cache primeiro (a menos que force_refresh)
     if (!force_refresh) {
-      let q = sb.from('vehicles').select('*').ilike('marca', marca).ilike('modelo', modelo);
-      if (versao) q = q.ilike('versao', `%${versao}%`);
-      if (ano) q = q.eq('ano', ano);
-      const { data: existing } = await q;
-      if (existing && existing.length > 0) {
+      // Erro de leitura era ignorado no código antigo → segue pras fontes externas.
+      let existing: VehicleRow[] = [];
+      try {
+        existing = await sql<VehicleRow[]>`
+          select * from public.vehicles
+          where marca ilike ${likePattern(marca)}
+            and modelo ilike ${likePattern(modelo)}
+            ${versao ? sql`and versao ilike ${'%' + likePattern(versao) + '%'}` : sql``}
+            ${ano ? sql`and ano = ${ano}` : sql``}
+        `;
+      } catch { existing = []; }
+      if (existing.length > 0) {
         return { source: 'cache', vehicle: existing[0] };
       }
     }
@@ -549,8 +584,10 @@ ${JSON.stringify(itemsForPrompt)}`;
       return { error: 'not_found', message: 'veículo não encontrado em nenhuma fonte (FIPE, NHTSA, IA)' };
     }
 
-    // 3. Upsert no banco
-    const { data, error } = await sb.from('vehicles').upsert({
+    // 3. Upsert no banco — conflito em hash_dedupe (coluna gerada:
+    //    lower(marca)|lower(modelo)|lower(versao)|ano) atualiza todas as
+    //    colunas do payload, como o antigo upsert do PostgREST.
+    const row = {
       marca: aggregated.marca,
       modelo: aggregated.modelo,
       versao: aggregated.versao,
@@ -568,9 +605,32 @@ ${JSON.stringify(itemsForPrompt)}`;
       fipe_codigo: aggregated.fipe_codigo,
       fipe_mes_referencia: aggregated.fipe_mes_referencia,
       confianca_geral: aggregated.confianca_geral,
-    }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
-
-    if (error) {
+    };
+    let data: VehicleRow | undefined;
+    try {
+      [data] = await sql<VehicleRow[]>`
+        insert into public.vehicles ${sql(row)}
+        on conflict (hash_dedupe) do update set
+          marca = excluded.marca,
+          modelo = excluded.modelo,
+          versao = excluded.versao,
+          ano = excluded.ano,
+          categoria = excluded.categoria,
+          motor = excluded.motor,
+          dimensoes = excluded.dimensoes,
+          transmissao = excluded.transmissao,
+          desempenho = excluded.desempenho,
+          equipamentos = excluded.equipamentos,
+          preco_brl = excluded.preco_brl,
+          pais_origem = excluded.pais_origem,
+          fontes = excluded.fontes,
+          data_sources = excluded.data_sources,
+          fipe_codigo = excluded.fipe_codigo,
+          fipe_mes_referencia = excluded.fipe_mes_referencia,
+          confianca_geral = excluded.confianca_geral
+        returning *
+      `;
+    } catch (error) {
       req.log.error({ error }, '[search] upsert failed');
       throw error;
     }
@@ -587,9 +647,14 @@ ${JSON.stringify(itemsForPrompt)}`;
   }, async (req, reply) => {
     requireUser(req);
     const { vehicle_ids } = req.body as any;
-    const { data: vehicles, error } = await adminClient()
-      .from('vehicles').select('*').in('id', vehicle_ids);
-    if (error || !vehicles || vehicles.length < 2) {
+    // Erro de banco aqui virava 400 no código antigo — preservado.
+    let vehicles: VehicleRow[] = [];
+    try {
+      vehicles = await sql<VehicleRow[]>`
+        select * from public.vehicles where id = any(${vehicle_ids}::uuid[])
+      `;
+    } catch { vehicles = []; }
+    if (vehicles.length < 2) {
       reply.code(400);
       return { error: 'bad_request', message: 'mínimo 2 veículos válidos' };
     }
@@ -793,6 +858,34 @@ REGRAS DE OURO:
       citations: r.citations ?? [],  // fontes consultadas pela busca
     };
   });
+}
+
+/** Linha pra upsert em vehicle_catalog_values (PATCH manual e auto-fill da IA). */
+type CatalogValueUpsert = {
+  vehicle_id: string;
+  item_id: string;
+  valor: string;
+  confianca: 'alta' | 'media' | 'baixa';
+  fonte: string;
+  updated_at: string;
+};
+
+/**
+ * Upsert em lote em vehicle_catalog_values — conflito na PK (vehicle_id, item_id)
+ * atualiza todas as colunas do payload exceto as do conflito, como o antigo
+ * `.upsert(rows, { onConflict: 'vehicle_id,item_id' })`.
+ */
+async function upsertCatalogValues(rows: CatalogValueUpsert[]): Promise<void> {
+  if (rows.length === 0) return;
+  await sql`
+    insert into public.vehicle_catalog_values
+      ${sql(rows, 'vehicle_id', 'item_id', 'valor', 'confianca', 'fonte', 'updated_at')}
+    on conflict (vehicle_id, item_id) do update set
+      valor = excluded.valor,
+      confianca = excluded.confianca,
+      fonte = excluded.fonte,
+      updated_at = excluded.updated_at
+  `;
 }
 
 /**

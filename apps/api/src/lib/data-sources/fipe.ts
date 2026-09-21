@@ -11,7 +11,7 @@
  * Sem token, API ainda funciona até 500 req/dia.
  */
 import { fetchWithTimeout } from './_http.js';
-import { adminClient } from '../supabase.js';
+import { sql } from '../db.js';
 
 const FIPE_BASE = 'https://fipe.parallelum.com.br/api/v2';
 
@@ -50,8 +50,9 @@ async function getFipeToken(): Promise<string | null> {
   if (process.env.FIPE_API_TOKEN) return process.env.FIPE_API_TOKEN;
   if (_tokenCache && _tokenCache.expires > Date.now()) return _tokenCache.token;
   try {
-    const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', 'fipe').maybeSingle();
-    const tok = data?.api_key ?? null;
+    // provider é PK em ai_keys → no máximo 1 linha (equivale ao antigo maybeSingle)
+    const rows = await sql<{ api_key: string }[]>`select api_key from ai_keys where provider = 'fipe'`;
+    const tok = rows[0]?.api_key ?? null;
     _tokenCache = { token: tok, expires: Date.now() + TOKEN_TTL };
     return tok;
   } catch {

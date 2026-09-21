@@ -618,7 +618,7 @@ CANVAS = {
     "Parcerias-Chave": (
         "• Ford Motor Company Brasil — sponsor, dados, validação\n"
         "• Rede de concessionárias autorizadas Ford BR\n"
-        "• Supabase — backend-as-a-service (DB + Auth + RLS)\n"
+        "• PostgreSQL — banco relacional (dados + auth própria)\n"
         "• Anthropic, OpenAI, Google — providers de LLM\n"
         "• FIPE.online (Parallelum) — base de preços oficial\n"
         "• 411 Vehicle Data (RapidAPI) — specs técnicos US\n"
@@ -636,10 +636,10 @@ CANVAS = {
     "Recursos-Chave": (
         "• Equipe técnica (5 dev FIAP + Ford TI)\n"
         "• Modelos de ML treinados (XGBoost, clustering)\n"
-        "• Acesso autenticado a Supabase, RapidAPI, LLMs\n"
+        "• Acesso autenticado a PostgreSQL, RapidAPI, LLMs\n"
         "• Base sintética validada e base real Ford\n"
         "• Repositório git versionado + CI/CD\n"
-        "• Cloud infra (Vercel/Fly + Supabase managed)"
+        "• Cloud infra (Vercel/Fly + PostgreSQL gerenciado)"
     ),
     "Proposta de Valor": (
         "Para vendedores e gestores Ford:\n\n"
@@ -679,7 +679,7 @@ CANVAS = {
         "DESENVOLVIMENTO (one-off):\n"
         "• Squad 5 devs × 1 sprint\n\n"
         "OPERAÇÃO MENSAL:\n"
-        "• Supabase: ~US$25 (Pro tier)\n"
+        "• PostgreSQL gerenciado: ~US$25\n"
         "• Hosting API+Web: ~US$20 (Fly/Vercel)\n"
         "• OpenAI/Anthropic: ~US$30-100 (uso por loja)\n"
         "• RapidAPI 411: US$0-19 (free → Pro)\n"
@@ -874,7 +874,7 @@ QV_ROWS = [
     (
         "Time de Segurança / Compliance Ford",
         "Garantia de proteção de dados pessoais (LGPD) e auditabilidade.",
-        "Pseudonimização no pipeline de ML, HMAC nas chamadas, audit log de ações críticas, RLS por dealership.",
+        "Pseudonimização no pipeline de ML, HMAC nas chamadas, audit log de ações críticas, isolamento por dealership na API.",
         "Zero incidentes de vazamento; operação LGPD-ready contínua",
         "100% requisições ML com payload anonimizado; 100% ações sensíveis auditadas.",
         "ALTA",
@@ -1037,17 +1037,17 @@ def build_readme_docx():
         "apps/web/ — Front Next.js (admin, busca, comparação, leads)",
         "apps/mobile/ — App Expo (iOS + Android)",
         "services/ml/ — FastAPI Python (classificador + clustering)",
-        "supabase/migrations/ — schemas + RLS + audit_log",
+        "db/migrations/ — schemas + audit_log",
         "docs/ — SETUP.md, SECURITY.md, deliverables/",
     ]:
         doc.add_paragraph(it, style="List Bullet")
 
     add_heading(doc, "Notas de avaliação por disciplina", level=1)
     notes = [
-        ("Arquitetura SOA & Web Services", "API REST com Swagger em /docs, separação routes/lib/db, 8 migrations Supabase ordenadas, serviços independentes."),
+        ("Arquitetura SOA & Web Services", "API REST com Swagger em /docs, separação routes/lib/db, 19 migrations PostgreSQL ordenadas, serviços independentes."),
         ("Mobile Development & IoT", "App Expo 52 + RN 0.76 com expo-router, AsyncStorage, consumo async."),
         ("Testing, Compliance & QA", "Veja Business_Canvas.docx, Quadro_de_Valor.docx, FaroAI_Architecture.archimate. Métricas de negócio + qualidade em todas promessas."),
-        ("Cybersecurity", "Veja SECURITY.md — cobre os 5 eixos: validação (Zod), auth (JWT + RBAC), APIs (helmet, rate-limit, CORS, HMAC), dados (pseudonimização, RLS, retenção), monitoramento (Pino + audit_log)."),
+        ("Cybersecurity", "Veja SECURITY.md — cobre os 5 eixos: validação (Zod), auth (JWT + RBAC), APIs (helmet, rate-limit, CORS, HMAC), dados (pseudonimização, isolamento por dealership, retenção), monitoramento (Pino + audit_log)."),
         ("IA & Machine Learning", "Veja Relatorio_Desafio_2_ML.pdf + services/ml/notebooks/ford_segmentation.ipynb. Clustering KMeans k=4 + classificador XGBoost sem data leakage."),
     ]
     for d, txt in notes:

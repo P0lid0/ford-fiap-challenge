@@ -19,14 +19,14 @@
 |---|---|---|---|
 | 1 | Nomes dos arquivos de arquitetura padronizados (FordIQ → FaroAI) | ✅ | `FaroAI_Architecture.archimate` · `FaroAI_Architecture_Diagram.pdf/png` · 0 ocorrências de "FordIQ" no XML interno |
 | 2 | README com seção "Entregas GitHub vs Entregas Teams" | ✅ | `README.md` cabeçalho — 2 tabelas separadas |
-| 3 | Número de migrations padronizado: **18** | ✅ | 18 arquivos `.sql` em `supabase/migrations/` |
+| 3 | Número de migrations padronizado: **19** | ✅ | 19 arquivos `.sql` em `db/migrations/` (18 originais + `019_auth_local`, migração para PostgreSQL padrão em 17/09/2026) |
 | 4 | Narrativa sintético vs real reescrita | ✅ | Relatório PDF Seção 3 reescrita: "validar pipeline / produção usa Ford BR real" |
 | 5 | Próximos passos corrigidos (sem "coletar dados reais") | ✅ | Trocado por "coletar dados adicionais de loja-piloto + tracking de conversão pós-ação" |
 | 6 | 4 visões TOGAF no .archimate | ✅ | `view-strategic` · `view-business` · `view-app` · `view-tech` |
 | 7 | Notebook ML executa do início ao fim | ✅ | Rodado via `nbconvert` simulado — acc 60% · F1 macro 0.55 · estratégias por perfil OK |
 | 8 | Smoke test local: API + ML rodando | ✅ | `pnpm dev:api` → `/health` OK · `python -m uvicorn` → `/health` model_loaded=true |
 | 9 | Swagger UI disponível em `/docs` | ✅ | HTTP 200 · **46 rotas REST** documentadas |
-| 10 | 18 migrations aplicadas sem erro | ✅ | `apply-migrations-via-api.mjs` → "todas aplicadas" |
+| 10 | 20 migrations aplicadas sem erro | ✅ | `pnpm db:migrate` → "banco atualizado" · `pnpm db:migrate:status` lista 20 aplicadas |
 
 ---
 
@@ -47,10 +47,10 @@ A challenge tem **5 disciplinas**. A nota é a média das entregas, e TODAS as d
 | **Métodos HTTP corretos** | 10% | ✅ | GET (consulta) · POST (criação) · PATCH (atualização) · DELETE — todas as rotas |
 | **Desenho de arquitetura** | 10% | ✅ | `docs/deliverables/FaroAI_Architecture.archimate` (4 visões TOGAF) |
 | **Organização SOA modular** | 10% | ✅ | `apps/api/src/routes/*.ts` + `lib/*.ts` + `modules/*.ts` |
-| **Separação apresentação/serviço/dados** | 10% | ✅ | `apps/web` (apresent.) · `apps/api` (serviço) · `supabase` (dados) |
+| **Separação apresentação/serviço/dados** | 10% | ✅ | `apps/web` (apresent.) · `apps/api` (serviço) · PostgreSQL + `db/migrations` (dados) |
 | **Padrões REST/JSON/OpenAPI** | 8% | ✅ | OpenAPI 3 gerado automaticamente |
 | **Tratamento de erros** | 7% | ✅ | Try/catch + Zod errors + Fastify error handler |
-| **Configuração BD + Migrations** | 15% | ✅ | `supabase/migrations/` — 18 migrations versionadas |
+| **Configuração BD + Migrations** | 15% | ✅ | `db/migrations/` — 20 migrations versionadas, runner `scripts/db-migrate.mjs` (`schema_migrations`) |
 
 **Onde provar**: rode `pnpm dev:api` e acesse `http://localhost:3333/docs` — Swagger UI lista todos os endpoints, com schemas, exemplos e validação Zod.
 
@@ -112,17 +112,17 @@ A challenge tem **5 disciplinas**. A nota é a média das entregas, e TODAS as d
 | Eixo | Pontos | Item | Status | Implementação |
 |---|---|---|---|---|
 | **1. Validação & sanitização** | 20 | Validação de entradas (Zod) | ✅ | Todas rotas usam `fastify-type-provider-zod` |
-| | | SQL Injection prevention | ✅ | Sem SQL raw — supabase-js + migrations versionadas |
+| | | SQL Injection prevention | ✅ | Driver `postgres` com tagged template (parâmetros bindados) + migrations versionadas |
 | | | XSS / Command injection | ✅ | React escapa output automaticamente |
 | | | Limite tamanho/formato | ✅ | `@fastify/rate-limit` 120 req/min + multipart 30MB |
 | | | Erros seguros (sem stack trace) | ✅ | Error handler customizado em produção |
-| **2. Autenticação & autorização** | 20 | JWT/OAuth2 | ✅ | Supabase Auth com JWT assinado + expiração |
-| | | RBAC | ✅ | Roles `analista` · `gestor` · `admin` (Postgres enum) |
-| **3. Proteção de APIs** | 20 | HTTPS/TLS 1.2+ | ✅ | Supabase managed (TLS 1.3) |
+| **2. Autenticação & autorização** | 20 | JWT/OAuth2 | ✅ | JWT HS256 próprio (`jose`) + bcrypt cost 12, expiração 12h, `/auth/login` e `/auth/register` |
+| | | RBAC | ✅ | Roles `analista` · `gestor` · `admin` (Postgres enum) + isolamento por dealership na API (`lib/scope.ts`) |
+| **3. Proteção de APIs** | 20 | HTTPS/TLS 1.2+ | ✅ app · ⏳ infra | Saídas (RapidAPI, LLMs) HTTPS-only; TLS de entrada via reverse proxy (Caddy/Nginx) no deploy — config em `SECURITY.md` |
 | | | Rate limiting | ✅ | `@fastify/rate-limit` por user.id ou IP |
 | | | CORS allowlist | ✅ | `@fastify/cors` com origins explícitas |
 | | | Assinatura de payloads | ✅ | HMAC-SHA256 via `X-Payload-Signature` no ML |
-| **4. Dados & privacidade** | 25 | Criptografia at rest | ✅ | Supabase (AES-256 por padrão) |
+| **4. Dados & privacidade** | 25 | Criptografia at rest | ✅ | CPF e VIN só como hash; senhas bcrypt; disco cifrado é pendência de infra |
 | | | Política de retenção | ✅ | `data_source` + anonimização via VIN_Hash |
 | | | Anonimização para ML | ✅ | `dealership_id` pseudonimizado via HMAC antes de ir pro ML |
 | | | Proteção contra exposição | ✅ | Logs sem PII + endpoints todos autenticados |
@@ -200,11 +200,11 @@ services/ml/notebooks/
 
 ## 🔐 Acesso ao sistema (demo)
 
-- **Web**: `http://localhost:3000` (rode `pnpm dev:web`)
+- **Web**: `http://localhost:3000` (rode `pnpm --filter @ford/web dev`)
 - **API**: `http://localhost:3333` (rode `pnpm dev:api`)
 - **Swagger**: `http://localhost:3333/docs`
 - **Mobile**: `pnpm dev:mobile` → escaneie QR code no Expo Go
-- **Login admin**: `admin@faroai.com.br` · senha `Ford2026!`
+- **Login admin**: `admin@faroai.com.br` · senha `Ford2026!` (criado por `pnpm db:seed:admin`)
 
 ---
 
@@ -214,10 +214,10 @@ services/ml/notebooks/
 |---|---|
 | Zero menções a "3am IT" / "Genova" em arquivos relevantes | ✅ |
 | Branding **Faro AI** consistente (sidebar, página de login, README) | ✅ |
-| Admin `admin@faroai.com.br` criado no Supabase | ✅ |
+| Admin `admin@faroai.com.br` criado via `pnpm db:seed:admin` (bcrypt em `profiles.password_hash`) | ✅ |
 | Mobile typecheck (warnings pré-existentes, sem bloqueios) | ✅ |
 | API rotas: 30+ endpoints REST documentados em Swagger | ✅ |
-| Banco: 18 migrations versionadas + RLS habilitada | ✅ |
+| Banco: PostgreSQL padrão, 20 migrations versionadas, isolamento por dealership na API | ✅ |
 | 175.554 VINs Ford BR importados | ✅ |
 | Schema canônico Ford D1 (262 atributos × 14 seções) populado | ✅ |
 | Modelo XGBoost real treinado (acc 62.7%, F1 0.60) | ✅ |

@@ -36,7 +36,7 @@ ax.set_aspect("equal")
 ax.axis("off")
 
 # Título
-ax.text(50, 68, "FordIQ — Arquitetura do Sistema",
+ax.text(50, 68, "FaroAI — Arquitetura do Sistema",
         ha="center", va="center", fontsize=18, weight="bold", color=BLUE)
 ax.text(50, 65.5, "Inteligência Competitiva + Retenção VIN Share · Ford × FIAP 2026",
         ha="center", va="center", fontsize=10, color=GREY, style="italic")
@@ -134,11 +134,11 @@ box(33, 25, 27, 4, "ML Service (FastAPI)", "#7B1FA2", "#7B1FA2", fsize=9,
 # ===== LAYER 4: DADOS =====
 layer(64, 24, 34, 12, BG_DATA, "CAMADA DE DADOS", ORANGE)
 
-box(66, 30, 30, 4.5, "Supabase Postgres", ORANGE, ORANGE, fsize=10,
-    subtitle="RLS por dealership · JSONB specs")
+box(66, 30, 30, 4.5, "PostgreSQL", ORANGE, ORANGE, fsize=10,
+    subtitle="isolamento por dealership · JSONB specs")
 box(66, 25, 14, 4, "audit_log", "#F57C00", "#F57C00", fsize=9,
     subtitle="trilha de auditoria")
-box(82, 25, 14, 4, "ai_keys (RLS)", "#F57C00", "#F57C00", fsize=9,
+box(82, 25, 14, 4, "ai_keys (admin)", "#F57C00", "#F57C00", fsize=9,
     subtitle="cripto + admin-only")
 
 # ===== LAYER 5: FONTES EXTERNAS =====
@@ -162,8 +162,8 @@ box(29, 9, 22, 4.5, "Anthropic Claude", "#37474F", "#37474F", fsize=9,
     subtitle="Sonnet 4.6 · PDF nativo")
 box(53, 9, 22, 4.5, "Google Gemini", "#37474F", "#37474F", fsize=9,
     subtitle="Flash · texto")
-box(77, 9, 20, 4.5, "Supabase Auth", "#37474F", "#37474F", fsize=9,
-    subtitle="JWT · OAuth2")
+box(77, 9, 20, 4.5, "Auth própria (API)", "#37474F", "#37474F", fsize=9,
+    subtitle="JWT HS256 · bcrypt")
 
 # Cybersec tag
 box(5, 5, 92, 2.5, "[Cybersec] HTTPS/TLS 1.2+ · HMAC-SHA256 (API <-> ML) · Pseudonimização de PII · Body integrity check",
@@ -178,7 +178,7 @@ arrow(63, 55, 63, 51, "#5C6BC0", "OpenAPI\nspec")
 # Modulos → Aggregator/ML/Data
 arrow(13, 40, 13, 35, GREEN, "service\ncall")
 arrow(35, 40, 47, 30, GREEN, "predict()", curve=-0.1)
-arrow(57, 40, 70, 35, GREEN, "RLS query", curve=0.1)
+arrow(57, 40, 70, 35, GREEN, "query filtrada", curve=0.1)
 
 # Aggregator → Fontes externas
 arrow(10, 30, 12, 21, PURPLE, "REST")
@@ -198,7 +198,7 @@ arrow(45, 25, 40, 14, "#7B1FA2", curve=0.1)
 # Aggregator → Postgres
 arrow(45, 30, 75, 32, PURPLE, "JSONB\nupsert", curve=0.15)
 
-# Auth → Supabase Auth
+# Auth → Auth própria (JWT validado na API)
 arrow(11, 46, 86, 14, GREEN, "JWT validate", curve=0.4)
 
 # Legenda
@@ -207,8 +207,8 @@ ax.text(2, 1.5, "REST/JSON sobre HTTPS  ·  setas indicam dependência (caller �
 
 plt.tight_layout()
 
-png_path = OUT / "FordIQ_Architecture_Diagram.png"
-pdf_path = OUT / "FordIQ_Architecture_Diagram.pdf"
+png_path = OUT / "FaroAI_Architecture_Diagram.png"
+pdf_path = OUT / "FaroAI_Architecture_Diagram.pdf"
 plt.savefig(png_path, dpi=180, bbox_inches="tight", facecolor="white")
 plt.savefig(pdf_path, bbox_inches="tight", facecolor="white")
 plt.close()

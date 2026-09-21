@@ -50,7 +50,6 @@ returns table (
 )
 language sql
 stable
-security definer
 set search_path = public, pg_temp
 as $$
   with base as (
@@ -122,6 +121,3 @@ $$;
 
 comment on function public.leads_ranqueados is
   'Lead ranking com risco composto = perfil_real + sinais (revisão atrasada, garantia, dealer loyalty, idade). Usado em /clients/leads.';
-
-grant execute on function public.leads_ranqueados(numeric, text, text, integer, text, integer) to authenticated;
-grant execute on function public.leads_ranqueados(numeric, text, text, integer, text, integer) to service_role;

@@ -2,7 +2,7 @@
 // Após criar, navega direto pro detalhe com a predição.
 import { useRouter, Stack } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type KeyboardTypeOptions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../lib/api';
@@ -108,7 +108,7 @@ function Section({ title, children }: { title: string; children: any }) {
 function Row({ children }: { children: any }) {
   return <View style={{ flexDirection: 'row', gap: spacing.md }}>{children}</View>;
 }
-function Field({ label, value, onChange, keyboardType }: any) {
+function Field({ label, value, onChange, keyboardType }: { label: string; value: string; onChange: (v: string) => void; keyboardType?: KeyboardTypeOptions }) {
   return (
     <View style={{ flex: 1, marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>
@@ -116,7 +116,7 @@ function Field({ label, value, onChange, keyboardType }: any) {
     </View>
   );
 }
-function Picker({ label, value, options, onChange }: any) {
+function Picker({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
   return (
     <View style={{ flex: 1, marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>
@@ -134,7 +134,7 @@ function Picker({ label, value, options, onChange }: any) {
     </View>
   );
 }
-function Toggle({ label, value, onChange }: any) {
+function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
     <Pressable onPress={() => onChange(!value)} style={{ flex: 1, marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>

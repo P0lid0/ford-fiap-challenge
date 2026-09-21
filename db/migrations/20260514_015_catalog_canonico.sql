@@ -29,7 +29,7 @@ exception when duplicate_object then null; end $$;
 -- Schema canônico. Read-mostly: populado uma vez via script,
 -- raramente alterado.
 create table if not exists public.catalog_items (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   secao text not null,            -- "Wheels", "Connectivity", "Safety"...
   ordem smallint not null,        -- ordem dentro da seção (1, 2, 3...)
   ordem_global smallint not null, -- ordem global no schema (1..262)
@@ -67,21 +67,9 @@ create index if not exists vehicle_catalog_values_vehicle_idx
 create index if not exists vehicle_catalog_values_item_idx
   on public.vehicle_catalog_values(item_id);
 
--- ============== RLS ==============
-alter table public.catalog_items enable row level security;
-alter table public.vehicle_catalog_values enable row level security;
-
--- Leitura livre pra usuários autenticados (catálogo público).
-drop policy if exists catalog_items_read on public.catalog_items;
-create policy catalog_items_read on public.catalog_items
-  for select to authenticated using (true);
-
-drop policy if exists vehicle_catalog_values_read on public.vehicle_catalog_values;
-create policy vehicle_catalog_values_read on public.vehicle_catalog_values
-  for select to authenticated using (true);
-
--- Escrita: só via service_role (scripts ETL e API server-side).
--- Sem policies de INSERT/UPDATE/DELETE pra authenticated → bloqueado por padrão.
+-- ============== Acesso ==============
+-- Leitura livre pra qualquer usuário autenticado na API (catálogo público).
+-- Escrita: só scripts ETL e rotas admin da API (requireRole).
 
 -- ============== Comentários ==============
 comment on table public.catalog_items is

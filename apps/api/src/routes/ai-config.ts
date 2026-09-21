@@ -1,11 +1,12 @@
 /**
  * Gerenciamento de chaves de API e modelos por função.
- * Admin only — usa service_role no backend pra ler/escrever.
+ * Admin only — a API acessa o banco diretamente (sem RLS); o papel é checado
+ * no handler.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireUser } from '../plugins/auth.js';
-import { adminClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
 import { AVAILABLE_MODELS, clearKeyCache, getApiKey, type Provider } from '../lib/ai.js';
 
 const PROVIDERS = [
@@ -32,12 +33,14 @@ export async function aiConfigRoutes(app: FastifyInstance) {
       let k = '';
       let fromEnv = false;
       if (p in nonAiEnvMap) {
-        const { adminClient } = await import('../lib/supabase.js');
         const envTok = process.env[nonAiEnvMap[p]!] || '';
         if (envTok) { k = envTok; fromEnv = true; }
         else {
-          const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', p).maybeSingle();
-          k = data?.api_key ?? '';
+          // provider é PK → no máximo 1 linha (equivale ao antigo maybeSingle).
+          const [row] = await sql<{ api_key: string }[]>`
+            select api_key from public.ai_keys where provider = ${p}
+          `;
+          k = row?.api_key ?? '';
         }
       } else {
         k = await getApiKey(p as 'openai' | 'anthropic' | 'gemini');
@@ -67,10 +70,19 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     if (u.role !== 'admin') { reply.code(403); return { error: 'forbidden' }; }
     const { provider } = req.params as any;
     const { api_key } = req.body as any;
-    const { error } = await adminClient().from('ai_keys').upsert({
-      provider, api_key, updated_by: u.id, updated_at: new Date().toISOString(),
-    });
-    if (error) { reply.code(400); return { error: error.message }; }
+    // Upsert pela PK (provider): atualiza todas as colunas do payload exceto a de conflito.
+    const row = { provider, api_key, updated_by: u.id, updated_at: new Date().toISOString() };
+    try {
+      await sql`
+        insert into public.ai_keys ${sql(row)}
+        on conflict (provider) do update set
+          api_key = excluded.api_key,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at
+      `;
+    } catch (err) {
+      reply.code(400); return { error: (err as Error).message };
+    }
     clearKeyCache();
     if (provider === 'fipe') {
       const { clearFipeTokenCache } = await import('../lib/data-sources/fipe.js');
@@ -94,7 +106,7 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     if (u.role !== 'admin') { reply.code(403); return { error: 'forbidden' }; }
     const { provider } = req.params as any;
-    await adminClient().from('ai_keys').delete().eq('provider', provider);
+    await sql`delete from public.ai_keys where provider = ${provider}`;
     clearKeyCache();
     if (provider === 'fipe') {
       const { clearFipeTokenCache } = await import('../lib/data-sources/fipe.js');
@@ -117,9 +129,10 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     schema: { tags: ['Admin · IA'], summary: 'Modelos preferidos por função (deste usuário)' },
   }, async (req) => {
     const u = requireUser(req);
-    const { data } = await adminClient()
-      .from('ai_function_models').select('function_name, model_id').eq('user_id', u.id);
-    return data ?? [];
+    const rows = await sql<{ function_name: string; model_id: string }[]>`
+      select function_name, model_id from public.ai_function_models where user_id = ${u.id}
+    `;
+    return rows;
   });
 
   // === PUT preferência de modelo de uma função ===
@@ -137,10 +150,18 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { fn } = req.params as any;
     const { model_id } = req.body as any;
-    const { error } = await adminClient().from('ai_function_models').upsert({
-      user_id: u.id, function_name: fn, model_id, updated_at: new Date().toISOString(),
-    });
-    if (error) { reply.code(400); return { error: error.message }; }
+    // Upsert pela PK (user_id, function_name).
+    const row = { user_id: u.id, function_name: fn, model_id, updated_at: new Date().toISOString() };
+    try {
+      await sql`
+        insert into public.ai_function_models ${sql(row)}
+        on conflict (user_id, function_name) do update set
+          model_id = excluded.model_id,
+          updated_at = excluded.updated_at
+      `;
+    } catch (err) {
+      reply.code(400); return { error: (err as Error).message };
+    }
     return { ok: true, function_name: fn, model_id };
   });
 
@@ -153,7 +174,10 @@ export async function aiConfigRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const { fn } = req.params as any;
-    await adminClient().from('ai_function_models').delete().eq('user_id', u.id).eq('function_name', fn);
+    await sql`
+      delete from public.ai_function_models
+      where user_id = ${u.id} and function_name = ${fn}
+    `;
     reply.code(204);
   });
 }
