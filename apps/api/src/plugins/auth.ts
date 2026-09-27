@@ -1,89 +1,152 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { env } from '../config.js';
-import { publicClient } from '../lib/supabase.js';
+import { isIssuedByThisApi, verifyAccessToken, TokenError, type TokenErrorCode, type UserRole } from '../lib/jwt.js';
+import { findUserBySupabaseToken, findUserProfile } from '../lib/identity.js';
+import { forbidden, unauthorized } from '../lib/api-error.js';
 
-type AuthUser = {
+/**
+ * De onde veio o token que autenticou a requisição:
+ *  - 'api'      → JWT emitido por POST /auth/login (validado localmente)
+ *  - 'supabase' → token legado do Supabase (web/mobile), validado no Supabase
+ */
+export type AuthSource = 'api' | 'supabase';
+
+export type AuthUser = {
   id: string;
   email: string;
-  role: 'analista' | 'gestor' | 'admin';
+  role: UserRole;
   dealership_id: string | null;
   jwt: string;
+  authSource: AuthSource;
 };
 
 declare module 'fastify' {
   interface FastifyRequest {
     user?: AuthUser;
+    /** Motivo da rejeição do token (ex.: expirado) — usado na mensagem do 401. */
+    authError?: TokenErrorCode;
+  }
+  interface FastifyContextConfig {
+    /** `true` = rota acessível sem token. Padrão: protegida. */
+    public?: boolean;
   }
 }
 
+function extractBearerToken(req: FastifyRequest): string | null {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return null;
+  const token = header.slice(7).trim();
+  return token || null;
+}
+
+/** Token da própria API: assinatura, expiração e claims conferidas localmente. */
+async function authenticateApiToken(req: FastifyRequest, token: string): Promise<void> {
+  try {
+    const subject = await verifyAccessToken(token);
+    req.user = {
+      id: subject.id,
+      email: subject.email,
+      role: subject.role,               // vem da claim — sem consulta ao banco
+      dealership_id: subject.dealershipId,
+      jwt: token,
+      authSource: 'api',
+    };
+  } catch (err) {
+    if (err instanceof TokenError) {
+      req.authError = err.code;
+      req.log.info({ reason: err.code }, '[auth] api token rejected');
+      return;
+    }
+    throw err;
+  }
+}
+
+/** Token legado do Supabase: mantido para não quebrar web/mobile. */
+async function authenticateSupabaseToken(req: FastifyRequest, token: string): Promise<void> {
+  try {
+    const identity = await findUserBySupabaseToken(token);
+    if (!identity) {
+      req.authError = 'invalid_token';
+      req.log.info('[auth] supabase token rejected');
+      return;
+    }
+    const profile = await findUserProfile(identity.id);
+    req.user = {
+      id: identity.id,
+      email: identity.email,
+      role: profile.role,
+      dealership_id: profile.dealershipId,
+      jwt: token,
+      authSource: 'supabase',
+    };
+  } catch (err) {
+    req.log.warn({ err: String(err) }, '[auth] failed to validate supabase token');
+  }
+}
+
+/** Rotas que dispensam token: marcadas com `config.public`, Swagger UI, preflight CORS e 404. */
+function isPublicRequest(req: FastifyRequest): boolean {
+  if (req.method === 'OPTIONS') return true;
+  if (req.is404) return true;
+  if (req.routeOptions.config?.public === true) return true;
+  return req.routeOptions.url?.startsWith('/docs') ?? false;
+}
+
 /**
- * Hook que valida o JWT do Supabase e popula `request.user`.
- * Em rotas que precisam de auth, importe `requireUser(req)` no handler.
+ * Autenticação SEGURA POR PADRÃO:
+ *  1. Identifica o usuário pelo header `Authorization: Bearer <token>`.
+ *  2. Toda rota exige token válido (401), exceto as marcadas com `config: { public: true }`.
  *
- * Por que helpers e não `req.requireUser()`?
- * Fastify v5 mudou o binding de `this` em decorateRequest — funções dependentes
- * de `this` não são confiáveis. Helpers puros são mais simples e tipados.
+ * Roda em `onRequest` — antes do parse/validação do corpo — então uma requisição
+ * sem credencial recebe 401 sem que o servidor processe o payload.
+ * Restrições por perfil ficam em cada rota via `authorize(...)`.
  */
 // fp() marca o plugin como global (não encapsulado) — sem isso, o hook
 // só rodaria nas rotas registradas dentro deste plugin.
 export const authPlugin = fp(async function authPluginImpl(app: FastifyInstance) {
-  app.addHook('preHandler', async (req) => {
-    const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) return;
-    const jwt = header.slice(7).trim();
-    if (!jwt) return;
-
-    try {
-      req.log.info('[auth] validating jwt');
-      // Valida o JWT chamando direto /auth/v1/user (mais confiável que SDK).
-      const ures = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-        headers: { apikey: env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${jwt}` },
-      });
-      req.log.info({ status: ures.status }, '[auth] supabase response');
-      if (!ures.ok) {
-        const body = await ures.text();
-        req.log.warn({ status: ures.status, body: body.slice(0, 200) }, '[auth] /auth/v1/user rejected token');
-        return;
+  app.addHook('onRequest', async (req) => {
+    const token = extractBearerToken(req);
+    if (token) {
+      if (isIssuedByThisApi(token)) {
+        await authenticateApiToken(req, token);
+      } else {
+        await authenticateSupabaseToken(req, token);
       }
-      const user = await ures.json() as { id: string; email?: string };
-      req.log.info({ uid: user.id }, '[auth] jwt validated');
-
-      const client = publicClient(jwt);
-      const { data: profile } = await client
-        .from('profiles')
-        .select('role, dealership_id')
-        .eq('id', user.id)
-        .single();
-
-      req.user = {
-        id: user.id,
-        email: user.email ?? '',
-        role: (profile?.role as AuthUser['role']) ?? 'analista',
-        dealership_id: profile?.dealership_id ?? null,
-        jwt,
-      };
-    } catch (err) {
-      req.log?.warn({ err: String(err) }, '[auth] failed to validate JWT');
     }
+
+    if (!isPublicRequest(req)) requireUser(req);
   });
 });
 
+/** Retorna o usuário autenticado ou lança 401. */
 export function requireUser(req: FastifyRequest): AuthUser {
   if (!req.user) {
-    const err = new Error('unauthorized') as Error & { statusCode?: number };
-    err.statusCode = 401;
-    throw err;
+    if (req.authError === 'token_expired') throw unauthorized('token expirado', 'token_expired');
+    if (req.authError === 'invalid_token') throw unauthorized('token inválido', 'invalid_token');
+    throw unauthorized();
   }
   return req.user;
 }
 
-export function requireRole(req: FastifyRequest, role: AuthUser['role']): AuthUser {
-  const u = requireUser(req);
-  if (u.role !== role && u.role !== 'admin') {
-    const err = new Error('forbidden') as Error & { statusCode?: number };
-    err.statusCode = 403;
-    throw err;
+/**
+ * Hook de autorização por perfil. Uso na rota:
+ *   { onRequest: [authorize('gestor', 'admin')] }
+ * 401 se não autenticado · 403 se o perfil não está na lista.
+ */
+export function authorize(...allowedRoles: UserRole[]) {
+  async function authorizeHook(req: FastifyRequest): Promise<void> {
+    const user = requireUser(req);
+    if (!allowedRoles.includes(user.role)) {
+      req.log.info({ uid: user.id, role: user.role, allowedRoles }, '[auth] forbidden');
+      throw forbidden(`perfil '${user.role}' não tem acesso a este recurso`);
+    }
   }
-  return u;
+  // Metadado lido pela documentação OpenAPI (plugins/openapi.ts) para listar os perfis da rota.
+  return Object.assign(authorizeHook, { allowedRoles });
+}
+
+/** Perfis exigidos por um hook criado com `authorize(...)`, ou `null` se não for um. */
+export function allowedRolesOf(hook: unknown): UserRole[] | null {
+  const roles = (hook as { allowedRoles?: unknown } | null)?.allowedRoles;
+  return Array.isArray(roles) ? (roles as UserRole[]) : null;
 }

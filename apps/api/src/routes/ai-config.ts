@@ -1,10 +1,15 @@
 /**
  * Gerenciamento de chaves de API e modelos por função.
- * Admin only — usa service_role no backend pra ler/escrever.
+ *
+ * Autorização:
+ *   - /admin/ai-keys/**           → só perfil admin (segredos do sistema)
+ *   - /admin/ai-models            → qualquer usuário autenticado (catálogo)
+ *   - /admin/ai-function-models/** → qualquer usuário autenticado
+ *                                   (preferência do PRÓPRIO usuário, filtrada por user_id)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireUser } from '../plugins/auth.js';
+import { authorize, requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 import { AVAILABLE_MODELS, clearKeyCache, getApiKey, type Provider } from '../lib/ai.js';
 
@@ -17,10 +22,9 @@ const PROVIDERS = [
 export async function aiConfigRoutes(app: FastifyInstance) {
   // === Status das chaves (não retorna os valores!) ===
   app.get('/admin/ai-keys', {
-    schema: { tags: ['Admin · IA'], summary: 'Status de cada provedor (configurado?)' },
-  }, async (req) => {
-    const u = requireUser(req);
-    if (u.role !== 'admin') { (req as any).reply.code(403); return { error: 'forbidden' }; }
+    onRequest: [authorize('admin')],
+    schema: { tags: ['Admin · IA'], summary: 'Status de cada provedor (configurado?) — admin' },
+  }, async () => {
 
     const status: Record<string, { configured: boolean; source: 'env' | 'db' | 'none'; preview?: string }> = {};
     // Providers "não-IA" (FIPE, 411) usam env var dedicada + lookup direto no DB.
@@ -56,21 +60,21 @@ export async function aiConfigRoutes(app: FastifyInstance) {
 
   // === Definir/atualizar chave de um provedor ===
   app.put('/admin/ai-keys/:provider', {
+    onRequest: [authorize('admin')],
     schema: {
       tags: ['Admin · IA'],
-      summary: 'Define ou atualiza a chave de API de um provedor',
+      summary: 'Define ou atualiza a chave de API de um provedor — admin',
       params: z.object({ provider: z.enum(PROVIDERS) }),
       body: z.object({ api_key: z.string().min(10) }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
-    if (u.role !== 'admin') { reply.code(403); return { error: 'forbidden' }; }
     const { provider } = req.params as any;
     const { api_key } = req.body as any;
     const { error } = await adminClient().from('ai_keys').upsert({
       provider, api_key, updated_by: u.id, updated_at: new Date().toISOString(),
     });
-    if (error) { reply.code(400); return { error: error.message }; }
+    if (error) throw error; // falha de banco → 500 (detalhe só no log)
     clearKeyCache();
     if (provider === 'fipe') {
       const { clearFipeTokenCache } = await import('../lib/data-sources/fipe.js');
@@ -85,14 +89,13 @@ export async function aiConfigRoutes(app: FastifyInstance) {
 
   // === Remover chave ===
   app.delete('/admin/ai-keys/:provider', {
+    onRequest: [authorize('admin')],
     schema: {
       tags: ['Admin · IA'],
-      summary: 'Remove a chave armazenada no DB (env continua se houver)',
+      summary: 'Remove a chave armazenada no DB (env continua se houver) — admin',
       params: z.object({ provider: z.enum(PROVIDERS) }),
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
-    if (u.role !== 'admin') { reply.code(403); return { error: 'forbidden' }; }
     const { provider } = req.params as any;
     await adminClient().from('ai_keys').delete().eq('provider', provider);
     clearKeyCache();
@@ -104,7 +107,7 @@ export async function aiConfigRoutes(app: FastifyInstance) {
       const { clear411TokenCache } = await import('../lib/data-sources/vehicle-411.js');
       clear411TokenCache();
     }
-    reply.code(204);
+    return reply.code(204).send();
   });
 
   // === Lista de modelos disponíveis ===
@@ -133,14 +136,14 @@ export async function aiConfigRoutes(app: FastifyInstance) {
       ]) }),
       body: z.object({ model_id: z.string().min(3) }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { fn } = req.params as any;
     const { model_id } = req.body as any;
     const { error } = await adminClient().from('ai_function_models').upsert({
       user_id: u.id, function_name: fn, model_id, updated_at: new Date().toISOString(),
     });
-    if (error) { reply.code(400); return { error: error.message }; }
+    if (error) throw error; // falha de banco → 500 (detalhe só no log)
     return { ok: true, function_name: fn, model_id };
   });
 
@@ -154,6 +157,6 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { fn } = req.params as any;
     await adminClient().from('ai_function_models').delete().eq('user_id', u.id).eq('function_name', fn);
-    reply.code(204);
+    return reply.code(204).send();
   });
 }

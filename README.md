@@ -1,12 +1,57 @@
 # Ford × FIAP Challenge 2026 — Faro AI
 
-> **Equipe Faro AI** · **Entrega:** 24/05/2026 · **Scrum Master:** Prof. Yan Coelho
+> **Equipe Faro AI** · **Scrum Master:** Prof. Yan Coelho
 >
 > Guilherme (RM 554962) · Pedro (RM 555556) · Fabrício (RM 558216) · Vitor (RM 554893) · Matheus (RM 555447)
 
 Plataforma única que resolve os **dois desafios da Ford**:
 - **Desafio 1 — Inteligência Competitiva:** schema canônico de 262 atributos × 14 seções (template oficial Ford), comparação 2-5 veículos lado a lado, busca FIPE + IA com web search.
 - **Desafio 2 — VIN Share / Retenção:** classificador XGBoost treinado em **175.554 VINs reais Ford BR**, leads priorizados via risco composto, ação real via Resend, visão 360 do cliente.
+
+---
+
+## 🧩 Sprint 3 — Arquitetura Orientada a Serviços e Web Services
+
+A API REST (`apps/api`) foi evoluída para atender os critérios da Sprint 3:
+
+| Critério | Peso | O que foi entregue | Onde ver |
+|---|---|---|---|
+| Arquitetura da solução | 20% | Diagramas de componentes, camadas, caminho da requisição e sequências de login e autorização | [`docs/ARQUITETURA_SOA.md`](docs/ARQUITETURA_SOA.md) · imagens em [`docs/arquitetura/`](docs/arquitetura/) |
+| Autenticação e autorização | 20% | API segura por padrão (só `/health` e `/auth/login` são públicas) · perfis `analista`, `gestor`, `admin` · escopo por concessionária | `apps/api/src/plugins/auth.ts` · `apps/api/src/lib/data-access.ts` |
+| JWT | 15% | Token HS256 **emitido pela própria API** em `POST /auth/login`, validado localmente (assinatura, emissor, audiência, expiração de 1 h) | `apps/api/src/lib/jwt.ts` · `apps/api/src/routes/auth.ts` |
+| Maturidade REST nível 2 | 20% | Recursos por URI, verbos HTTP e status codes coerentes (200/201/204/400/401/403/404/409/415/422/429/5xx) | [Arquitetura §5](docs/ARQUITETURA_SOA.md#5-api-rest--maturidade-nível-2) · Swagger |
+| Testes automatizados | 15% | 95 testes: sucesso, erro e acesso não autorizado — com relatório JUnit e cobertura | `apps/api/test/` · [`docs/evidencias/TESTES.md`](docs/evidencias/TESTES.md) |
+| Documentação e erros | 10% | Swagger com acesso e erros de cada rota · erros no padrão Problem Details (RFC 7807) | `http://localhost:3333/docs` · `apps/api/src/plugins/error-handler.ts` |
+
+### Rodando a API e testando a autenticação
+
+```bash
+pnpm install                     # na raiz do repositório
+pnpm dev:api                     # API em http://localhost:3333 · Swagger em http://localhost:3333/docs
+```
+
+1. No Swagger, abra `POST /auth/login` → **Try it out** → informe e-mail e senha (ver [Login demo](#7-login-demo)).
+2. Copie o `access_token` da resposta e clique em **Authorize** (cadeado no topo).
+3. As rotas protegidas passam a responder; sem o token elas devolvem `401`.
+
+Pelo terminal:
+
+```bash
+curl -X POST http://localhost:3333/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@faroai.com.br","password":"Ford2026!"}'
+
+curl http://localhost:3333/me -H "Authorization: Bearer <access_token>"
+```
+
+### Rodando os testes
+
+Não precisam de Supabase, chaves nem internet — as dependências externas são simuladas.
+
+```bash
+pnpm --filter @ford/api test             # 95 testes
+pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-results/ (junit.xml e coverage/index.html)
+```
 
 ---
 
@@ -54,7 +99,7 @@ Plataforma única que resolve os **dois desafios da Ford**:
 │  apps/mobile — React Native + Expo Router        │
 │  Login · Tabs · Cliente [id] · Compare           │
 └──────────────────┬───────────────────────────────┘
-                   │ HTTPS + JWT (Supabase Auth)
+                   │ HTTPS + JWT (emitido pela API) 
 ┌──────────────────▼───────────────────────────────┐
 │  apps/api — Node.js + Fastify + TypeScript + Zod │
 │  30+ rotas REST · Swagger UI em /docs            │
@@ -126,7 +171,8 @@ Preencha `.env.local` com:
 - `SUPABASE_URL` — URL do projeto Supabase
 - `SUPABASE_ANON_KEY` — anon JWT
 - `SUPABASE_SERVICE_ROLE_KEY` — service_role JWT
-- `SUPABASE_JWT_SECRET` — para validar JWT no backend
+- `SUPABASE_JWT_SECRET` — (legado) segredo JWT do projeto Supabase
+- `JWT_SECRET` — segredo (32+ caracteres) para a API assinar os próprios tokens. **Obrigatório em produção**; em desenvolvimento há um valor padrão
 - `SUPABASE_DB_PASSWORD` (opcional) — para `pnpm db:migrate`
 - `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback rule-based
 
@@ -216,7 +262,7 @@ Documento completo em **[`docs/SECURITY.md`](docs/SECURITY.md)**. Cobre os 5 eix
 | Eixo | Pontos | Status |
 |---|---|---|
 | 1. Validação & Sanitização | 20 | ✅ Zod em todas rotas · sem SQL raw · rate-limit · multipart 30MB |
-| 2. Autenticação & RBAC | 20 | ✅ JWT Supabase · 3 roles · RLS Postgres |
+| 2. Autenticação & RBAC | 20 | ✅ JWT próprio (HS256) · 3 roles · escopo por concessionária na API + RLS Postgres |
 | 3. Proteção de APIs | 20 | ✅ TLS 1.3 · CORS allowlist · HMAC payloads |
 | 4. Dados & Privacidade | 25 | ✅ AES-256 at rest · VIN_Hash · LGPD-ready |
 | 5. Monitoramento & Auditoria | 15 | ✅ audit_log estruturado · email_logs · sem stack trace |
@@ -225,12 +271,13 @@ Documento completo em **[`docs/SECURITY.md`](docs/SECURITY.md)**. Cobre os 5 eix
 
 ## 📊 Endpoints principais (Disciplina 1)
 
-Swagger UI completo: **http://localhost:3333/docs**
+Swagger UI completo: **http://localhost:3333/docs** — cada rota mostra quem pode acessá-la e os erros possíveis. Arquitetura e fluxos em [`docs/ARQUITETURA_SOA.md`](docs/ARQUITETURA_SOA.md).
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/health` | Liveness |
-| GET | `/me` | Perfil + role + dealership autenticado |
+| GET | `/health` | Liveness (público) |
+| POST | `/auth/login` | Autentica e devolve o JWT da API (público) |
+| GET | `/me` | Perfil + role + dealership autenticado (claims do token) |
 | GET | `/competitive/vehicles` | Lista veículos |
 | GET | `/competitive/lookup?marca=&modelo=&fields=…` | Lookup com seleção dinâmica de campos |
 | POST | `/competitive/compare` | Comparação 2-5 veículos |
