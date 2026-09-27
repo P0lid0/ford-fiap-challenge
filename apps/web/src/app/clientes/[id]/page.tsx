@@ -875,9 +875,6 @@ function NewAcaoModal({
         const r = await api.sendEmailAcao({
           client_id: clientId,
           subject: emailPreview?.subject ?? titulo,
-          body_html: emailPreview?.body_html,
-          use_template: !emailPreview, // se já temos preview customizado, não força template
-          to_override: emailTo,
         });
         setEmailResult(r);
         if (r.ok) {
@@ -954,9 +951,9 @@ function NewAcaoModal({
 
               <Field label="Destinatário" required>
                 <input type="email" required value={emailTo}
-                  onChange={e => setEmailTo(e.target.value)}
+                  readOnly
                   placeholder={clientEmail ?? 'cliente@email.com'}
-                  className="w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-ford-blue text-sm font-mono" />
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-xl bg-gray-50 text-sm font-mono" />
                 {!clientEmail && (
                   <div className="text-xs text-amber-700 mt-1">
                     ⚠️ Cliente sem e-mail cadastrado. Edite a ficha pra salvar permanentemente.

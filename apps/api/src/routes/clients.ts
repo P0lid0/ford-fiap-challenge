@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUser } from '../plugins/auth.js';
+import { requireRole, requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { adminClient, publicClient } from '../lib/supabase.js';
 import { logAudit } from '../lib/audit.js';
+import { env } from '../config.js';
 import { predict } from '../modules/retention/ml-client.js';
 import { classifyHybrid } from '../modules/retention/hybrid-classifier.js';
 
@@ -74,7 +75,7 @@ const CreateClientBody = z.object({
 });
 
 function hashCpf(cpf: string): string {
-  return createHash('sha256').update(cpf + 'ford-fiap-pepper').digest('hex');
+  return createHmac('sha256', env.CLIENT_CPF_PEPPER).update(cpf).digest('hex');
 }
 
 export async function clientRoutes(app: FastifyInstance) {
@@ -86,7 +87,7 @@ export async function clientRoutes(app: FastifyInstance) {
       body: CreateClientBody,
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
+    const u = requireRole(req, 'gestor');
     if (!u.dealership_id) {
       reply.code(400);
       return { error: 'no_dealership', message: 'usuário não está vinculado a uma concessionária' };
@@ -186,7 +187,7 @@ export async function clientRoutes(app: FastifyInstance) {
       entity_id: client.id,
       metadata: { perfil: prediction?.perfil_predito, vin: vinFinal.slice(0, 8) + '...' },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
 
     reply.code(201);
     return { client, prediction: predRow };
@@ -211,7 +212,7 @@ export async function clientRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { perfil, perfil_real, model_name, is_ford_real, risco_min, search, limit, offset } = req.query as any;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
 
     let q = sb
       .from('clients')
@@ -302,9 +303,9 @@ export async function clientRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { risco_min, perfil, modelo, dealer_code, sinal, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
 
     // RPC roda agregação dentro do Postgres (Postgrest tem limite de 1000 linhas)
     const { data, error } = await sb.rpc('leads_ranqueados', {
@@ -342,33 +343,19 @@ export async function clientRoutes(app: FastifyInstance) {
       summary: 'Estatísticas agregadas de leads (volume por urgência + sinais mais comuns)',
     },
   }, async (req) => {
-    requireUser(req);
-    const sb = adminClient();
-    const { data, error } = await sb.rpc('leads_ranqueados', {
-      risco_min: 0.4, filtro_perfil: null, filtro_modelo: null,
-      filtro_dealer: null, filtro_sinal: null, limite: 1_000_000,
-    });
+    const u = requireUser(req);
+    const { data, error } = await publicClient(u.jwt).rpc('leads_ranqueados_stats');
     if (error) throw error;
-    const linhas = data ?? [];
-    const alto = linhas.filter((r: any) => r.risco_composto >= 0.7).length;
-    const medio = linhas.filter((r: any) => r.risco_composto >= 0.5 && r.risco_composto < 0.7).length;
-    const baixo = linhas.filter((r: any) => r.risco_composto >= 0.4 && r.risco_composto < 0.5).length;
-    // Contagem por sinal
-    const porSinal: Record<string, number> = {};
-    for (const r of linhas as any[]) {
-      for (const s of (r.sinais ?? [])) porSinal[s] = (porSinal[s] ?? 0) + 1;
-    }
-    // Por perfil
-    const porPerfil: Record<string, number> = {};
-    for (const r of linhas as any[]) {
-      const p = r.perfil_real ?? 'desconhecido';
-      porPerfil[p] = (porPerfil[p] ?? 0) + 1;
-    }
+    const stats = data?.[0];
     return {
-      total: linhas.length,
-      breakdown_urgencia: { alto, medio, baixo },
-      por_sinal: porSinal,
-      por_perfil: porPerfil,
+      total: Number(stats?.total ?? 0),
+      breakdown_urgencia: {
+        alto: Number(stats?.alto ?? 0),
+        medio: Number(stats?.medio ?? 0),
+        baixo: Number(stats?.baixo ?? 0),
+      },
+      por_sinal: stats?.por_sinal ?? {},
+      por_perfil: stats?.por_perfil ?? {},
     };
   });
 
@@ -386,7 +373,7 @@ export async function clientRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const { notas } = req.body as any;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
     const { data, error } = await sb.from('clients')
       .update({ notas })
       .eq('id', id)
@@ -400,7 +387,7 @@ export async function clientRoutes(app: FastifyInstance) {
       actor_id: u.id, action: 'client.notas_updated', entity: 'clients',
       entity_id: id, metadata: { len: notas.length },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     return data;
   });
 
@@ -490,7 +477,7 @@ export async function clientRoutes(app: FastifyInstance) {
         final: hybrid.perfil,
       },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
 
     return { hybrid, prediction: predRow };
   });

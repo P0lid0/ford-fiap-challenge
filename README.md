@@ -15,10 +15,10 @@ Plataforma única para os **dois desafios da Ford**:
 | Disciplina | Entregável | Caminho |
 |---|---|---|
 | 1. SOA / Web Services | API REST Fastify + Swagger | `apps/api/` |
-| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**18 migrations**) |
-| 2. Mobile & IoT | App React Native + Expo Router | `apps/mobile/` |
+| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**19 migrations**) |
+| 2. Mobile Development | App React Native + Expo Router | `apps/mobile/` |
 | 3. Testing / QA | Frontend web Next.js 15 | `apps/web/` |
-| 4. Cybersecurity | Documento de segurança (5 eixos) | `docs/SECURITY.md` |
+| 4. Cybersecurity | Pipeline e controles do Sprint 3 | `docs/SECURITY.md` |
 | 5. IA / ML | Serviço FastAPI + XGBoost | `services/ml/` |
 | 5. IA / ML | Notebook da sprint anterior | `services/ml/notebooks/ford_segmentation.ipynb` |
 | 5. IA / ML | Notebook Sprint 3 — Challenge 2 | `services/ml/notebooks/ford_retention_sprint3.ipynb` |
@@ -70,7 +70,7 @@ Plataforma única para os **dois desafios da Ford**:
        │
 ┌──────▼───────────────────────────────────────────┐
 │  Supabase Postgres (managed)                     │
-│  18 migrations · RLS por dealership × role       │
+│  19 migrations · RLS por dealership × role       │
 │  profiles · dealerships · clients · vehicles     │
 │  catalog_items · vehicle_catalog_values          │
 │  acoes_retencao · email_logs · audit_log         │
@@ -84,7 +84,7 @@ Plataforma única para os **dois desafios da Ford**:
 ford-fiap-challenge/
 ├── apps/
 │   ├── api/                     # Fastify + Zod + Swagger + Supabase (30+ rotas)
-│   ├── mobile/                  # Expo + Expo Router + AsyncStorage (9 telas)
+│   ├── mobile/                  # Expo + Expo Router + SecureStore nativo (9 telas)
 │   └── web/                     # Next.js 15 (painel operacional)
 ├── services/ml/                 # FastAPI + scikit-learn + XGBoost
 │   ├── src/                     # classifier, classifier_real, clustering, scrapers, main.py
@@ -95,7 +95,7 @@ ford-fiap-challenge/
 │   ├── types/                   # tipos compartilhados TS
 │   └── ui/                      # design tokens Ford (cores, tipografia, spacing)
 ├── supabase/
-│   └── migrations/              # 18 migrations versionadas + RLS + seeds
+│   └── migrations/              # 19 migrations versionadas + RLS + seeds
 ├── scripts/
 │   ├── run-migrations.mjs       # aplica SQL no Postgres
 │   ├── apply-migrations-via-api.mjs # alternativa via Management API
@@ -109,7 +109,7 @@ ford-fiap-challenge/
 │   ├── SECURITY.md              # política de segurança (entrega D4)
 │   ├── SETUP.md
 │   └── deliverables/            # PPTX, PDFs, DOCX, .archimate
-└── .github/workflows/ci.yml     # lint + typecheck + train smoke + gitleaks
+└── .github/workflows/ci.yml     # typecheck + ML + SAST + SCA + secret scan
 ```
 
 ---
@@ -127,7 +127,9 @@ Preencha `.env.local` com:
 - `SUPABASE_URL` — URL do projeto Supabase
 - `SUPABASE_ANON_KEY` — anon JWT
 - `SUPABASE_SERVICE_ROLE_KEY` — service_role JWT
-- `SUPABASE_JWT_SECRET` — para validar JWT no backend
+- `CLIENT_CPF_PEPPER` — gere com `openssl rand -hex 32`; mantenha estável
+- `ML_SERVICE_TOKEN` — gere com `openssl rand -hex 32`; use o mesmo na API e no ML
+- `TRUST_PROXY=false` — altere só atrás de um proxy confiável
 - `SUPABASE_DB_PASSWORD` (opcional) — para `pnpm db:migrate`
 - `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback rule-based
 
@@ -136,7 +138,7 @@ Preencha `.env.local` com:
 pnpm install
 ```
 
-### 4. Banco de dados — aplicar as 18 migrations
+### 4. Banco de dados — aplicar as 19 migrations
 **Opção A — Script automatizado (recomendado):**
 ```bash
 SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
@@ -206,17 +208,17 @@ O serviço FastAPI carrega `services/ml/models/classifier_base2.joblib` e chama 
 
 ---
 
-## 🛡 Segurança (Disciplina 4 — 5 eixos)
+## Segurança (Sprint 3)
 
-Documento completo em **[`docs/SECURITY.md`](docs/SECURITY.md)**. Cobre os 5 eixos:
+[`docs/SECURITY.md`](docs/SECURITY.md) descreve os quatro grupos do trabalho.
+IoT e MQTT não fazem parte deste sprint.
 
-| Eixo | Pontos | Status |
-|---|---|---|
-| 1. Validação & Sanitização | 20 | ✅ Zod em todas rotas · sem SQL raw · rate-limit · multipart 30MB |
-| 2. Autenticação & RBAC | 20 | ✅ JWT Supabase · 3 roles · RLS Postgres |
-| 3. Proteção de APIs | 20 | ✅ TLS 1.3 · CORS allowlist · HMAC payloads |
-| 4. Dados & Privacidade | 25 | ✅ AES-256 at rest · VIN_Hash · LGPD-ready |
-| 5. Monitoramento & Auditoria | 15 | ✅ audit_log estruturado · email_logs · sem stack trace |
+| Área | Pontos | Implementação |
+|---|---:|---|
+| DevSecOps e pipeline | 3,0 | CI com typecheck, Semgrep, auditoria de dependências, Gitleaks e Dependabot |
+| Segurança de código e infraestrutura | 2,5 | RBAC, RLS, segredos obrigatórios, sessões nativas seguras e proteção de fetch remoto |
+| Monitoramento e resposta a incidentes | 2,0 | Logs estruturados e trilha de auditoria; alertas dependem do deploy |
+| Compliance e segurança contínua | 2,5 | Minimização e acesso por concessionária; retenção e aprovação de provedores pendentes |
 
 ---
 

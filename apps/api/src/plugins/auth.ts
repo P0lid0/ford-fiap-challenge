@@ -35,19 +35,15 @@ export const authPlugin = fp(async function authPluginImpl(app: FastifyInstance)
     if (!jwt) return;
 
     try {
-      req.log.info('[auth] validating jwt');
       // Valida o JWT chamando direto /auth/v1/user (mais confiável que SDK).
       const ures = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-        headers: { apikey: env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${jwt}` },
+        headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${jwt}` },
       });
-      req.log.info({ status: ures.status }, '[auth] supabase response');
       if (!ures.ok) {
-        const body = await ures.text();
-        req.log.warn({ status: ures.status, body: body.slice(0, 200) }, '[auth] /auth/v1/user rejected token');
+        req.log.warn({ status: ures.status }, '[auth] Supabase rejected bearer token');
         return;
       }
       const user = await ures.json() as { id: string; email?: string };
-      req.log.info({ uid: user.id }, '[auth] jwt validated');
 
       const client = publicClient(jwt);
       const { data: profile } = await client
@@ -64,7 +60,7 @@ export const authPlugin = fp(async function authPluginImpl(app: FastifyInstance)
         jwt,
       };
     } catch (err) {
-      req.log?.warn({ err: String(err) }, '[auth] failed to validate JWT');
+      req.log?.warn({ err }, '[auth] JWT validation failed');
     }
   });
 });

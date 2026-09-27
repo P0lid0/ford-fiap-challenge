@@ -2,7 +2,9 @@
 // Após criar, navega direto pro detalhe com a predição.
 import { useRouter, Stack } from 'expo-router';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { KeyboardTypeOptions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../lib/api';
@@ -97,7 +99,7 @@ export default function NewClient() {
   );
 }
 
-function Section({ title, children }: { title: string; children: any }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -105,10 +107,20 @@ function Section({ title, children }: { title: string; children: any }) {
     </View>
   );
 }
-function Row({ children }: { children: any }) {
+function Row({ children }: { children: ReactNode }) {
   return <View style={{ flexDirection: 'row', gap: spacing.md }}>{children}</View>;
 }
-function Field({ label, value, onChange, keyboardType }: any) {
+function Field({
+  label,
+  value,
+  onChange,
+  keyboardType,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  keyboardType?: KeyboardTypeOptions;
+}) {
   return (
     <View style={{ flex: 1, marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>
@@ -116,7 +128,17 @@ function Field({ label, value, onChange, keyboardType }: any) {
     </View>
   );
 }
-function Picker({ label, value, options, onChange }: any) {
+function Picker({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: readonly string[];
+  onChange: (value: string) => void;
+}) {
   return (
     <View style={{ flex: 1, marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>
@@ -134,7 +156,15 @@ function Picker({ label, value, options, onChange }: any) {
     </View>
   );
 }
-function Toggle({ label, value, onChange }: any) {
+function Toggle({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
   return (
     <Pressable onPress={() => onChange(!value)} style={{ flex: 1, marginBottom: spacing.md }}>
       <Text style={styles.label}>{label}</Text>

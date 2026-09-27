@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Procura .env.local subindo até 3 níveis
@@ -26,7 +27,8 @@ class Settings(BaseSettings):
     claude_model_smart: str = "claude-sonnet-4-6"
 
     ml_port: int = 8001
-    ml_service_token: str = "local-dev-shared-secret-please-change"
+    ml_service_token: str = Field(min_length=32)
+    node_env: str = "development"
     models_dir: Path = Path("./models")
     synthetic_data_dir: Path = Path("./data")
 

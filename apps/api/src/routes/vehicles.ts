@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUser } from '../plugins/auth.js';
+import { requireRole, requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { adminClient, publicClient } from '../lib/supabase.js';
 import { compareVehicles, type Vehicle, COMPARABLE_FIELDS } from '../modules/competitive/compare.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
 import { chat } from '../lib/ai.js';
+import { logAudit } from '../lib/audit.js';
 
 /**
  * Rotas do Desafio 1 — Inteligência Competitiva.
@@ -320,7 +321,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { id } = req.params as any;
     const { values } = req.body as any;
     const sb = adminClient();
@@ -358,6 +359,11 @@ export async function vehicleRoutes(app: FastifyInstance) {
         .upsert(toUpsert, { onConflict: 'vehicle_id,item_id' });
       if (error) throw error;
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.catalog_values_updated', entity: 'vehicles', entity_id: id,
+      metadata: { upserted: toUpsert.length, deleted: toDelete.length },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return { ok: true, upserted: toUpsert.length, deleted: toDelete.length };
   });
 
@@ -372,7 +378,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }).optional(),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { id } = req.params as any;
     const overwrite = (req.body as any)?.overwrite ?? false;
     const sb = adminClient();
@@ -493,6 +499,11 @@ ${JSON.stringify(itemsForPrompt)}`;
         .upsert(toUpsert, { onConflict: 'vehicle_id,item_id' });
       if (error) throw error;
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.catalog_values_auto_filled', entity: 'vehicles', entity_id: id,
+      metadata: { filled: toUpsert.length, skipped: skipped.length, overwritten: overwrite },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
 
     return {
       ok: true,
@@ -524,7 +535,7 @@ ${JSON.stringify(itemsForPrompt)}`;
       }),
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { marca, modelo, versao, ano, force_refresh } = req.body as any;
     const sb = adminClient();
 
@@ -574,6 +585,11 @@ ${JSON.stringify(itemsForPrompt)}`;
       req.log.error({ error }, '[search] upsert failed');
       throw error;
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.imported_from_search', entity: 'vehicles', entity_id: data.id,
+      metadata: { marca, ano: aggregated.ano },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return { source: 'fresh', vehicle: data };
   });
 

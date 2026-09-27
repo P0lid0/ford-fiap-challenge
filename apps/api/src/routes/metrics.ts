@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireUser } from '../plugins/auth.js';
-import { adminClient } from '../lib/supabase.js';
+import { requireRole, requireUser } from '../plugins/auth.js';
+import { publicClient } from '../lib/supabase.js';
 
 /**
  * KPIs da concessionária / rede pro Desafio 2 (Retenção VIN Share).
@@ -38,14 +38,12 @@ export async function metricRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
-    const sb = adminClient();
-    const dealershipFilter = u.role === 'admin' || u.role === 'gestor' ? null : u.dealership_id;
+    const sb = publicClient(u.jwt);
     const { dealer_code, model_name, idade_bucket } = req.query as any;
 
     // Helper: aplica filtros opcionais (granularidade pedida no slide D2)
     const anoAtual = new Date().getFullYear();
     const applyFilters = (q: any) => {
-      if (dealershipFilter) q = q.eq('dealership_id', dealershipFilter);
       if (dealer_code) q = q.eq('dealer_code_venda', dealer_code);
       if (model_name) q = q.eq('model_name', model_name);
       if (idade_bucket) {
@@ -110,7 +108,7 @@ export async function metricRoutes(app: FastifyInstance) {
     const vinShareEstimado = totalClients > 0 ? (ativosCount ?? 0) / totalClients : 0;
 
     return {
-      escopo: dealershipFilter ?? 'rede',
+      escopo: u.role === 'admin' || u.role === 'gestor' ? 'rede' : (u.dealership_id ?? 'sem_concessionaria'),
       filtros_aplicados: { dealer_code, model_name, idade_bucket },
       total_clientes: totalClients,
       clientes_ativos: ativosCount ?? 0,
@@ -142,9 +140,9 @@ export async function metricRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { dentro_de_dias, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
 
     // Pegamos um lote maior e filtramos em memória — Supabase não tem date_add nativo
     const { data, error } = await sb.from('clients')
@@ -224,9 +222,9 @@ export async function metricRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { anos_garantia, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
 
     const { data, error } = await sb.from('clients')
       .select('id, nome_cliente, model_name, model_year, vin_hash, dealer_code_venda, ' +
@@ -298,9 +296,9 @@ export async function metricRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { min_clientes, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
 
     // Agregação roda DENTRO do Postgres via RPC. Postgrest tem limite de 1000
     // linhas no SELECT direto, então uma agregação manual em JS com 175k VINs

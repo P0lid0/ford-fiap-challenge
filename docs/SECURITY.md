@@ -1,294 +1,140 @@
-# Política de Segurança — Faro AI · Ford × FIAP Challenge 2026
-
-**Equipe Faro AI** — Guilherme (RM 554962) · Pedro (RM 555556) · Fabrício (RM 558216) · Vitor (RM 554893) · Matheus (RM 555447)
-
-Documento técnico cobrindo os **5 eixos avaliativos** da disciplina de Cybersecurity.
-O estado atual é **MVP funcional com arquitetura preparada para produção**:
-LGPD-ready e com controles de segurança implementados no nível de aplicação.
-Os itens de infraestrutura no checklist final permanecem como pendências de deploy
-produtivo.
-
-| Eixo | Pontos | Cobertura |
-|---|---|---|
-| 1. Validação e sanitização de entrada | 20 | ✅ Zod, sanitização XSS/SQL/cmd, rate-limit, multipart |
-| 2. Autenticação e autorização | 20 | ✅ JWT Supabase, RBAC 3 níveis, RLS Postgres |
-| 3. Proteção de APIs e serviços | 20 | ✅ TLS 1.3, rate-limit, CORS allowlist, HMAC payloads |
-| 4. Dados e privacidade | 25 | ✅ AES-256 at rest, VIN_Hash, anonimização ML, LGPD-ready |
-| 5. Monitoramento, logs e auditoria | 15 | ✅ Logs estruturados, audit_log, observabilidade |
-| **Total** | **100** | |
-
----
-
-## 1. Validação e Sanitização de Entrada (20 pts)
-
-### Validação de entradas
-
-Todas as rotas usam **Zod** com `fastify-type-provider-zod` — qualquer payload que
-não bata o schema é rejeitado **antes** de chegar no handler:
-
-```ts
-// apps/api/src/routes/clients.ts
-body: z.object({
-  cpf: z.string().regex(/^\d{11}$/),
-  email: z.string().email(),
-  renda_mensal_brl: z.number().int().min(0).max(10_000_000),
-})
-```
-
-- **Marca / modelo / versão / ano** → tipados via Zod nas rotas `/competitive/*`
-- **UUIDs** → `z.string().uuid()` em todos params
-- **Enums** → role, perfil, financiamento, combustível, categoria
-- **Limites numéricos** explícitos (`min/max`) previnem overflow/DoS
-
-### SQL Injection
-
-**Não usamos SQL raw.** Toda comunicação com Postgres passa por:
-- `@supabase/supabase-js` (PostgREST com parâmetros bindados)
-- Migrations em arquivos `.sql` versionados (não recebem input)
-
-### XSS / Command Injection
-
-- API serve apenas JSON (`Content-Type: application/json`)
-- Web App em Next.js — React escapa automaticamente outputs
-- Nunca usamos `dangerouslySetInnerHTML` em conteúdo derivado de input
-
-### Payload flooding
-
-- `@fastify/rate-limit`: 120 req/min por user.id ou IP
-- `@fastify/multipart`: limite 30 MB por upload de arquivo
-- Body parser padrão Fastify: 1 MB
-
-### Tratamento seguro de erros
-
-Stack traces nunca vão pro cliente em ambiente produtivo:
-
-```ts
-// server.ts
-app.setErrorHandler((err, req, reply) => {
-  const status = (err as any).statusCode ?? 500;
-  if (status >= 500) req.log.error({ err }, 'unhandled');
-  reply.code(status).send({
-    error: err.name ?? 'error',
-    message: status >= 500 ? 'internal error' : err.message, // ⚠ sem stack
-  });
-});
-```
-
----
-
-## 2. Autenticação e Autorização (20 pts)
-
-### JWT
-
-- Auth via **Supabase Auth** (JWT assinado HS256)
-- Validação no plugin `apps/api/src/plugins/auth.ts`:
-  - Token validado contra `/auth/v1/user` (não confiamos no payload sem revalidar)
-  - Expiração padrão Supabase: 1 hora (refresh token separado)
-
-### RBAC
-
-Três roles definidos em `user_role` enum (migration `20260514_001_init.sql`):
-
-| Role | Permissões |
-|------|------------|
-| `analista` | Read próprios clientes/leads, write leads |
-| `gestor` | Tudo de analista + write clientes, ler dashboard da dealership |
-| `admin` | Tudo + ai-config, delete vehicles, audit log |
-
-Helper `requireRole(req, 'gestor')` em rotas sensíveis. DELETE de veículo e
-configuração de chaves de IA exigem `admin`.
-
----
-
-## 3. Proteção de APIs (20 pts)
-
-### HTTPS / TLS
-
-**Local (dev):** API roda HTTP em `127.0.0.1:3333`. Web App em `localhost:3000`.
-
-**Deploy produtivo:** Reverse proxy com TLS 1.2+ é pendência obrigatória. Exemplo Caddy:
-
-```caddy
-api.ford-fiap.example.com {
-  reverse_proxy 127.0.0.1:3333
-  tls admin@ford-fiap.example.com
-  encode gzip
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-    X-Content-Type-Options "nosniff"
-    X-Frame-Options "DENY"
-    Referrer-Policy "strict-origin-when-cross-origin"
-  }
-}
-```
-
-Ou Nginx:
-
-```nginx
-server {
-  listen 443 ssl http2;
-  server_name api.ford-fiap.example.com;
-  ssl_certificate /etc/letsencrypt/live/.../fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/.../privkey.pem;
-  ssl_protocols TLSv1.2 TLSv1.3;
-  ssl_ciphers HIGH:!aNULL:!MD5;
-  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-  location / {
-    proxy_pass http://127.0.0.1:3333;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_set_header X-Real-IP $remote_addr;
-  }
-}
-```
-
-A API já tem `trustProxy: true` em `server.ts`, então respeita `X-Forwarded-*`.
-
-Supabase e RapidAPI (411 Vehicle Data) **já são HTTPS-only** — não há tráfego
-plain entre nosso backend e os serviços externos.
-
-### Rate limiting
-
-`@fastify/rate-limit`:
-- 120 requisições/minuto por `user.id` (autenticado) ou `ip` (anônimo)
-- Configurável via `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW`
-
-### CORS
-
-Whitelist explícita em `ALLOWED_ORIGINS`:
-
-```bash
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8081,https://ford-fiap.example.com
-```
-
-Wildcard nunca é aceito — em deploy produtivo, origens desconhecidas são rejeitadas.
-
-### Headers de Segurança (`@fastify/helmet`)
-
-Registrado em `server.ts`:
-
-- `Content-Security-Policy` (em ambiente produtivo): `default-src 'self'` + permissões mínimas
-- `Strict-Transport-Security`: `max-age=31536000; includeSubDomains; preload`
-- `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: DENY` (via `frameAncestors 'none'`)
-- `Referrer-Policy: strict-origin-when-cross-origin`
-
-### Assinatura/integridade de payloads
-
-Tráfego API gateway → ML service usa **HMAC-SHA256** do body:
-
-```ts
-// apps/api/src/modules/retention/ml-client.ts
-const signature = createHmac('sha256', env.ML_SERVICE_TOKEN).update(body).digest('hex');
-// header: X-Payload-Signature
-```
-
-ML service valida com `hmac.compare_digest` antes de processar (`services/ml/src/main.py:verify_payload_signature`).
-Previne manipulação de payload em trânsito e replay com body alterado.
-
----
-
-## 4. Segurança de Dados e Privacidade (25 pts)
-
-### Criptografia em repouso
-
-- **Supabase Postgres**: AES-256 em repouso (gerenciado pela plataforma — disk encryption + WAL encryption)
-- **CPF**: nunca armazenado em claro. `apps/api/src/routes/clients.ts:30` aplica `sha256(cpf + CLIENT_CPF_PEPPER)` antes de gravar. Lookup é feito comparando hashes.
-- **Chaves de API (OpenAI, Anthropic, Gemini, FIPE, 411)**: em tabela `ai_keys` com RLS admin-only. Para deploy produtivo, recomendamos migrar pra **Supabase Vault** (criptografia de coluna).
-- **JWTs**: nunca persistidos no backend (validação stateless).
-
-### Política de retenção e descarte
-
-| Entidade | Retenção | Mecanismo |
-|----------|----------|-----------|
-| `clients` | 5 anos após última interação (LGPD art. 15) | Cron mensal anonimiza nome+email após inatividade |
-| `audit_log` | 12 meses | Cron mensal apaga eventos > 365 dias |
-| `vehicles` (catálogo) | Indefinido (não é dado pessoal) | — |
-| `ai_predictions` | 6 meses por cliente | Trigger ao deletar cliente apaga predições |
-| `leads` | 24 meses após status `convertido` ou `descartado` | Cron mensal |
-| Logs do Pino | 30 dias (rotação) | logrotate ou agregador de logs (DataDog/CloudWatch) |
-
-Implementação: arquivo `supabase/migrations/20260514_009_retention_jobs.sql` (TODO — agendar via Supabase Cron extension).
-
-### Anonimização / pseudonimização
-
-Pipeline de ML **nunca recebe PII**:
-- `dealership_id` é trocado por HMAC-SHA256 truncado (16 hex chars) antes de sair do gateway
-- `nome`, `cpf_hash`, `email`, `telefone` **nunca** entram no payload
-- Variáveis usadas: idade, gênero, região, renda, score, perfil de compra
-
-Para dashboards agregados: queries de KPI agrupam por `dealership_id` mas não
-listam clientes individuais sem permissão explícita (RLS).
-
-### Proteção contra exposição
-
-- Logs do Pino com `redact: ['req.headers.authorization', 'req.headers.cookie', '*.SUPABASE_SERVICE_ROLE_KEY', '*.ANTHROPIC_API_KEY']`
-- `.env.local` no `.gitignore`
-- Swagger UI disponível em dev em `/docs` — para deploy produtivo, desabilitar
-  ou proteger com auth (basic auth no reverse proxy)
-- Mensagens de erro genéricas pra cliente (sem stack/SQL/internal paths)
-- RLS no Supabase isola dados por `dealership_id` — analista de uma loja não
-  vê dados de outra
-
----
-
-## 5. Monitoramento, Logs e Auditoria (15 pts)
-
-### Logs estruturados
-
-**Pino** com formato JSON em ambiente produtivo, pretty em dev. Cada log carrega
-`reqId`, `method`, `url`, `ip`, `status`, `latency_ms`. Campos sensíveis
-redacted (Authorization, cookies, chaves).
-
-### Monitoramento de eventos suspeitos
-
-- `@fastify/rate-limit` registra cabeçalhos `X-RateLimit-*` — saturação visível
-  no log
-- Falhas de auth (`401`/`403`) são `warn` level
-- Erros 5xx são `error` level com stack trace **só no log** (nunca no cliente)
-- Recomendação prod: agregador (DataDog, Grafana Loki, ELK) com alerta em:
-  - `>5` 401/403 do mesmo IP/min → possível tentativa de brute force
-  - `>50` 5xx/min → degradação
-  - falhas repetidas em `verify_payload_signature` → possível manipulação
-
-### Trilha de auditoria
-
-Tabela `audit_log` com RLS admin-only. Helper em `apps/api/src/lib/audit.ts`
-registra:
-- Alteração de chave de IA (`provider`, `actor_id`, IP, user-agent)
-- Criação/edição/exclusão de cliente
-- Exclusão de veículo
-- Refresh manual (com URL custom do e-book)
-- Login/logout (via Supabase Auth → `auth.audit_log_entries`)
-
-Eventos críticos têm metadata estruturada pra investigação posterior.
-
----
-
-## Pendências de deploy produtivo (HTTPS Production)
-
-Os controles de aplicação já estão implementados no MVP, mas os itens abaixo
-devem ser concluídos antes de afirmar deploy produtivo final.
-
-- [ ] Definir DNS apontando pro host
-- [ ] Caddy ou Nginx + Let's Encrypt instalado
-- [ ] Variáveis de ambiente (`.env.production`) populadas
-- [ ] `NODE_ENV=production` (ativa CSP estrita no helmet)
-- [ ] `ML_SERVICE_TOKEN` rotacionado (não usar `change-me`)
-- [ ] `CLIENT_CPF_PEPPER` rotacionado e armazenado em secret manager
-- [ ] Swagger UI desabilitado ou protegido (basic auth no proxy)
-- [ ] `audit_log` retention job agendado
-- [ ] Backup automático Supabase ativo (PITR)
-- [ ] Monitoramento de uptime + alertas configurados
-
----
-
-## Modelo de Ameaças resumido (STRIDE)
-
-| Ameaça | Mitigação |
-|--------|-----------|
-| **S**poofing | JWT validado server-side, sem trust em payload direto |
-| **T**ampering | HMAC nas chamadas API→ML, RLS no DB |
-| **R**epudiation | Audit log com IP + user-agent |
-| **I**nformation Disclosure | Erros genéricos, logs redacted, RLS, pseudonimização |
-| **D**enial of Service | Rate limit, body size limit, timeout em fetches externos |
-| **E**levation of Privilege | RBAC + RLS Postgres (defense in depth) |
+# Segurança do Faro AI
+
+Este documento descreve os controles do Sprint 3 para a API Fastify, o app Expo,
+o site Next.js, o serviço ML FastAPI e o banco Supabase. O escopo não inclui IoT,
+MQTT ou dispositivos conectados.
+
+| Área do sprint | Peso | Estado neste repositório |
+|---|---:|---|
+| DevSecOps e pipeline | 3,0 | Workflow de CI, análise estática, auditoria de dependências e secret scan configurados |
+| Segurança de código e infraestrutura | 2,5 | Validação, RBAC, RLS, gestão de segredos e controles de rede no código |
+| Monitoramento e resposta a incidentes | 2,0 | Logs estruturados e trilha de auditoria; alertas e centralização dependem do deploy |
+| Compliance e segurança contínua | 2,5 | Minimização e controles de acesso; retenção, avaliação legal e operação contínua pendentes |
+
+Um controle marcado como configurado existe no código ou no workflow. Isso não
+significa que a execução do CI ou a configuração de produção já foi verificada.
+
+## DevSecOps e pipeline
+
+O workflow `.github/workflows/ci.yml` roda em pull requests e pushes para `main`.
+Ele verifica tipos no API, no site e no app mobile. O job ML treina o modelo e
+roda os testes que já faziam parte do workflow.
+
+O pipeline também configura estes controles:
+
+- **SAST:** Semgrep analisa API, site, app e serviço ML.
+- **SCA:** `pnpm audit` e `pip-audit` verificam dependências vulneráveis.
+- **Secret scanning:** Gitleaks analisa o histórico completo do Git.
+- **Atualizações:** Dependabot abre pull requests semanais para pacotes e GitHub Actions.
+- **Instalação reproduzível:** CI instala JavaScript com `pnpm install --frozen-lockfile`.
+
+Configure proteção de branch no GitHub para exigir os jobs antes do merge. O
+workflow, sozinho, não bloqueia merges pelas configurações do repositório.
+
+## Segurança de código e infraestrutura
+
+### Entrada, acesso e banco
+
+- As rotas Fastify validam parâmetros, consultas e corpos com Zod.
+- O plugin de autenticação valida o bearer token no Supabase Auth e carrega o
+  perfil do usuário.
+- `requireRole` limita operações de escrita do catálogo, importação e gestão de
+  clientes a `gestor` e `admin`. Configuração de chaves de IA exige `admin`.
+- A política de perfil não permite que um usuário altere o próprio role ou a
+  própria concessionária.
+- Consultas de clientes, leads, métricas, ações e modelos usam o JWT do usuário
+  para que o RLS do Supabase aplique o escopo. Gestores mantêm o acesso de rede
+  definido na política existente.
+- Funções SQL de leads e métricas usam `SECURITY INVOKER`, limitam resultados e
+  não concedem execução a `anon` ou `PUBLIC`.
+- Operações que precisam da chave `service_role` fazem verificações de papel e
+  concessionária na API. A chave ignora RLS e fica somente no backend.
+- Chaves de provedores configuradas pela tela admin ficam na tabela `ai_keys`;
+  o app retorna apenas se estão configuradas, sem mostrar fragmentos. Antes de
+  produção, mova esses valores para um secret manager e defina rotação.
+
+### Rede, serviços e conteúdo remoto
+
+- Fastify usa uma lista explícita de origens CORS, Helmet e limite de requisições
+  por IP. `TRUST_PROXY` fica `false` por padrão.
+- A API e o serviço ML não expõem Swagger em produção. O serviço ML não aceita
+  CORS de qualquer origem.
+- O ML exige bearer token com pelo menos 32 caracteres. O gateway assina o corpo
+  de `/predict` com HMAC, timestamp e nonce. O serviço rejeita assinaturas
+  vencidas e nonces repetidos.
+- O cache de nonces do ML fica na memória do processo. Uma implantação com mais
+  de um worker precisa de um armazenamento compartilhado para manter essa
+  proteção entre workers.
+- URLs de e-books aceitam apenas HTTPS nos domínios oficiais de fabricantes. O
+  downloader valida cada redirecionamento e interrompe downloads acima de 30 MB.
+
+O repositório não configura o proxy de produção, DNS, certificado TLS, firewall,
+rede privada para ML, gestão de segredos ou backup Supabase. Em produção, termine
+TLS em um proxy confiável e restrinja o acesso de rede ao ML. Defina
+`TRUST_PROXY=true` somente quando a API aceitar tráfego por esse proxy.
+
+### Dados e privacidade
+
+- Novos CPFs são transformados em HMAC-SHA256 com `CLIENT_CPF_PEPPER`. Gere o
+  segredo com `openssl rand -hex 32` e mantenha-o estável. O sistema não guarda
+  o CPF original para recalcular hashes antigos.
+- O app nativo armazena a sessão Supabase com `expo-secure-store`. O app web usa
+  armazenamento do navegador.
+- Logs HTTP não incluem query strings. O logger redige cabeçalhos de autorização
+  e cookies. O plugin de auth não grava JWTs nem corpos de resposta do Supabase.
+- O ML recebe atributos de compra e perfil, como idade, renda, score de crédito
+  e modelo. O identificador da concessionária é pseudonimizado. Esses atributos
+  continuam sendo dados pessoais; pseudonimização não é anonimização.
+- A classificação híbrida e os insights podem enviar atributos financeiros e
+  demográficos a um provedor de IA. Notas e histórico de ações também podem ser
+  enviados à classificação híbrida. Essa rota remove padrões comuns de CPF,
+  e-mail, telefone e VIN, mas não detecta todos os identificadores indiretos.
+
+Antes de usar dados reais em produção, aprove os provedores de IA, a base legal,
+os termos de tratamento, a transferência internacional e os prazos de retenção.
+O repositório não implementa um calendário de retenção nem comprova exclusão
+automática de dados.
+
+## Monitoramento e resposta a incidentes
+
+Fastify grava logs estruturados com Pino. Erros de autenticação, falhas do banco,
+erros 5xx e falhas de gravação de auditoria aparecem no log. A API limita
+requisições e retorna erros sem stack trace.
+
+A tabela `audit_log` registra criação e alteração de clientes, ações de retenção,
+envio de e-mail, alterações no catálogo e mudanças de configuração de IA. Só o
+backend grava eventos. A gravação é best-effort: uma falha aparece no Pino e não
+interrompe a operação. O RLS limita a leitura a administradores.
+
+Este repositório não inclui um agregador de logs, alertas, painel de segurança,
+plantão ou automação de resposta. Para um incidente, a equipe precisa conter o
+serviço afetado, revogar e substituir as credenciais expostas, revisar os eventos
+de auditoria e preservar os logs. O responsável por privacidade deve avaliar se
+há obrigação de notificar a ANPD ou as pessoas afetadas.
+
+## Compliance e segurança contínua
+
+O escopo de dados inclui identificadores de cliente, dados de compra,
+características demográficas e financeiras, notas de vendedores, previsões e
+ações de retenção. O cliente e seus dados ficam vinculados à concessionária por
+RLS e verificações da API.
+
+Use os seguintes controles como referência para revisão:
+
+- [OWASP ASVS](https://owasp.org/www-project-application-security-verification-standard/) para controles da API e do site.
+- [OWASP API Security Top 10](https://owasp.org/API-Security/) para autorização por objeto, autenticação e consumo de recursos.
+- [OWASP Mobile Application Security](https://owasp.org/www-project-mobile-app-security/) para armazenamento local e sessão no app.
+- [Lei Geral de Proteção de Dados](https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm) para finalidade, necessidade, direitos e resposta a incidentes.
+
+Revise os achados do SAST e do SCA em cada pull request. Atualize dependências
+vulneráveis, revise a trilha de auditoria e reavalie o fluxo de dados quando
+adicionar um provedor, campo pessoal ou integração.
+
+### Pendências antes de produção
+
+- Exigir os jobs de CI nas regras de proteção da branch `main`.
+- Configurar TLS, proxy confiável, firewall e rede privada para o serviço ML.
+- Guardar segredos em um secret manager e definir a rotação de cada segredo.
+- Definir retenção, descarte, restauração de backup e responsáveis por incidentes.
+- Aprovar contratos e fluxos de dados dos provedores de IA.
+- Verificar alertas operacionais e executar um exercício de resposta a incidentes.

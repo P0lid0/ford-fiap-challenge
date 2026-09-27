@@ -8,12 +8,14 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireUser } from '../plugins/auth.js';
+import { requireRole, requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 import { fipe } from '../lib/data-sources/fipe.js';
 import { SUPPORTED_MANUFACTURER_BRANDS, fetchManufacturerSpecs } from '../lib/data-sources/manufacturer.js';
+import { isTrustedEbookUrl } from '../lib/data-sources/manufacturer-ebook.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
 import { extractFromFile } from '../lib/ai-vision.js';
+import { logAudit } from '../lib/audit.js';
 
 const VehicleUpdateSchema = z.object({
   marca: z.string().optional(),
@@ -64,11 +66,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       params: z.object({ id: z.string().uuid() }),
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
-    if (u.role !== 'admin' && u.role !== 'gestor') {
-      reply.code(403);
-      return { error: 'forbidden', message: `role '${u.role}' não pode excluir (precisa admin ou gestor)` };
-    }
+    const u = requireRole(req, 'gestor');
     const { id } = req.params as any;
     const { error, count } = await adminClient()
       .from('vehicles').delete({ count: 'exact' }).eq('id', id);
@@ -81,6 +79,10 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       reply.code(404);
       return { error: 'not_found', message: 'veículo já não existe' };
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.deleted', entity: 'vehicles', entity_id: id,
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return { ok: true, deleted: id };
   });
 
@@ -96,12 +98,16 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       }).optional(),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { id } = req.params as any;
     const body = (req.body ?? {}) as any;
     const sb = adminClient();
     const { data: existing } = await sb.from('vehicles').select('*').eq('id', id).single();
     if (!existing) { reply.code(404); return { error: 'not_found' }; }
+    if (body.ebook_url && !isTrustedEbookUrl(body.ebook_url, existing.marca)) {
+      reply.code(400);
+      return { error: 'untrusted_ebook_url', message: 'use HTTPS em um domínio oficial da fabricante' };
+    }
 
     const aggregated = await aggregateVehicle({
       marca: existing.marca, modelo: existing.modelo,
@@ -149,6 +155,11 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     }).eq('id', id).select().single();
 
     if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.refreshed', entity: 'vehicles', entity_id: id,
+      metadata: { ebook_supplied: Boolean(body.ebook_url), skip_ebook: Boolean(body.skip_ebook) },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return data;
   });
 
@@ -205,7 +216,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       params: z.object({ id: z.string().uuid() }),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { id } = req.params as any;
     const sb = adminClient();
 
@@ -256,6 +267,12 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
 
     if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
 
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.price_refreshed', entity: 'vehicles', entity_id: id,
+      metadata: { fipe_code: fipeResult.CodigoFipe },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
+
     return {
       ok: true,
       preco_antigo: precoAntigo,
@@ -279,7 +296,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { marca_codigo, modelo_codigo, ano_codigo } = req.body as any;
     const sb = adminClient();
 
@@ -303,7 +320,6 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     if (existing) return { source: 'cache', vehicle: existing };
 
     // 3. Roda agregador com dados FIPE já em mãos (manufacturer + IA pra gaps)
-    const u = requireUser(req);
     let aiModel = req.headers['x-ai-model'] as string | undefined;
     if (!aiModel) {
       const { data: pref } = await sb.from('ai_function_models')
@@ -333,6 +349,11 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
 
     if (error) { reply.code(400); return { error: 'upsert_failed', message: error.message }; }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.imported_from_fipe', entity: 'vehicles', entity_id: data.id,
+      metadata: { fipe_code: fipeData.CodigoFipe },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return { source: 'fresh', vehicle: data };
   });
 
@@ -366,7 +387,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       body: VehicleCreateSchema,
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
+    const u = requireRole(req, 'gestor');
     const body = req.body as z.infer<typeof VehicleCreateSchema>;
     const sb = adminClient();
 
@@ -399,6 +420,11 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: 'create_failed', message: error.message };
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.created', entity: 'vehicles', entity_id: data.id,
+      metadata: { marca: body.marca, ano: body.ano },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     reply.code(201);
     return data;
   });
@@ -412,7 +438,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       body: VehicleUpdateSchema,
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { id } = req.params as any;
     const updates = req.body as any;
     const sb = adminClient();
@@ -447,6 +473,11 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: 'update_failed', message: error.message };
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.updated', entity: 'vehicles', entity_id: id,
+      metadata: { fields: Object.keys(updates) },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return data;
   });
 
@@ -461,7 +492,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req, reply) => {
-    const u = requireUser(req);
+    const u = requireRole(req, 'gestor');
     const { format, content } = req.body as any;
     const sb = adminClient();
 
@@ -532,6 +563,11 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       reply.code(400);
       return { error: 'import_failed', message: error.message };
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.imported', entity: 'vehicles',
+      metadata: { count: data?.length ?? 0, format },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return { inserted: data?.length ?? 0, vehicles: data ?? [] };
   });
 
@@ -545,7 +581,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       consumes: ['multipart/form-data'],
     },
   }, async (req, reply) => {
-    requireUser(req);
+    requireRole(req, 'gestor');
     const file = await (req as any).file();
     if (!file) {
       reply.code(400);

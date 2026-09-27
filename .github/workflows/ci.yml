@@ -1,38 +1,84 @@
 name: CI
 
 on:
-  push: { branches: [main] }
-  pull_request: { branches: [main] }
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  api:
+  quality:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: apps/api } }
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'pnpm' }
-      - run: pnpm install --frozen-lockfile=false
-        working-directory: .
-      - run: pnpm typecheck
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ford/api typecheck
+      - run: pnpm --filter @ford/web typecheck
+      - run: pnpm --filter @ford/mobile typecheck
 
   ml:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: services/ml } }
+    defaults:
+      run:
+        working-directory: services/ml
+    env:
+      ML_SERVICE_TOKEN: ci-only-ml-service-token-0123456789
+      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11', cache: 'pip' }
+        with:
+          python-version: '3.11'
+          cache: pip
       - run: pip install -r requirements.txt
       - run: python -m src.scripts.train_models 1500
       - run: pytest -q
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install semgrep
+      - run: semgrep scan --config auto --error apps/api apps/web apps/mobile services/ml
+
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pip-audit
+      - run: pip-audit -r services/ml/requirements.txt
 
   secrets-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

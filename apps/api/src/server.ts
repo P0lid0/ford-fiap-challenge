@@ -26,11 +26,11 @@ const app = Fastify({
       : undefined,
     // ⚠ Cybersec: nunca logar Authorization nem chaves
     serializers: {
-      req: (req) => ({ method: req.method, url: req.url, ip: req.ip }),
+      req: (req) => ({ method: req.method, url: req.url.split('?')[0], ip: req.ip }),
     },
     redact: ['req.headers.authorization', 'req.headers.cookie', '*.SUPABASE_SERVICE_ROLE_KEY', '*.ANTHROPIC_API_KEY'],
   },
-  trustProxy: true,
+  trustProxy: env.TRUST_PROXY,
 }).withTypeProvider<ZodTypeProvider>();
 
 app.setValidatorCompiler(validatorCompiler);
@@ -73,36 +73,38 @@ await app.register(cors, {
 await app.register(rateLimit, {
   max: env.RATE_LIMIT_MAX,
   timeWindow: env.RATE_LIMIT_WINDOW,
-  keyGenerator: (req) => req.user?.id ?? req.ip,
+  keyGenerator: (req) => req.ip,
 });
 
-await app.register(swagger, {
-  openapi: {
-    info: {
-      title: 'Ford FIAP Challenge API',
-      version: '0.1.0',
-      description: 'API gateway que atende Desafio 1 (Inteligência Competitiva) e Desafio 2 (Retenção/VIN Share).',
-    },
-    components: {
-      securitySchemes: {
-        bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+if (env.NODE_ENV !== 'production') {
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'Ford FIAP Challenge API',
+        version: '0.1.0',
+        description: 'API gateway que atende Desafio 1 (Inteligência Competitiva) e Desafio 2 (Retenção/VIN Share).',
       },
+      components: {
+        securitySchemes: {
+          bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        },
+      },
+      security: [{ bearer: [] }],
+      tags: [
+        { name: 'meta', description: 'Health / introspection' },
+        { name: 'Desafio 1 — Inteligência Competitiva', description: 'Catálogo + comparação' },
+        { name: 'Desafio 2 — Retenção', description: 'Clientes, predições, leads, KPIs' },
+        { name: 'Diferencial — Insights de IA', description: 'Claude API: XAI e portfolio' },
+      ],
     },
-    security: [{ bearer: [] }],
-    tags: [
-      { name: 'meta', description: 'Health / introspection' },
-      { name: 'Desafio 1 — Inteligência Competitiva', description: 'Catálogo + comparação' },
-      { name: 'Desafio 2 — Retenção', description: 'Clientes, predições, leads, KPIs' },
-      { name: 'Diferencial — Insights de IA', description: 'Claude API: XAI e portfolio' },
-    ],
-  },
-  transform: jsonSchemaTransform,
-});
-await app.register(swaggerUi, { routePrefix: '/docs' });
+    transform: jsonSchemaTransform,
+  });
+  await app.register(swaggerUi, { routePrefix: '/docs' });
+}
 
 // Handlers globais
 app.setErrorHandler((err, req, reply) => {
-  const status = (err as any).statusCode ?? 500;
+  const status = 'statusCode' in err && typeof err.statusCode === 'number' ? err.statusCode : 500;
   if (status >= 500) req.log.error({ err }, 'unhandled');
   // ⚠ Cybersec: não vazar stack pro cliente
   reply.code(status).send({
@@ -136,4 +138,6 @@ await app.register(acoesRoutes);
 await app.register(fordRealRoutes);
 
 await app.listen({ port: env.API_PORT, host: env.API_HOST });
-app.log.info(`📘 Swagger: http://${env.API_HOST}:${env.API_PORT}/docs`);
+if (env.NODE_ENV !== 'production') {
+  app.log.info(`📘 Swagger: http://${env.API_HOST}:${env.API_PORT}/docs`);
+}

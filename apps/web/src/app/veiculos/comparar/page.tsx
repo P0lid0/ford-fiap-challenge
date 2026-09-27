@@ -453,10 +453,12 @@ function CanonicoCell({ valor, tipo, unidade, isWinner, winnerCount }: {
   );
 }
 
+const CompatibleSuspense = Suspense as unknown as (props: React.SuspenseProps) => React.ReactElement | null;
+
 export default function Page() {
   return (
-    <Suspense fallback={<Shell><div className="p-8 text-gray-500">Carregando…</div></Shell>}>
+    <CompatibleSuspense fallback={<Shell><div className="p-8 text-gray-500">Carregando…</div></Shell>}>
       <ComparePage />
-    </Suspense>
+    </CompatibleSuspense>
   );
 }

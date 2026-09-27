@@ -64,17 +64,17 @@ export async function acoesRoutes(app: FastifyInstance) {
       return { error: 'no_dealership', message: 'usuário não está vinculado a uma concessionária' };
     }
     const body = req.body as z.infer<typeof CreateAcaoBody>;
-    const sb = adminClient();
+    const scopedClient = publicClient(u.jwt);
 
     // Confirma que o client pertence à mesma dealership (defense in depth além da RLS)
-    const { data: client } = await sb.from('clients')
+    const { data: client } = await scopedClient.from('clients')
       .select('id, dealership_id').eq('id', body.client_id).maybeSingle();
     if (!client || client.dealership_id !== u.dealership_id) {
       reply.code(404);
       return { error: 'client_not_found' };
     }
 
-    const { data, error } = await sb.from('acoes_retencao').insert({
+    const { data, error } = await adminClient().from('acoes_retencao').insert({
       ...body,
       dealership_id: u.dealership_id,
       actor_id: u.id,
@@ -90,7 +90,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       actor_id: u.id, action: 'acao.created', entity: 'acoes_retencao',
       entity_id: data.id, metadata: { tipo: body.tipo, client_id: body.client_id },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     reply.code(201);
     return data;
   });
@@ -142,7 +142,7 @@ export async function acoesRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const body = req.body as z.infer<typeof UpdateAcaoBody>;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
 
     const updates: any = { ...body };
     if (body.status?.startsWith('concluida_')) {
@@ -160,7 +160,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       actor_id: u.id, action: 'acao.updated', entity: 'acoes_retencao',
       entity_id: id, metadata: { status: body.status },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     return data;
   });
 
@@ -182,7 +182,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       return { error: 'forbidden', message: 'apenas gestor/admin pode criar campanhas' };
     }
     const b = req.body as z.infer<typeof CampaignBody>;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
 
     // Busca clientes alvo
     let q = sb.from('clients')
@@ -229,7 +229,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       entity_id: campaign_id,
       metadata: { perfil: b.perfil, tipo: b.tipo, count: data?.length ?? 0 },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     reply.code(201);
     return { ok: true, campaign_id, created: data?.length ?? 0 };
   });
@@ -291,17 +291,12 @@ export async function acoesRoutes(app: FastifyInstance) {
       summary: 'Envia e-mail real pro cliente e registra como ação',
       body: z.object({
         client_id: z.string().uuid(),
-        subject: z.string().min(2).max(200).optional(),
-        body_html: z.string().min(10).max(10_000).optional(),
-        // Se omitido, usa o template do perfil do cliente
-        use_template: z.boolean().optional().default(true),
-        // Override do destinatário (se vazio, usa client.email_cliente)
-        to_override: z.string().email().optional(),
+        subject: z.string().min(2).max(200).regex(/^[^\r\n]+$/).optional(),
       }),
     },
   }, async (req, reply) => {
     const u = requireUser(req);
-    const { client_id, subject, body_html, use_template, to_override } = req.body as any;
+    const { client_id, subject } = req.body as any;
     const sb = adminClient();
 
     // 1. Busca cliente
@@ -310,8 +305,12 @@ export async function acoesRoutes(app: FastifyInstance) {
       .eq('id', client_id).maybeSingle();
     if (cErr) throw cErr;
     if (!client) { reply.code(404); return { error: 'client_not_found' }; }
+    if (client.dealership_id !== u.dealership_id && u.role !== 'admin') {
+      reply.code(404);
+      return { error: 'client_not_found' };
+    }
 
-    const to = to_override ?? client.email_cliente;
+    const to = client.email_cliente;
     if (!to) {
       reply.code(400);
       return {
@@ -324,13 +323,9 @@ export async function acoesRoutes(app: FastifyInstance) {
     const modelo = client.model_name ?? client.modelo_comprado ?? 'seu Ford';
     const nome = client.nome_cliente ?? 'Cliente Ford';
     const dealer = client.dealer_code_venda ? String(client.dealer_code_venda) : '';
-    let finalSubject = subject;
-    let finalHtml = body_html;
-    if (!finalSubject || !finalHtml || use_template) {
-      const tpl = templateFor(client.perfil_real, modelo, nome, dealer);
-      finalSubject = finalSubject ?? tpl.subject;
-      finalHtml = finalHtml ?? tpl.html;
-    }
+    const tpl = templateFor(client.perfil_real, modelo, nome, dealer);
+    const finalSubject = (subject ?? tpl.subject).replace(/[\r\n]+/g, ' ').slice(0, 200);
+    const finalHtml = tpl.html;
 
     // 3. Cria a ação primeiro (vincular o email_log)
     const { data: acao, error: aErr } = await sb.from('acoes_retencao').insert({
@@ -339,7 +334,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       dealership_id: client.dealership_id,
       tipo: 'email',
       titulo: finalSubject,
-      descricao: `E-mail enviado para ${to}`,
+      descricao: 'E-mail de retenção enviado',
       perfil_alvo: client.perfil_real,
       status: 'em_andamento',  // vai pra concluida_sucesso quando o envio confirmar
       actor_id: u.id,          // coluna correta no schema (não é created_by)
@@ -386,9 +381,9 @@ export async function acoesRoutes(app: FastifyInstance) {
     // 6. Audit
     await logAudit({
       actor_id: u.id, action: 'email.send', entity: 'acoes_retencao', entity_id: acao.id,
-      metadata: { to, provider: result.provider, status: result.status },
+      metadata: { client_id, provider: result.provider, status: result.status },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
 
     return {
       ok: result.ok,
@@ -401,7 +396,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       really_sent: isReallySent,
       mock_simulation: isMockOnly,
       error: result.error,
-      preview: { to, subject: finalSubject, body_html: finalHtml },
+      preview: { to, subject: finalSubject },
     };
   });
 
@@ -445,9 +440,9 @@ export async function acoesRoutes(app: FastifyInstance) {
       params: z.object({ client_id: z.string().uuid() }),
     },
   }, async (req, reply) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { client_id } = req.params as any;
-    const sb = adminClient();
+    const sb = publicClient(u.jwt);
     const { data: client } = await sb.from('clients')
       .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real')
       .eq('id', client_id).maybeSingle();
