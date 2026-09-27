@@ -136,28 +136,21 @@ A challenge tem **5 disciplinas**. A nota é a média das entregas, e TODAS as d
 
 ### ✅ Disciplina 5 — Inteligência Artificial & Machine Learning
 
-> Slide 18 do PPTX — Segmentação + Classificação preditiva
+Challenge 2 — VIN Share e retenção, o mesmo da sprint anterior. O notebook anterior e seu relatório permanecem como histórico. Os itens abaixo registram a entrega Sprint 3.
 
 | Item | Status | Onde está |
 |---|---|---|
-| **Jupyter Notebook (.ipynb)** | ✅ | `services/ml/notebooks/ford_segmentation.ipynb` (25 células: 12 MD + 13 code) |
-| **Relatório PDF** | ✅ | `docs/deliverables/Relatorio_Desafio_2_ML.pdf` |
-| **Análise exploratória (EDA)** | ✅ | Seções 1-2 do notebook |
-| **Tratamento de valores faltantes** | ✅ | Pipeline com SimpleImputer/StandardScaler |
-| **Tratamento de categóricas** | ✅ | OneHotEncoder no ColumnTransformer |
-| **Segmentação não-supervisionada (Base 1)** | ✅ | K-Means K=4 + elbow + silhouette no notebook |
-| **Justificativa do K** | ✅ | Seção 3 — joelho claro em K=4 |
-| **Interpretação dos clusters** | ✅ | Seção 4 — Fiel/Esquecido/Econômico/Abandono (não "Cluster 0") |
-| **Estratégias por perfil** | ✅ | Seção 7 do notebook + `ACOES_POR_PERFIL` no código |
-| **Classificação supervisionada (Base 2)** | ✅ | XGBoost com features pré-compra (zero leakage) |
-| **Sem data leakage** | ✅ | Lista de features fixa em `classifier_real.py` |
-| **Split treino/teste estratificado** | ✅ | `train_test_split` 80/20 com `random_state=42` |
-| **Métricas: accuracy/precision/recall/F1** | ✅ | Geradas localmente em `services/ml/models/metrics_real.json` (acc 62.7% · F1 0.60) |
-| **Matriz de confusão** | ✅ | No notebook + relatório PDF + página `/visao-ford` |
-| **Leitura executiva** | ✅ | Seção 8 do notebook |
-| **Aplicação dia-a-dia da concessionária** | ✅ | Sistema FUNCIONAL: `/leads` mostra 135k clientes priorizados |
+| **Notebook Sprint 3 (.ipynb)** | ✅ | `services/ml/notebooks/ford_retention_sprint3.ipynb` |
+| **Relatório de execução Sprint 3** | ✅ | `docs/deliverables/Relatorio_Sprint3_IA_ML_Challenge2.md` — números gravados pelo notebook após a execução |
+| **Dados e limites** | ✅ | Base sintética de 10.000 registros; o relatório deixa claro que não mede desempenho Ford real |
+| **Análise e preparação** | ✅ | EDA, auditoria, limites de domínio, imputação dentro do pipeline e codificação categórica |
+| **Segmentação Base 1** | ✅ | Comparação de K=2 a 8 por inércia e silhouette; K=4 mantido para os quatro perfis do desafio |
+| **Classificação Base 2** | ✅ | Regressão logística, Random Forest, XGBoost e baseline comparados por validação cruzada estratificada |
+| **Ajuste e avaliação** | ✅ | Busca em grade no treino; teste estratificado reservado para avaliar o modelo ajustado |
+| **Métricas por perfil e matriz de confusão** | ✅ | Incluídas no notebook e no relatório gerado |
+| **Uso no produto** | ✅ | Demonstração pelo `src.classifier.predict`; salva um candidato sem trocar o modelo da API |
 
-**Modelo serializado**: gerado localmente em `services/ml/models/classifier_real_v1.joblib` por `python -m src.scripts.train_real` (treinado em 175.554 VINs reais Ford BR). Os Parquets em `services/ml/data/` e os modelos em `services/ml/models/` não são commitados por tamanho e governança de dados.
+**Limites para produção:** o notebook não usa a planilha real ausente do repositório. A rota `/predict` carrega `classifier_base2.joblib`, não `classifier_real_v1.joblib`. O ETL real atual calcula agregados de perfil por concessionária e modelo sobre toda a base antes do split, portanto suas métricas não são evidência livre de vazamento. Corrigir esse fluxo e avaliar com dados autorizados por tempo ou concessionária antes de promover um modelo.
 
 ---
 
@@ -172,7 +165,8 @@ docs/deliverables/
 ├── FaroAI_Architecture.archimate      ← TOGAF Archi (Disciplina 3)
 ├── FaroAI_Architecture_Diagram.pdf    ← Diagrama exportado
 ├── FaroAI_Architecture_Diagram.png    ← Diagrama exportado
-├── Relatorio_Desafio_2_ML.pdf         ← Relatório ML (Disciplina 5)
+├── Relatorio_Sprint3_IA_ML_Challenge2.md ← Relatório Sprint 3, gerado pelo notebook
+├── Relatorio_Desafio_2_ML.pdf         ← Relatório anterior (histórico)
 ├── README_Entregaveis.docx            ← Índice
 └── CHECKLIST_ENTREGAS.md              ← Este arquivo
 ```
@@ -184,7 +178,8 @@ docs/
 └── SECURITY.md                        ← Cybersecurity (Disciplina 4)
 
 services/ml/notebooks/
-└── ford_segmentation.ipynb            ← Notebook (Disciplina 5)
+├── ford_segmentation.ipynb            ← Notebook anterior (histórico)
+└── ford_retention_sprint3.ipynb       ← Notebook Sprint 3 (Disciplina 5)
 ```
 
 ---
@@ -194,7 +189,7 @@ services/ml/notebooks/
 1. ⏳ **Gravar o vídeo de pitch** (até 3 min) — roteiro pronto em `Pitch_FaroAI.md`
 2. ⏳ **Subir o vídeo** no Teams ou YouTube unlisted
 3. ⏳ **Editar `Apresentacao_FaroAI.pptx` slide 1**: substituir `[inserir link do Teams]` pelo link real
-4. ⏳ **Submeter no Teams**: enviar TUDO junto (pptx + archimate + vídeo + notebook + PDF + docx)
+4. ⏳ **Submeter no Teams**: enviar tudo junto (pptx + ArchiMate + vídeo + notebook Sprint 3 + relatório Sprint 3 + docx; manter o PDF anterior como histórico)
 
 ---
 
@@ -218,9 +213,9 @@ services/ml/notebooks/
 | Mobile typecheck (warnings pré-existentes, sem bloqueios) | ✅ |
 | API rotas: 30+ endpoints REST documentados em Swagger | ✅ |
 | Banco: 18 migrations versionadas + RLS habilitada | ✅ |
-| 175.554 VINs Ford BR importados | ✅ |
+| Base real de 175.554 VINs acessível neste checkout | ❌ | Planilha e Parquet não incluídos; importação anterior consta no histórico do projeto |
 | Schema canônico Ford D1 (262 atributos × 14 seções) populado | ✅ |
-| Modelo XGBoost real treinado (acc 62.7%, F1 0.60) | ✅ |
+| Métricas do XGBoost real sem vazamento | ⏳ | Métricas anteriores foram reportadas, mas o ETL calcula agregados de perfil na base completa antes do split; revalidar após corrigir |
 
 ---
 
