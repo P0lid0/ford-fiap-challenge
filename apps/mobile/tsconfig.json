@@ -6,13 +6,11 @@
       "@/*": [
         "./*"
       ],
-      "@ford/types": [
-        "../../packages/types/src"
-      ],
       "@ford/ui": [
         "../../packages/ui/src"
       ]
-    }
+    },
+    "jsx": "react-jsx"
   },
   "include": [
     "**/*.ts",
