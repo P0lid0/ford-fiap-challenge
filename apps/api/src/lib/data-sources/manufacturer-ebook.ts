@@ -13,11 +13,96 @@
  * Custo: ~$0.50–1.00 por extração com Sonnet 4.6 (e-books têm 50–200 páginas).
  * Cache: confiamos no cache de Vehicle no banco — só roda em força/refresh ou 1ª busca.
  */
-import { fetchWithTimeout } from './_http.js';
+import { fetch as undiciFetch } from 'undici';
 import { extractFromFile } from '../ai-vision.js';
 import { filterEquipamentosBySource } from './manufacturer.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const MAX_EBOOK_BYTES = 30 * 1024 * 1024;
+const EBOOK_HOSTS: Record<string, string[]> = {
+  ford: ['ford.com.br', 'www.ford.com.br'],
+  toyota: ['toyota.com.br', 'www.toyota.com.br'],
+  ram: ['ram.com.br', 'www.ram.com.br'],
+  volkswagen: ['vw.com.br', 'www.vw.com.br', 'volkswagen.com.br', 'www.volkswagen.com.br'],
+  vw: ['vw.com.br', 'www.vw.com.br', 'volkswagen.com.br', 'www.volkswagen.com.br'],
+  chevrolet: ['chevrolet.com.br', 'www.chevrolet.com.br'],
+  gm: ['chevrolet.com.br', 'www.chevrolet.com.br'],
+  fiat: ['fiat.com.br', 'www.fiat.com.br'],
+  renault: ['renault.com.br', 'www.renault.com.br'],
+  jeep: ['jeep.com.br', 'www.jeep.com.br'],
+  chery: ['chery.com.br', 'www.chery.com.br'],
+  'caoa chery': ['chery.com.br', 'www.chery.com.br'],
+  kia: ['kia.com.br', 'www.kia.com.br'],
+  mitsubishi: ['mitsubishimotors.com.br', 'www.mitsubishimotors.com.br'],
+  peugeot: ['peugeot.com.br', 'www.peugeot.com.br'],
+};
+
+/** Accept only HTTPS URLs on the named manufacturer's public website. */
+export function isTrustedEbookUrl(rawUrl: string, marca: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    const hosts = EBOOK_HOSTS[marca.toLowerCase().trim()];
+    return url.protocol === 'https:'
+      && !url.username && !url.password
+      && (!url.port || url.port === '443')
+      && Boolean(hosts?.includes(url.hostname.toLowerCase()));
+  } catch {
+    return false;
+  }
+}
+
+async function downloadEbookPdf(rawUrl: string, marca: string): Promise<Buffer | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  let currentUrl = rawUrl;
+
+  try {
+    for (let redirects = 0; redirects <= 3; redirects++) {
+      if (!isTrustedEbookUrl(currentUrl, marca)) return null;
+      const response = await undiciFetch(currentUrl, {
+        headers: { 'User-Agent': UA, 'Accept': 'application/pdf,*/*' },
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+        await response.body?.cancel();
+        if (!location || redirects === 3) return null;
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+      if (!response.ok || !response.body) {
+        await response.body?.cancel();
+        return null;
+      }
+
+      const length = Number(response.headers.get('content-length'));
+      if (Number.isFinite(length) && length > MAX_EBOOK_BYTES) {
+        await response.body.cancel();
+        return null;
+      }
+
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_EBOOK_BYTES) {
+          await reader.cancel();
+          return null;
+        }
+        chunks.push(value);
+      }
+      return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), totalBytes);
+    }
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // === Registry curado — URLs validadas em 2026-05-14 ===
 // Chaves em lowercase. Modelos sem hyphen no slug (ex: f-150 vira "f-150").
@@ -120,25 +205,22 @@ export async function fetchEbookSpecs(
 ): Promise<EbookExtraction | null> {
   let buf: Buffer;
   try {
-    const r = await fetchWithTimeout(url, {
-      headers: { 'User-Agent': UA, 'Accept': 'application/pdf,*/*' },
-    }, 30_000);
-    if (!r.ok) {
-      console.warn(`[ebook] ${r.status} ao baixar ${url}`);
+    if (!hintMarca || !isTrustedEbookUrl(url, hintMarca)) {
+      console.warn('[ebook] URL fora da allowlist da fabricante');
       return null;
     }
-    const ab = await r.arrayBuffer();
-    buf = Buffer.from(ab);
+    const downloaded = await downloadEbookPdf(url, hintMarca);
+    if (!downloaded) {
+      console.warn('[ebook] download rejeitado, falhou ou excedeu o limite');
+      return null;
+    }
+    buf = downloaded;
     if (buf.length < 5000) {
       console.warn(`[ebook] PDF muito pequeno (${buf.length}B), provavelmente erro page`);
       return null;
     }
-    if (buf.length > 30 * 1024 * 1024) {
-      console.warn(`[ebook] PDF muito grande (${(buf.length / 1024 / 1024).toFixed(1)}MB), pulando`);
-      return null;
-    }
-  } catch (err: any) {
-    console.warn(`[ebook] erro ao baixar ${url}:`, err?.message);
+  } catch (err: unknown) {
+    console.warn('[ebook] erro ao baixar PDF:', err instanceof Error ? err.message : 'unknown error');
     return null;
   }
 
@@ -176,7 +258,7 @@ LEMBRE: Cada dado errado quebra a confiança do cliente.
       extracted_by: `${r.provider}:${r.model}`,
     };
   } catch (err: any) {
-    console.error(`[ebook] falha na extração de ${url}:`, err?.message);
+    console.error('[ebook] extraction failed:', { url, error: err?.message });
     return null;
   }
 }

@@ -9,7 +9,10 @@
     "start": "node dist/server.js",
     "lint": "eslint src --ext ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.40.0",
@@ -29,6 +32,7 @@
     "fastify": "5.2.0",
     "fastify-plugin": "^5.1.0",
     "fastify-type-provider-zod": "4.0.2",
+    "jose": "^5.9.6",
     "openai": "4.77.0",
     "pdf-parse": "^2.4.5",
     "pino": "9.5.0",
@@ -38,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "22.10.2",
+    "@vitest/coverage-v8": "2.1.8",
     "tsx": "4.19.2",
     "typescript": "5.7.2",
     "vitest": "2.1.8"

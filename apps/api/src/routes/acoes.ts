@@ -6,12 +6,20 @@
  *   - Gestor dispara campanha em lote pra todos os "Esquecidos" da loja
  *   - Painel de produtividade do consultor
  *   - Histórico que alimenta o re-treino do modelo (ação X → desfecho Y)
+ *
+ * Autorização:
+ *   - Campanha em lote → gestor ou admin.
+ *   - Demais rotas → qualquer usuário autenticado, limitado ao escopo de
+ *     concessionária (lib/data-access.ts): leitura via readScopeOf,
+ *     alteração/envio via writeScopeOf.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { requireUser } from '../plugins/auth.js';
-import { adminClient, publicClient } from '../lib/supabase.js';
+import { authorize, requireUser } from '../plugins/auth.js';
+import { adminClient } from '../lib/supabase.js';
+import { assertCanModify, canAccessDealership, dbFor, readScopeOf, requireDealership } from '../lib/data-access.js';
+import { forbidden, notFound, unprocessable } from '../lib/api-error.js';
 import { logAudit } from '../lib/audit.js';
 import { sendEmail, templateFor } from '../lib/email.js';
 
@@ -59,38 +67,34 @@ export async function acoesRoutes(app: FastifyInstance) {
     },
   }, async (req, reply) => {
     const u = requireUser(req);
-    if (!u.dealership_id) {
-      reply.code(400);
-      return { error: 'no_dealership', message: 'usuário não está vinculado a uma concessionária' };
-    }
+    const dealershipId = requireDealership(u); // 403 no_dealership
     const body = req.body as z.infer<typeof CreateAcaoBody>;
-    const sb = adminClient();
+    const sb = dbFor(u);
 
     // Confirma que o client pertence à mesma dealership (defense in depth além da RLS)
-    const { data: client } = await sb.from('clients')
+    const { data: client, error: findErr } = await sb.from('clients')
       .select('id, dealership_id').eq('id', body.client_id).maybeSingle();
-    if (!client || client.dealership_id !== u.dealership_id) {
-      reply.code(404);
-      return { error: 'client_not_found' };
+    if (findErr) throw findErr;
+    if (!client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
+      throw notFound('cliente não encontrado', 'client_not_found');
+    }
+    if (client.dealership_id !== dealershipId) {
+      throw forbidden('ações só podem ser registradas para clientes da própria concessionária');
     }
 
-    const { data, error } = await sb.from('acoes_retencao').insert({
+    const { data, error } = await adminClient().from('acoes_retencao').insert({
       ...body,
-      dealership_id: u.dealership_id,
+      dealership_id: dealershipId,
       actor_id: u.id,
       completed_at: body.status?.startsWith('concluida_') ? new Date().toISOString() : null,
     }).select().single();
-    if (error) {
-      req.log.error({ error }, '[acoes] insert failed');
-      reply.code(400);
-      return { error: 'insert_failed', message: error.message };
-    }
+    if (error) throw error; // falha de banco → 500 (detalhe só no log)
 
     await logAudit({
       actor_id: u.id, action: 'acao.created', entity: 'acoes_retencao',
       entity_id: data.id, metadata: { tipo: body.tipo, client_id: body.client_id },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     reply.code(201);
     return data;
   });
@@ -111,8 +115,9 @@ export async function acoesRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
+    const scope = readScopeOf(u);
     const q = req.query as any;
-    const sb = publicClient(u.jwt);
+    const sb = dbFor(u);
 
     let query = sb.from('acoes_retencao')
       .select('*, clients!inner(id, modelo_comprado, versao_comprada, nome_cliente)',
@@ -120,6 +125,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       .order('created_at', { ascending: false })
       .range(q.offset, q.offset + q.limit - 1);
 
+    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
     if (q.client_id) query = query.eq('client_id', q.client_id);
     if (q.status) query = query.eq('status', q.status);
     if (q.tipo) query = query.eq('tipo', q.tipo);
@@ -138,11 +144,17 @@ export async function acoesRoutes(app: FastifyInstance) {
       params: z.object({ id: z.string().uuid() }),
       body: UpdateAcaoBody,
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
     const body = req.body as z.infer<typeof UpdateAcaoBody>;
-    const sb = adminClient();
+    const sb = dbFor(u);
+
+    const { data: current, error: findErr } = await sb.from('acoes_retencao')
+      .select('id, dealership_id').eq('id', id).maybeSingle();
+    if (findErr) throw findErr;
+    assertCanModify(u, current?.dealership_id, 'ação não encontrada'); // 404 ou 403
+    if (!current) throw notFound('ação não encontrada');
 
     const updates: any = { ...body };
     if (body.status?.startsWith('concluida_')) {
@@ -151,21 +163,19 @@ export async function acoesRoutes(app: FastifyInstance) {
 
     const { data, error } = await sb.from('acoes_retencao')
       .update(updates).eq('id', id).select().single();
-    if (error || !data) {
-      reply.code(404);
-      return { error: 'not_found_or_failed', message: error?.message };
-    }
+    if (error) throw error;
 
     await logAudit({
       actor_id: u.id, action: 'acao.updated', entity: 'acoes_retencao',
       entity_id: id, metadata: { status: body.status },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     return data;
   });
 
   // ===== CAMPANHA em lote (cria N ações pra todos do perfil) =====
   app.post('/acoes/campanha', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 2 — Retenção'],
       summary: 'Dispara campanha em lote — cria 1 ação planejada para cada cliente do perfil',
@@ -173,21 +183,14 @@ export async function acoesRoutes(app: FastifyInstance) {
     },
   }, async (req, reply) => {
     const u = requireUser(req);
-    if (!u.dealership_id) {
-      reply.code(400);
-      return { error: 'no_dealership' };
-    }
-    if (u.role !== 'gestor' && u.role !== 'admin') {
-      reply.code(403);
-      return { error: 'forbidden', message: 'apenas gestor/admin pode criar campanhas' };
-    }
+    const dealershipId = requireDealership(u); // 403 no_dealership
     const b = req.body as z.infer<typeof CampaignBody>;
-    const sb = adminClient();
+    const sb = dbFor(u);
 
     // Busca clientes alvo
     let q = sb.from('clients')
       .select('id, predictions(perfil_predito, risco_evasao)')
-      .eq('dealership_id', u.dealership_id)
+      .eq('dealership_id', dealershipId)
       .limit(b.limit);
     const { data: clients, error: cerr } = await q;
     if (cerr) throw cerr;
@@ -206,7 +209,7 @@ export async function acoesRoutes(app: FastifyInstance) {
     const campaign_id = randomUUID();
     const rows = targets.map((c: any) => ({
       client_id: c.id,
-      dealership_id: u.dealership_id,
+      dealership_id: dealershipId,
       actor_id: u.id,
       tipo: b.tipo,
       titulo: b.titulo,
@@ -218,18 +221,14 @@ export async function acoesRoutes(app: FastifyInstance) {
     }));
 
     const { data, error } = await sb.from('acoes_retencao').insert(rows).select();
-    if (error) {
-      req.log.error({ error }, '[campaign] insert failed');
-      reply.code(400);
-      return { error: 'campaign_failed', message: error.message };
-    }
+    if (error) throw error; // falha de banco → 500 (detalhe só no log)
 
     await logAudit({
       actor_id: u.id, action: 'campaign.created', entity: 'acoes_retencao',
       entity_id: campaign_id,
       metadata: { perfil: b.perfil, tipo: b.tipo, count: data?.length ?? 0 },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     reply.code(201);
     return { ok: true, campaign_id, created: data?.length ?? 0 };
   });
@@ -242,8 +241,10 @@ export async function acoesRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
-    const sb = publicClient(u.jwt);
-    const { data } = await sb.from('acoes_retencao').select('status, tipo, perfil_alvo, created_at, completed_at');
+    const scope = readScopeOf(u);
+    let query = dbFor(u).from('acoes_retencao').select('status, tipo, perfil_alvo, created_at, completed_at');
+    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
+    const { data } = await query;
     const rows = data ?? [];
 
     const total = rows.length;
@@ -291,17 +292,12 @@ export async function acoesRoutes(app: FastifyInstance) {
       summary: 'Envia e-mail real pro cliente e registra como ação',
       body: z.object({
         client_id: z.string().uuid(),
-        subject: z.string().min(2).max(200).optional(),
-        body_html: z.string().min(10).max(10_000).optional(),
-        // Se omitido, usa o template do perfil do cliente
-        use_template: z.boolean().optional().default(true),
-        // Override do destinatário (se vazio, usa client.email_cliente)
-        to_override: z.string().email().optional(),
+        subject: z.string().min(2).max(200).regex(/^[^\r\n]+$/).optional(),
       }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
-    const { client_id, subject, body_html, use_template, to_override } = req.body as any;
+    const { client_id, subject } = req.body as any;
     const sb = adminClient();
 
     // 1. Busca cliente
@@ -309,28 +305,25 @@ export async function acoesRoutes(app: FastifyInstance) {
       .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real, dealership_id')
       .eq('id', client_id).maybeSingle();
     if (cErr) throw cErr;
-    if (!client) { reply.code(404); return { error: 'client_not_found' }; }
+    assertCanModify(u, client?.dealership_id, 'cliente não encontrado'); // 404 ou 403
+    if (!client) throw notFound('cliente não encontrado', 'client_not_found');
 
-    const to = to_override ?? client.email_cliente;
+    const to = client.email_cliente;
     if (!to) {
-      reply.code(400);
-      return {
-        error: 'no_email',
-        message: 'Cliente sem e-mail cadastrado. Edite a ficha e adicione um e-mail antes de enviar.',
-      };
+      // Requisição válida, mas o cadastro do cliente impede o envio → 422.
+      throw unprocessable(
+        'Cliente sem e-mail cadastrado. Edite a ficha e adicione um e-mail antes de enviar.',
+        'no_email',
+      );
     }
 
     // 2. Monta subject + body — template do perfil ou customizado
     const modelo = client.model_name ?? client.modelo_comprado ?? 'seu Ford';
     const nome = client.nome_cliente ?? 'Cliente Ford';
     const dealer = client.dealer_code_venda ? String(client.dealer_code_venda) : '';
-    let finalSubject = subject;
-    let finalHtml = body_html;
-    if (!finalSubject || !finalHtml || use_template) {
-      const tpl = templateFor(client.perfil_real, modelo, nome, dealer);
-      finalSubject = finalSubject ?? tpl.subject;
-      finalHtml = finalHtml ?? tpl.html;
-    }
+    const tpl = templateFor(client.perfil_real, modelo, nome, dealer);
+    const finalSubject = (subject ?? tpl.subject).replace(/[\r\n]+/g, ' ').slice(0, 200);
+    const finalHtml = tpl.html;
 
     // 3. Cria a ação primeiro (vincular o email_log)
     const { data: acao, error: aErr } = await sb.from('acoes_retencao').insert({
@@ -339,16 +332,13 @@ export async function acoesRoutes(app: FastifyInstance) {
       dealership_id: client.dealership_id,
       tipo: 'email',
       titulo: finalSubject,
-      descricao: `E-mail enviado para ${to}`,
+      descricao: 'E-mail de retenção enviado',
       perfil_alvo: client.perfil_real,
       status: 'em_andamento',  // vai pra concluida_sucesso quando o envio confirmar
       actor_id: u.id,          // coluna correta no schema (não é created_by)
       created_at: new Date().toISOString(),
     }).select().single();
-    if (aErr || !acao) {
-      reply.code(500);
-      return { error: 'acao_create_failed', message: aErr?.message };
-    }
+    if (aErr || !acao) throw aErr ?? new Error('falha ao registrar a ação de e-mail');
 
     // 4. Envia o e-mail (Resend ou mock)
     const result = await sendEmail({
@@ -386,9 +376,9 @@ export async function acoesRoutes(app: FastifyInstance) {
     // 6. Audit
     await logAudit({
       actor_id: u.id, action: 'email.send', entity: 'acoes_retencao', entity_id: acao.id,
-      metadata: { to, provider: result.provider, status: result.status },
+      metadata: { client_id, provider: result.provider, status: result.status },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
 
     return {
       ok: result.ok,
@@ -401,7 +391,7 @@ export async function acoesRoutes(app: FastifyInstance) {
       really_sent: isReallySent,
       mock_simulation: isMockOnly,
       error: result.error,
-      preview: { to, subject: finalSubject, body_html: finalHtml },
+      preview: { to, subject: finalSubject },
     };
   });
 
@@ -444,14 +434,16 @@ export async function acoesRoutes(app: FastifyInstance) {
       summary: 'Renderiza preview do template de e-mail para o cliente',
       params: z.object({ client_id: z.string().uuid() }),
     },
-  }, async (req, reply) => {
-    requireUser(req);
+  }, async (req) => {
+    const u = requireUser(req);
     const { client_id } = req.params as any;
-    const sb = adminClient();
+    const sb = dbFor(u);
     const { data: client } = await sb.from('clients')
-      .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real')
+      .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real, dealership_id')
       .eq('id', client_id).maybeSingle();
-    if (!client) { reply.code(404); return { error: 'not_found' }; }
+    if (!client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
+      throw notFound('cliente não encontrado', 'client_not_found');
+    }
     const modelo = client.model_name ?? client.modelo_comprado ?? 'seu Ford';
     const nome = client.nome_cliente ?? 'Cliente Ford';
     const dealer = client.dealer_code_venda ? String(client.dealer_code_venda) : '';

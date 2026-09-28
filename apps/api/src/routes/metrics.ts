@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireUser } from '../plugins/auth.js';
-import { adminClient } from '../lib/supabase.js';
+import { authorize, requireUser } from '../plugins/auth.js';
+import { dbFor, readScopeOf } from '../lib/data-access.js';
 
 /**
  * KPIs da concessionária / rede pro Desafio 2 (Retenção VIN Share).
@@ -38,14 +38,14 @@ export async function metricRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
-    const sb = adminClient();
-    const dealershipFilter = u.role === 'admin' || u.role === 'gestor' ? null : u.dealership_id;
+    const sb = dbFor(u);
+    const scope = readScopeOf(u);
     const { dealer_code, model_name, idade_bucket } = req.query as any;
 
     // Helper: aplica filtros opcionais (granularidade pedida no slide D2)
     const anoAtual = new Date().getFullYear();
     const applyFilters = (q: any) => {
-      if (dealershipFilter) q = q.eq('dealership_id', dealershipFilter);
+      if (scope.kind === 'dealership') q = q.eq('dealership_id', scope.dealershipId);
       if (dealer_code) q = q.eq('dealer_code_venda', dealer_code);
       if (model_name) q = q.eq('model_name', model_name);
       if (idade_bucket) {
@@ -110,7 +110,7 @@ export async function metricRoutes(app: FastifyInstance) {
     const vinShareEstimado = totalClients > 0 ? (ativosCount ?? 0) / totalClients : 0;
 
     return {
-      escopo: dealershipFilter ?? 'rede',
+      escopo: u.role === 'admin' || u.role === 'gestor' ? 'rede' : (u.dealership_id ?? 'sem_concessionaria'),
       filtros_aplicados: { dealer_code, model_name, idade_bucket },
       total_clientes: totalClients,
       clientes_ativos: ativosCount ?? 0,
@@ -142,17 +142,19 @@ export async function metricRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { dentro_de_dias, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = dbFor(u);
+    const scope = readScopeOf(u);
 
     // Pegamos um lote maior e filtramos em memória — Supabase não tem date_add nativo
-    const { data, error } = await sb.from('clients')
+    let query = sb.from('clients')
       .select('id, nome_cliente, model_name, model_year, vin_hash, dealer_code_venda, ' +
               'sales_date, delivery_date, ultimo_servico, num_revisoes, km_max, ' +
               'dias_desde_ultima_revisao, perfil_real, warranty_start_date')
-      .not('model_name', 'is', null)
-      .limit(2000);
+      .not('model_name', 'is', null);
+    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
+    const { data, error } = await query.limit(2000);
     if (error) throw error;
 
     const hoje = new Date();
@@ -224,15 +226,17 @@ export async function metricRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { anos_garantia, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = dbFor(u);
+    const scope = readScopeOf(u);
 
-    const { data, error } = await sb.from('clients')
+    let query = sb.from('clients')
       .select('id, nome_cliente, model_name, model_year, vin_hash, dealer_code_venda, ' +
               'warranty_start_date, perfil_real, num_revisoes')
-      .not('warranty_start_date', 'is', null)
-      .limit(2000);
+      .not('warranty_start_date', 'is', null);
+    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
+    const { data, error } = await query.limit(2000);
     if (error) throw error;
 
     const hoje = new Date();
@@ -289,6 +293,7 @@ export async function metricRoutes(app: FastifyInstance) {
   // Útil pra ação corretiva: visita do regional, treinamento, etc.
   // ====================================================================
   app.get('/metrics/anomalias-dealer', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 2 — Retenção'],
       summary: 'Dealers com taxa de fidelização anômala (z-score < -1)',
@@ -298,9 +303,9 @@ export async function metricRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { min_clientes, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = dbFor(u);
 
     // Agregação roda DENTRO do Postgres via RPC. Postgrest tem limite de 1000
     // linhas no SELECT direto, então uma agregação manual em JS com 175k VINs

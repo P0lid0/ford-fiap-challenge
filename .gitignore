@@ -43,6 +43,9 @@ services/ml/data/
 .DS_Store
 Thumbs.db
 
+# Relatórios de teste (gerados por `pnpm --filter @ford/api test`)
+apps/api/test-results/
+
 # Logs
 *.log
 npm-debug.log*

@@ -34,8 +34,8 @@ $$;
 create policy profiles_self_select on public.profiles
   for select using (id = auth.uid() or public.is_admin());
 
-create policy profiles_self_update on public.profiles
-  for update using (id = auth.uid()) with check (id = auth.uid());
+-- Role and dealership assignment are provisioned by an administrator only.
+revoke update on table public.profiles from anon, authenticated, public;
 
 create policy profiles_admin_all on public.profiles
   for all using (public.is_admin()) with check (public.is_admin());
@@ -114,7 +114,7 @@ create policy vehicles_authenticated_read on public.vehicles
 
 -- ============== ai_insights ==============
 create policy ai_insights_authenticated_read on public.ai_insights
-  for select using (auth.role() = 'authenticated');
+  for select using (public.is_admin());
 
 -- ============== audit_log ==============
 create policy audit_log_admin_read on public.audit_log

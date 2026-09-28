@@ -87,9 +87,10 @@ a distribuição comportamental real dos 175k VINs.
 > porquê cada um está no topo.*
 >
 > ***Bloco 3 — Ação real.*** *O vendedor abre a ficha, vê a Visão 360, e dispara
-> e-mail real via Resend com template ajustado ao perfil. Tudo auditado.*
+> e-mail via Resend com template ajustado ao perfil. A ação e o envio ficam
+> registrados.*
 >
-> *Pipeline 100% transparente: cada decisão tem fonte e cada predição tem
+> *Pipeline rastreável: cada dado tem sua fonte e cada predição tem
 > sinal explicável."*
 
 **[Visual sugerido]**: Screen recording de 3 telas rápidas — `/veiculos/comparar`
@@ -118,8 +119,9 @@ mostrando o schema canônico · `/leads` mostrando os sinais coloridos por lead 
 >    qualitativo — reduz erro do modelo puro.*
 > 4. ***Pronto pra usar**: nosso MVP já roda hoje com 175k clientes reais,
 >    enquanto competidor leva semanas de setup.*
-> 5. ***LGPD-first**: VIN_Hash anonimizado, audit log de e-mails, RLS no banco
->    desde o dia 1.*"
+> 5. ***Controles de acesso e minimização**: RLS por concessionária, identificadores
+>    pseudonimizados em integrações e trilha técnica; governança LGPD ainda depende
+>    de aprovações e controles do ambiente.*"
 
 **[Visual sugerido]**: Tabela comparativa "Faro AI vs Salesforce vs Linx vs
 DataRobot" com checks verdes onde a Faro AI ganha.
@@ -130,9 +132,9 @@ DataRobot" com checks verdes onde a Faro AI ganha.
 
 > *"Pra fechar, o roadmap das próximas sprints e como mediremos sucesso.*
 >
-> ***Sprint 3** (entrega 14/06): integração com APIs de veículo conectado
-> (telematics), dashboards regionais com drilldown por dealer, e treino do
-> modelo com 6 meses de novo histórico.*
+> ***Sprint 3**: pipeline DevSecOps, RBAC e RLS, HMAC com proteção contra replay
+> no serviço ML e armazenamento seguro da sessão mobile. IoT e MQTT não fazem
+> parte do escopo.*
 >
 > ***Sprint 4** (entrega 12/07): mobile-first pra vendedor de loja, motor de
 > campanhas automáticas com A/B testing, e API pública pra integração com o
@@ -140,8 +142,8 @@ DataRobot" com checks verdes onde a Faro AI ganha.
 >
 > ***Critérios de qualidade que perseguimos:***
 > - *Performance: tela carrega em <2s, lead ranking de 175k em <1s via RPC SQL.*
-> - *Segurança: RLS no Postgres, HMAC nas requisições ML, sem PII no contexto
->   de IA.*
+> - *Segurança: RLS no Postgres e HMAC no ML; padrões comuns de identificadores
+>   diretos são removidos do texto, mas o contexto ainda pode conter dados pessoais.*
 > - *Usabilidade: UI testada com vendedor de loja real, 4 cliques pra disparar
 >   ação.*
 >
@@ -183,13 +185,13 @@ Plataforma SaaS que combina:
 | Custo entrada | **Open-stack** | US$150/user | R$1k/mês | US$10k/mês |
 | Dataset Ford BR real | ✅ 175k VINs | ❌ | ❌ | ❌ |
 | IA explicável | ✅ Sinais visíveis | ⚠️ Limitada | ❌ | ⚠️ SHAP only |
-| LGPD-first | ✅ VIN_Hash + RLS | ✅ | ⚠️ | ⚠️ |
+| Controles de acesso | ✅ RLS + minimização | ✅ | ⚠️ | ⚠️ |
 | Arquitetura preparada para produção | ✅ MVP funcional | 3-6 meses | 1-2 meses | 2-3 meses |
 | Integração FIPE/FENABRAVE | ✅ Nativa | ❌ | ⚠️ | ❌ |
 
 ## Critérios de qualidade
 - **Performance**: <2s render · <1s ranking 175k leads
-- **Segurança**: RLS Postgres · HMAC payloads · audit log · LGPD-ready
+- **Segurança**: RLS Postgres · HMAC · trilha de auditoria. TLS, alertas e adequação LGPD dependem do deploy.
 - **Usabilidade**: ≤4 cliques pra ação · UI 100% PT-BR
 - **Observabilidade**: 100% das chamadas IA rastreadas (custo + provider + cache)
 
@@ -215,9 +217,9 @@ Plataforma SaaS que combina:
 
 | Sprint | Período | Entregas |
 |---|---|---|
-| ✅ **Sprint 1** (atual) | 24/05/2026 | MVP D1 + D2 com 175k VINs reais, 135k leads detectados, envio real de e-mail, schema canônico 262 atributos |
-| 🟡 **Sprint 2** | 07/06/2026 | Mobile-responsive · re-treino do XGBoost com novos dados · onboarding sem fricção |
-| ⏭ **Sprint 3** | 14/06/2026 | API de telematics (veículo conectado) · dashboards regionais com drilldown · KPIs de impacto financeiro |
+| ✅ **Sprint 1** | 24/05/2026 | MVP D1 + D2 com 175k VINs reais, 135k leads detectados, envio real de e-mail, schema canônico 262 atributos |
+| ✅ **Sprint 2** | 07/06/2026 | Mobile-responsive · re-treino do XGBoost com novos dados · onboarding sem fricção |
+| 🟡 **Sprint 3** | 2026 | DevSecOps · RBAC/RLS · HMAC com anti-replay · SecureStore no app nativo |
 | ⏭ **Sprint 4** | 12/07/2026 | App mobile pro vendedor de loja · motor de campanhas A/B · API pública pra integrar com CRM Ford |
 
 ---

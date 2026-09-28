@@ -208,11 +208,22 @@ export const EMAIL_TEMPLATES = {
   },
 } as const;
 
+function escapeHtml(value: string): string {
+  const entities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return value.replace(/[&<>"']/g, char => entities[char]!);
+}
+
 export function templateFor(perfil: string | null, modelo: string, nome: string, dealer: string) {
   const key = (perfil && perfil in EMAIL_TEMPLATES) ? perfil as keyof typeof EMAIL_TEMPLATES : 'esquecido';
   const tpl = EMAIL_TEMPLATES[key];
   return {
-    subject: tpl.subject(modelo),
-    html: tpl.html(nome, modelo, dealer),
+    subject: tpl.subject(modelo.replace(/[\r\n]+/g, ' ').slice(0, 100)),
+    html: tpl.html(escapeHtml(nome), escapeHtml(modelo), escapeHtml(dealer)),
   };
 }

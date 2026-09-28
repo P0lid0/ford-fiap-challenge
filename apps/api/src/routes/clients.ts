@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { requireUser } from '../plugins/auth.js';
+import { authorize, requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
-import { createHash } from 'node:crypto';
-import { adminClient, publicClient } from '../lib/supabase.js';
+import { createHash, createHmac } from 'node:crypto';
+import { adminClient } from '../lib/supabase.js';
+import { assertCanModify, canAccessDealership, dbFor, readScopeOf, requireDealership } from '../lib/data-access.js';
+import { conflict, notFound } from '../lib/api-error.js';
 import { logAudit } from '../lib/audit.js';
+import { env } from '../config.js';
 import { predict } from '../modules/retention/ml-client.js';
 import { classifyHybrid } from '../modules/retention/hybrid-classifier.js';
 
@@ -74,9 +77,15 @@ const CreateClientBody = z.object({
 });
 
 function hashCpf(cpf: string): string {
-  return createHash('sha256').update(cpf + 'ford-fiap-pepper').digest('hex');
+  return createHmac('sha256', env.CLIENT_CPF_PEPPER).update(cpf).digest('hex');
 }
 
+/**
+ * Autorização: todas as rotas exigem usuário autenticado (plugin de auth).
+ * Escopo de concessionária (lib/data-access.ts):
+ *   - leitura (lista/detalhe) → readScopeOf: analista só a própria loja; gestor/admin a rede
+ *   - alteração (notas/reclassificar) → writeScopeOf: admin a rede; demais só a própria loja
+ */
 export async function clientRoutes(app: FastifyInstance) {
   // Cadastrar venda + disparar predição automática
   app.post('/clients', {
@@ -87,10 +96,7 @@ export async function clientRoutes(app: FastifyInstance) {
     },
   }, async (req, reply) => {
     const u = requireUser(req);
-    if (!u.dealership_id) {
-      reply.code(400);
-      return { error: 'no_dealership', message: 'usuário não está vinculado a uma concessionária' };
-    }
+    const dealershipId = requireDealership(u); // 403 no_dealership: todo cliente pertence a uma loja
 
     const body = req.body as z.infer<typeof CreateClientBody>;
     const { cpf, vin_hash, ...rest } = body;
@@ -101,7 +107,7 @@ export async function clientRoutes(app: FastifyInstance) {
       || createHash('sha256').update(`${rest.model_name}-${rest.model_year}-${rest.sales_date}-${Date.now()}-${u.id}`).digest('hex').slice(0, 64);
 
     const insertRow: any = {
-      dealership_id: u.dealership_id,
+      dealership_id: dealershipId,
       created_by: u.id,
       vin_hash: vinFinal,
       model_name: rest.model_name,
@@ -136,9 +142,9 @@ export async function clientRoutes(app: FastifyInstance) {
 
     const { data: client, error } = await sb.from('clients').insert(insertRow).select().single();
     if (error) {
-      req.log.error({ error }, '[create client] failed');
-      reply.code(400);
-      return { error: 'insert_failed', message: error.message };
+      // 23505 = unique_violation no Postgres (vin_hash é único).
+      if (error.code === '23505') throw conflict('já existe um cliente com este VIN', 'vin_already_exists');
+      throw error; // demais falhas de banco → 500 (detalhe só no log)
     }
 
     // Dispara predição síncrona — só faz se tiver dados sintéticos completos
@@ -157,7 +163,7 @@ export async function clientRoutes(app: FastifyInstance) {
         canal_aquisicao: rest.canal_aquisicao ?? 'concessionaria',
         primeiro_carro: rest.primeiro_carro ?? false,
         test_drive_realizado: rest.test_drive_realizado ?? false,
-        dealership_id: u.dealership_id,
+        dealership_id: dealershipId,
       });
     }
 
@@ -186,7 +192,7 @@ export async function clientRoutes(app: FastifyInstance) {
       entity_id: client.id,
       metadata: { perfil: prediction?.perfil_predito, vin: vinFinal.slice(0, 8) + '...' },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
 
     reply.code(201);
     return { client, prediction: predRow };
@@ -210,8 +216,9 @@ export async function clientRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
+    const scope = readScopeOf(u);
     const { perfil, perfil_real, model_name, is_ford_real, risco_min, search, limit, offset } = req.query as any;
-    const sb = adminClient();
+    const sb = dbFor(u);
 
     let q = sb
       .from('clients')
@@ -222,6 +229,7 @@ export async function clientRoutes(app: FastifyInstance) {
               'predictions(perfil_predito, risco_evasao, confianca, created_at, source)',
               { count: 'exact' });
 
+    if (scope.kind === 'dealership') q = q.eq('dealership_id', scope.dealershipId);
     if (typeof is_ford_real === 'boolean') q = q.eq('is_ford_real', is_ford_real);
     if (perfil_real) q = q.eq('perfil_real', perfil_real);
     if (model_name) q = q.eq('model_name', model_name);
@@ -253,12 +261,16 @@ export async function clientRoutes(app: FastifyInstance) {
       summary: 'Detalhe do cliente (Base 2 + todas as predições)',
       params: z.object({ id: z.string().uuid() }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const sb = publicClient(u.jwt);
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).single();
-    if (error || !client) { reply.code(404); return { error: 'not_found' }; }
+    const sb = dbFor(u);
+    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).maybeSingle();
+    // Cliente de outra concessionária → 404 (não revela que o registro existe).
+    if (error) throw error;
+    if (!client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
+      throw notFound('cliente não encontrado');
+    }
 
     const { data: predictions } = await sb
       .from('predictions').select('*').eq('client_id', id).order('created_at', { ascending: false });
@@ -282,6 +294,7 @@ export async function clientRoutes(app: FastifyInstance) {
   // Filtros suportados: perfil, modelo, dealer_code, sinal específico.
   // ====================================================================
   app.get('/clients/leads', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 2 — Retenção'],
       summary: 'Leads priorizados (risco composto + sinais explicáveis)',
@@ -302,9 +315,9 @@ export async function clientRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { risco_min, perfil, modelo, dealer_code, sinal, limit } = req.query as any;
-    const sb = adminClient();
+    const sb = dbFor(u);
 
     // RPC roda agregação dentro do Postgres (Postgrest tem limite de 1000 linhas)
     const { data, error } = await sb.rpc('leads_ranqueados', {
@@ -337,38 +350,25 @@ export async function clientRoutes(app: FastifyInstance) {
 
   // GET /clients/leads/stats — KPIs agregados pros KPI cards da página /leads
   app.get('/clients/leads/stats', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 2 — Retenção'],
       summary: 'Estatísticas agregadas de leads (volume por urgência + sinais mais comuns)',
     },
   }, async (req) => {
-    requireUser(req);
-    const sb = adminClient();
-    const { data, error } = await sb.rpc('leads_ranqueados', {
-      risco_min: 0.4, filtro_perfil: null, filtro_modelo: null,
-      filtro_dealer: null, filtro_sinal: null, limite: 1_000_000,
-    });
+    const u = requireUser(req);
+    const { data, error } = await dbFor(u).rpc('leads_ranqueados_stats');
     if (error) throw error;
-    const linhas = data ?? [];
-    const alto = linhas.filter((r: any) => r.risco_composto >= 0.7).length;
-    const medio = linhas.filter((r: any) => r.risco_composto >= 0.5 && r.risco_composto < 0.7).length;
-    const baixo = linhas.filter((r: any) => r.risco_composto >= 0.4 && r.risco_composto < 0.5).length;
-    // Contagem por sinal
-    const porSinal: Record<string, number> = {};
-    for (const r of linhas as any[]) {
-      for (const s of (r.sinais ?? [])) porSinal[s] = (porSinal[s] ?? 0) + 1;
-    }
-    // Por perfil
-    const porPerfil: Record<string, number> = {};
-    for (const r of linhas as any[]) {
-      const p = r.perfil_real ?? 'desconhecido';
-      porPerfil[p] = (porPerfil[p] ?? 0) + 1;
-    }
+    const stats = data?.[0];
     return {
-      total: linhas.length,
-      breakdown_urgencia: { alto, medio, baixo },
-      por_sinal: porSinal,
-      por_perfil: porPerfil,
+      total: Number(stats?.total ?? 0),
+      breakdown_urgencia: {
+        alto: Number(stats?.alto ?? 0),
+        medio: Number(stats?.medio ?? 0),
+        baixo: Number(stats?.baixo ?? 0),
+      },
+      por_sinal: stats?.por_sinal ?? {},
+      por_perfil: stats?.por_perfil ?? {},
     };
   });
 
@@ -382,25 +382,28 @@ export async function clientRoutes(app: FastifyInstance) {
       params: z.object({ id: z.string().uuid() }),
       body: z.object({ notas: z.string().max(4000) }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
     const { notas } = req.body as any;
     const sb = adminClient();
+
+    const { data: current, error: findErr } = await sb.from('clients')
+      .select('id, dealership_id').eq('id', id).maybeSingle();
+    if (findErr) throw findErr;
+    assertCanModify(u, current?.dealership_id, 'cliente não encontrado'); // 404 ou 403
+    if (!current) throw notFound('cliente não encontrado');
+
     const { data, error } = await sb.from('clients')
-      .update({ notas })
-      .eq('id', id)
+      .update({ notas }).eq('id', id)
       .select('id, notas')
       .single();
-    if (error || !data) {
-      reply.code(404);
-      return { error: 'not_found_or_failed', message: error?.message };
-    }
+    if (error) throw error;
     await logAudit({
       actor_id: u.id, action: 'client.notas_updated', entity: 'clients',
       entity_id: id, metadata: { len: notas.length },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
     return data;
   });
 
@@ -417,18 +420,17 @@ export async function clientRoutes(app: FastifyInstance) {
         ai_model: z.string().optional(),
       }).optional(),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
     const body = (req.body ?? {}) as any;
     const sb = adminClient();
 
     // Carrega cliente + notas + histórico recente de ações
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).single();
-    if (error || !client) { reply.code(404); return { error: 'not_found' }; }
-    if (client.dealership_id !== u.dealership_id && u.role !== 'admin') {
-      reply.code(403); return { error: 'forbidden' };
-    }
+    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    assertCanModify(u, client?.dealership_id, 'cliente não encontrado'); // 404 ou 403
+    if (!client) throw notFound('cliente não encontrado');
 
     const { data: acoes } = await sb.from('acoes_retencao')
       .select('tipo, titulo, descricao, status, desfecho, created_at')
@@ -490,7 +492,7 @@ export async function clientRoutes(app: FastifyInstance) {
         final: hybrid.perfil,
       },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
-    });
+    }, req.log);
 
     return { hybrid, prediction: predRow };
   });
