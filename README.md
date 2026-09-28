@@ -1,12 +1,57 @@
 # Ford × FIAP Challenge 2026 — Faro AI
 
-> **Equipe Faro AI** · **Entrega:** 24/05/2026 · **Scrum Master:** Prof. Yan Coelho
+> **Equipe Faro AI** · **Scrum Master:** Prof. Yan Coelho
 >
 > Guilherme (RM 554962) · Pedro (RM 555556) · Fabrício (RM 558216) · Vitor (RM 554893) · Matheus (RM 555447)
 
 Plataforma única para os **dois desafios da Ford**:
 - **Desafio 1 — Inteligência Competitiva:** schema canônico de 262 atributos × 14 seções (template oficial Ford), comparação 2-5 veículos lado a lado, busca FIPE + IA com web search.
 - **Desafio 2 — VIN Share / Retenção:** classificação de perfis, priorização de leads, ações de retenção e visão 360 do cliente.
+
+---
+
+## 🧩 Sprint 3 — Arquitetura Orientada a Serviços e Web Services
+
+A API REST (`apps/api`) foi evoluída para atender os critérios da Sprint 3:
+
+| Critério | Peso | O que foi entregue | Onde ver |
+|---|---|---|---|
+| Arquitetura da solução | 20% | Diagramas de componentes, camadas, caminho da requisição e sequências de login e autorização | [`docs/ARQUITETURA_SOA.md`](docs/ARQUITETURA_SOA.md) · imagens em [`docs/arquitetura/`](docs/arquitetura/) |
+| Autenticação e autorização | 20% | API segura por padrão (só `/health` e `/auth/login` são públicas) · perfis `analista`, `gestor`, `admin` · escopo por concessionária | `apps/api/src/plugins/auth.ts` · `apps/api/src/lib/data-access.ts` |
+| JWT | 15% | Token HS256 **emitido pela própria API** em `POST /auth/login`, validado localmente (assinatura, emissor, audiência, expiração de 1 h) | `apps/api/src/lib/jwt.ts` · `apps/api/src/routes/auth.ts` |
+| Maturidade REST nível 2 | 20% | Recursos por URI, verbos HTTP e status codes coerentes (200/201/204/400/401/403/404/409/415/422/429/5xx) | [Arquitetura §5](docs/ARQUITETURA_SOA.md#5-api-rest--maturidade-nível-2) · Swagger |
+| Testes automatizados | 15% | 95 testes: sucesso, erro e acesso não autorizado — com relatório JUnit e cobertura | `apps/api/test/` · [`docs/evidencias/TESTES.md`](docs/evidencias/TESTES.md) |
+| Documentação e erros | 10% | Swagger com acesso e erros de cada rota · erros no padrão Problem Details (RFC 7807) | `http://localhost:3333/docs` · `apps/api/src/plugins/error-handler.ts` |
+
+### Rodando a API e testando a autenticação
+
+```bash
+pnpm install                     # na raiz do repositório
+pnpm dev:api                     # API em http://localhost:3333 · Swagger em http://localhost:3333/docs
+```
+
+1. No Swagger, abra `POST /auth/login` → **Try it out** → informe as credenciais de um usuário criado no seu projeto Supabase.
+2. Copie o `access_token` da resposta e clique em **Authorize** (cadeado no topo).
+3. As rotas protegidas passam a responder; sem o token elas devolvem `401`.
+
+Pelo terminal:
+
+```bash
+curl -X POST http://localhost:3333/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"seu-usuario@example.com","password":"sua-senha"}'
+
+curl http://localhost:3333/me -H "Authorization: Bearer <access_token>"
+```
+
+### Rodando os testes
+
+Não precisam de Supabase, chaves nem internet — as dependências externas são simuladas.
+
+```bash
+pnpm --filter @ford/api test             # 95 testes
+pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-results/ (junit.xml e coverage/index.html)
+```
 
 ---
 
@@ -55,7 +100,7 @@ Plataforma única para os **dois desafios da Ford**:
 │  apps/mobile — React Native + Expo Router        │
 │  Login · Tabs · Cliente [id] · Compare           │
 └──────────────────┬───────────────────────────────┘
-                   │ HTTPS + JWT (Supabase Auth)
+                   │ HTTPS + JWT (emitido pela API)
 ┌──────────────────▼───────────────────────────────┐
 │  apps/api — Node.js + Fastify + TypeScript + Zod │
 │  30+ rotas REST · Swagger UI em /docs            │
@@ -127,9 +172,8 @@ Preencha `.env.local` com:
 - `SUPABASE_URL` — URL do projeto Supabase
 - `SUPABASE_ANON_KEY` — anon JWT
 - `SUPABASE_SERVICE_ROLE_KEY` — service_role JWT
-- `CLIENT_CPF_PEPPER` — gere com `openssl rand -hex 32`; mantenha estável
-- `ML_SERVICE_TOKEN` — gere com `openssl rand -hex 32`; use o mesmo na API e no ML
-- `TRUST_PROXY=false` — altere só atrás de um proxy confiável
+- `SUPABASE_JWT_SECRET` — (legado) segredo JWT do projeto Supabase
+- `JWT_SECRET` — segredo (32+ caracteres) para a API assinar os próprios tokens. **Obrigatório em produção**; em desenvolvimento há um valor padrão
 - `SUPABASE_DB_PASSWORD` (opcional) — para `pnpm db:migrate`
 - `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback rule-based
 
@@ -189,12 +233,10 @@ URLs:
 - ML: http://localhost:8001
 - ML OpenAPI: http://localhost:8001/docs
 
-### 7. Login demo
-```
-email: admin@faroai.com.br
-senha: Ford2026!
-role:  admin
-```
+### 7. Usuário de demonstração
+
+Crie um usuário no Supabase Auth e atribua o perfil desejado em `profiles`.
+Não use credenciais compartilhadas no repositório.
 
 ---
 
@@ -211,25 +253,26 @@ O serviço FastAPI carrega `services/ml/models/classifier_base2.joblib` e chama 
 ## Segurança (Sprint 3)
 
 [`docs/SECURITY.md`](docs/SECURITY.md) descreve os quatro grupos do trabalho.
-IoT e MQTT não fazem parte deste sprint.
+A solução atual não tem dispositivo IoT nem broker MQTT; o documento registra essa ausência.
 
-| Área | Pontos | Implementação |
-|---|---:|---|
-| DevSecOps e pipeline | 3,0 | CI com typecheck, Semgrep, auditoria de dependências, Gitleaks e Dependabot |
-| Segurança de código e infraestrutura | 2,5 | RBAC, RLS, segredos obrigatórios, sessões nativas seguras e proteção de fetch remoto |
-| Monitoramento e resposta a incidentes | 2,0 | Logs estruturados e trilha de auditoria; alertas dependem do deploy |
-| Compliance e segurança contínua | 2,5 | Minimização e acesso por concessionária; retenção e aprovação de provedores pendentes |
+| Atividade | Estado |
+|---|---|
+| Pipeline DevSecOps | CI com testes, Semgrep, auditoria de dependências e Gitleaks; achados de dependências ainda abertos |
+| Código e infraestrutura | JWT, RBAC, RLS, limites HTTP, HMAC API→ML e proteção de dados implementados; controles de deploy pendentes |
+| Monitoramento e resposta | Logs e auditoria implementados; alertas e dashboard pendentes de implantação |
+| Compliance contínuo | STRIDE e mapeamento OWASP/LGPD documentados; retenção e backup ainda pendentes |
 
 ---
 
 ## 📊 Endpoints principais (Disciplina 1)
 
-Swagger UI completo: **http://localhost:3333/docs**
+Swagger UI completo: **http://localhost:3333/docs** — cada rota mostra quem pode acessá-la e os erros possíveis. Arquitetura e fluxos em [`docs/ARQUITETURA_SOA.md`](docs/ARQUITETURA_SOA.md).
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/health` | Liveness |
-| GET | `/me` | Perfil + role + dealership autenticado |
+| GET | `/health` | Liveness (público) |
+| POST | `/auth/login` | Autentica e devolve o JWT da API (público) |
+| GET | `/me` | Perfil + role + dealership autenticado (claims do token) |
 | GET | `/competitive/vehicles` | Lista veículos |
 | GET | `/competitive/lookup?marca=&modelo=&fields=…` | Lookup com seleção dinâmica de campos |
 | POST | `/competitive/compare` | Comparação 2-5 veículos |

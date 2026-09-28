@@ -16,6 +16,30 @@ significa que a execução do CI ou a configuração de produção já foi verif
 
 ## DevSecOps e pipeline
 
+```mermaid
+flowchart LR
+  A[Commit ou pull request] --> B[Tipos e testes API/ML]
+  A --> C[Semgrep SAST]
+  A --> D[pnpm e pip-audit SCA]
+  A --> E[Gitleaks histórico Git]
+  B --> F[Revisão do pull request]
+  C --> F
+  D --> F
+  E --> F
+  F --> G[Merge e deploy controlado]
+```
+
+Os testes detectam regressões de autorização e validação. O Semgrep procura
+padrões inseguros no código. As auditorias de dependências identificam pacotes
+com avisos conhecidos; o Gitleaks detecta segredos versionados. O job de SCA
+publica os relatórios como artefatos e não bloqueia o merge enquanto houver
+avisos conhecidos. Esta é uma dívida aberta, não uma aprovação de segurança.
+Em 27/09/2026, antes da atualização do Next.js, `pnpm audit --prod` encontrou
+173 avisos, incluindo 6 críticos. Depois da atualização para Next.js 15.5.26,
+restaram 137 avisos, incluindo 2 críticos em `tar` e `shell-quote` trazidos pela
+cadeia de ferramentas Expo. Revise os relatórios atuais em cada PR e corrija
+essas dependências sem quebrar o build mobile. O deploy ainda não é automatizado.
+
 O workflow `.github/workflows/ci.yml` roda em pull requests e pushes para `main`.
 Ele verifica tipos no API, no site e no app mobile. O job ML treina o modelo e
 roda os testes que já faziam parte do workflow.
@@ -38,13 +62,13 @@ workflow, sozinho, não bloqueia merges pelas configurações do repositório.
 - As rotas Fastify validam parâmetros, consultas e corpos com Zod.
 - O plugin de autenticação valida o bearer token no Supabase Auth e carrega o
   perfil do usuário.
-- `requireRole` limita operações de escrita do catálogo, importação e gestão de
-  clientes a `gestor` e `admin`. Configuração de chaves de IA exige `admin`.
+- `authorize` limita operações de escrita do catálogo a `gestor` e `admin`.
+  Configuração de chaves de IA exige `admin`.
 - A política de perfil não permite que um usuário altere o próprio role ou a
   própria concessionária.
-- Consultas de clientes, leads, métricas, ações e modelos usam o JWT do usuário
-  para que o RLS do Supabase aplique o escopo. Gestores mantêm o acesso de rede
-  definido na política existente.
+- Tokens Supabase usados pelo web/mobile passam por RLS. Tokens emitidos pela API
+  usam `service_role`; por isso as rotas aplicam explicitamente o escopo de
+  concessionária. Os RPCs de leads e anomalias de rede exigem gestor/admin.
 - Funções SQL de leads e métricas usam `SECURITY INVOKER`, limitam resultados e
   não concedem execução a `anon` ou `PUBLIC`.
 - Operações que precisam da chave `service_role` fazem verificações de papel e
@@ -112,7 +136,35 @@ serviço afetado, revogar e substituir as credenciais expostas, revisar os event
 de auditoria e preservar os logs. O responsável por privacidade deve avaliar se
 há obrigação de notificar a ANPD ou as pessoas afetadas.
 
+| Componente | Sinal a acompanhar | Alerta proposto |
+|---|---|---|
+| API | Taxa de 5xx, 401/403, 429 e latência por rota | 5xx acima de 2% por 5 min; aumento súbito de 401/429 |
+| Mobile/web | Falhas de login, erros de rede e crashes | Aumento sustentado após uma release |
+| Supabase | Falhas de consulta, conexões e alterações de perfis | Falha de banco ou mudança de role fora do fluxo aprovado |
+| ML | 5xx, latência de `/predict`, rejeições HMAC e nonces repetidos | Rejeições repetidas ou indisponibilidade por 5 min |
+| IoT | Não aplicável: a solução não contém dispositivo, broker ou telemetria MQTT | Não aplicável |
+
+Um painel pode usar logs Pino, eventos de `audit_log` e métricas do provedor de
+deploy. Ainda não há dashboard configurado nem capturas de tela para anexar;
+esses itens exigem ambiente operacional. Em um incidente, registre hora e
+impacto, analise logs e trilha de auditoria, contenha o acesso, revogue segredos,
+remova a causa, restaure de backup validado e monitore a recuperação.
+
 ## Compliance e segurança contínua
+
+### Revisão STRIDE
+
+| Ameaça | Evidência no projeto | Risco restante |
+|---|---|---|
+| Spoofing | JWT com assinatura/expiração e autenticação Supabase | Revogação de tokens próprios só ocorre na expiração |
+| Tampering | Zod, autorização por perfil, RLS e HMAC API→ML | Alterações via `service_role` dependem de verificações em cada rota |
+| Repudiation | `audit_log` para mudanças críticas e Pino para falhas | Auditoria é best-effort; falta retenção centralizada |
+| Information disclosure | Redação de tokens em logs, CPF em HMAC, escopo por loja | Dados pessoais ainda podem chegar a provedores de IA |
+| Denial of service | Rate limit e limites de payload/consulta | Sem proteção de borda nem alertas implantados |
+| Elevation of privilege | Papéis `analista`, `gestor`, `admin` e bloqueio de edição de perfil | Exige teste periódico de cada rota nova |
+
+O mapeamento se apoia nos controles implementados e não substitui uma avaliação
+de ameaças no ambiente implantado.
 
 O escopo de dados inclui identificadores de cliente, dados de compra,
 características demográficas e financeiras, notas de vendedores, previsões e

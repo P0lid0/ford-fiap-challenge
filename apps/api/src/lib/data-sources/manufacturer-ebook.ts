@@ -258,7 +258,7 @@ LEMBRE: Cada dado errado quebra a confiança do cliente.
       extracted_by: `${r.provider}:${r.model}`,
     };
   } catch (err: any) {
-    console.error(`[ebook] falha na extração de ${url}:`, err?.message);
+    console.error('[ebook] extraction failed:', { url, error: err?.message });
     return null;
   }
 }

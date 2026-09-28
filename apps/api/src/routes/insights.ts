@@ -3,7 +3,9 @@ import { requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { aiAvailable, chat } from '../lib/ai.js';
-import { publicClient, adminClient } from '../lib/supabase.js';
+import { adminClient } from '../lib/supabase.js';
+import { canAccessDealership, dbFor, readScopeOf } from '../lib/data-access.js';
+import { notFound } from '../lib/api-error.js';
 
 const HOUR = 60 * 60 * 1000;
 const TTL_PORTFOLIO = 6 * HOUR;
@@ -37,16 +39,19 @@ export async function insightRoutes(app: FastifyInstance) {
       summary: 'Explicação em linguagem natural da classificação do cliente (XAI)',
       params: z.object({ id: z.string().uuid() }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const sb = publicClient(u.jwt);
+    const sb = dbFor(u);
 
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).single();
-    if (error || !client) { reply.code(404); return { error: 'not_found' }; }
+    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).maybeSingle();
+    // Cliente de outra concessionária → 404 (não revela que o registro existe).
+    if (error || !client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
+      throw notFound('cliente não encontrado');
+    }
     const { data: pred } = await sb.from('predictions').select('*')
       .eq('client_id', id).order('created_at', { ascending: false }).limit(1).maybeSingle();
-    if (!pred) { reply.code(404); return { error: 'no_prediction' }; }
+    if (!pred) throw notFound('cliente ainda não possui predição', 'prediction_not_found');
 
     const payload = { client_id: id, perfil: pred.perfil_predito };
     const hash = hashPayload(payload);
@@ -80,10 +85,14 @@ export async function insightRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
-    const sb = publicClient(u.jwt);
-    const { data: clients } = await sb.from('clients')
+    const scope = readScopeOf(u);
+    // Chave do escopo: a loja do analista ou a rede inteira (gestor/admin).
+    const scopeKey = scope.kind === 'dealership' ? scope.dealershipId : 'network';
+    let query = dbFor(u).from('clients')
       .select('id, modelo_comprado, renda_mensal_brl, predictions(perfil_predito, risco_evasao)')
       .limit(500);
+    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
+    const { data: clients } = await query;
 
     const safe = clients ?? [];
     const totalClients = safe.length;
@@ -96,9 +105,9 @@ export async function insightRoutes(app: FastifyInstance) {
       avgRisco += p.risco_evasao;
     }
     avgRisco = totalClients > 0 ? avgRisco / totalClients : 0;
-    const metrics = { dealership_id: u.dealership_id, totalClients, perfilCounts, avgRisco };
+    const metrics = { scope: scopeKey, totalClients, perfilCounts, avgRisco };
     const hash = hashPayload(metrics);
-    const cached = await cachedInsight('portfolio', u.dealership_id ?? 'all', hash);
+    const cached = await cachedInsight('portfolio', scopeKey, hash);
     if (cached) return { source: 'cache', metrics, model: cached.model_used, output: cached.output };
 
     if (!aiAvailable()) {
@@ -116,7 +125,7 @@ export async function insightRoutes(app: FastifyInstance) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };
     }
     const modelLabel = `${r.provider}:${r.model}`;
-    await storeInsight('portfolio', u.dealership_id ?? 'all', hash, modelLabel, r.output, TTL_PORTFOLIO);
+    await storeInsight('portfolio', scopeKey, hash, modelLabel, r.output, TTL_PORTFOLIO);
     return { source: 'fresh', metrics, model: modelLabel, output: r.output };
   });
 }

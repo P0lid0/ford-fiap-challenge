@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { requireRole, requireUser } from '../plugins/auth.js';
+import { authorize, requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
-import { adminClient, publicClient } from '../lib/supabase.js';
+import { adminClient } from '../lib/supabase.js';
+import { dbFor } from '../lib/data-access.js';
+import { badGateway, notFound, serviceUnavailable, unprocessable } from '../lib/api-error.js';
 import { compareVehicles, type Vehicle, COMPARABLE_FIELDS } from '../modules/competitive/compare.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
 import { chat } from '../lib/ai.js';
@@ -15,6 +17,9 @@ import { logAudit } from '../lib/audit.js';
  *     usuário escolher livremente quais campos retornar (requisito Ford).
  *   - Campo ausente vem como `null` explícito.
  *   - Comparação computa winner_index por critério (max/min/none).
+ *
+ * Autorização: leitura/comparação → qualquer usuário autenticado (catálogo é
+ * compartilhado pela rede). Editar/preencher com IA o catálogo canônico → gestor ou admin.
  */
 export async function vehicleRoutes(app: FastifyInstance) {
   // Listagem com filtros
@@ -33,7 +38,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { marca, modelo, categoria, limit } = req.query as any;
 
-    let q = publicClient(u.jwt).from('vehicles').select('*').order('marca').limit(limit);
+    let q = dbFor(u).from('vehicles').select('*').order('marca').limit(limit);
     if (marca) q = q.ilike('marca', marca);
     if (modelo) q = q.ilike('modelo', modelo);
     if (categoria) q = q.eq('categoria', categoria);
@@ -58,11 +63,11 @@ export async function vehicleRoutes(app: FastifyInstance) {
         fields: z.string().optional(),
       }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { marca, modelo, versao, ano, fields } = req.query as any;
 
-    let q = publicClient(u.jwt)
+    let q = dbFor(u)
       .from('vehicles')
       .select('*')
       .ilike('marca', marca)
@@ -72,10 +77,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
 
     const { data, error } = await q;
     if (error) throw error;
-    if (!data || data.length === 0) {
-      reply.code(404);
-      return { error: 'not_found', message: 'nenhum veículo combina com a query' };
-    }
+    if (!data || data.length === 0) throw notFound('nenhum veículo combina com a busca');
 
     if (!fields) return data;
 
@@ -93,19 +95,17 @@ export async function vehicleRoutes(app: FastifyInstance) {
         fields: z.array(z.string()).optional(),
       }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { vehicle_ids, fields } = req.body as any;
 
-    const { data, error } = await publicClient(u.jwt)
+    const { data, error } = await dbFor(u)
       .from('vehicles')
       .select('*')
       .in('id', vehicle_ids);
     if (error) throw error;
-    if (!data || data.length < 2) {
-      reply.code(400);
-      return { error: 'bad_request', message: 'necessário 2 ou mais veículos válidos' };
-    }
+    // ids bem formados, mas que não existem no catálogo → 422
+    if (!data || data.length < 2) throw unprocessable('necessário 2 ou mais veículos existentes no catálogo', 'vehicles_not_found');
 
     return compareVehicles(data as Vehicle[], fields);
   });
@@ -163,7 +163,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
         vehicle_ids: z.array(z.string().uuid()).min(1).max(6),
       }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const { vehicle_ids } = req.body as any;
     const sb = adminClient();
@@ -174,10 +174,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       .select('id, marca, modelo, versao, ano, categoria, preco_brl')
       .in('id', vehicle_ids);
     if (vErr) throw vErr;
-    if (!vehicles || vehicles.length === 0) {
-      reply.code(404);
-      return { error: 'not_found', message: 'nenhum veículo encontrado' };
-    }
+    if (!vehicles || vehicles.length === 0) throw unprocessable('nenhum dos veículos informados existe no catálogo', 'vehicles_not_found');
 
     // 2. catalog_items (linhas)
     const { data: items, error: iErr } = await sb
@@ -244,7 +241,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       summary: 'Devolve o schema canônico (262 itens) preenchido pra um veículo',
       params: z.object({ id: z.string().uuid() }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const { id } = req.params as any;
     const sb = adminClient();
@@ -254,7 +251,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       .select('id, marca, modelo, versao, ano')
       .eq('id', id).maybeSingle();
     if (vErr) throw vErr;
-    if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
+    if (!vehicle) throw notFound('veículo não encontrado');
 
     const { data: items, error: iErr } = await sb
       .from('catalog_items')
@@ -307,6 +304,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
 
   // PATCH — atualiza vários valores de uma vez
   app.patch('/competitive/vehicles/:id/catalog-values', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
       summary: 'Atualiza valores canônicos de um veículo (X / 0 / numérico / null)',
@@ -320,8 +318,8 @@ export async function vehicleRoutes(app: FastifyInstance) {
         })).min(1).max(300),
       }),
     },
-  }, async (req, reply) => {
-    const u = requireRole(req, 'gestor');
+  }, async (req) => {
+    const u = requireUser(req);
     const { id } = req.params as any;
     const { values } = req.body as any;
     const sb = adminClient();
@@ -329,7 +327,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
     const { data: vehicle, error: vErr } = await sb
       .from('vehicles').select('id').eq('id', id).maybeSingle();
     if (vErr) throw vErr;
-    if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
+    if (!vehicle) throw notFound('veículo não encontrado');
 
     // Upsert em lote — valor null deleta o registro
     const toDelete: string[] = [];
@@ -369,6 +367,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
 
   // POST — auto-popula os 262 valores via IA a partir do veículo cadastrado
   app.post('/competitive/vehicles/:id/catalog-values/auto-fill', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
       summary: 'IA preenche o schema canônico (262 atributos) usando metadados do veículo',
@@ -377,8 +376,8 @@ export async function vehicleRoutes(app: FastifyInstance) {
         overwrite: z.boolean().optional().default(false),
       }).optional(),
     },
-  }, async (req, reply) => {
-    const u = requireRole(req, 'gestor');
+  }, async (req) => {
+    const u = requireUser(req);
     const { id } = req.params as any;
     const overwrite = (req.body as any)?.overwrite ?? false;
     const sb = adminClient();
@@ -388,16 +387,15 @@ export async function vehicleRoutes(app: FastifyInstance) {
       .select('id, marca, modelo, versao, ano, categoria, motor, dimensoes, transmissao, desempenho, equipamentos, preco_brl, pais_origem, notas, fontes')
       .eq('id', id).maybeSingle();
     if (vErr) throw vErr;
-    if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
+    if (!vehicle) throw notFound('veículo não encontrado');
 
     const { data: items, error: iErr } = await sb
       .from('catalog_items')
       .select('id, secao, nome, tipo, unidade, ordem_global')
       .order('ordem_global', { ascending: true });
     if (iErr) throw iErr;
-    if (!items || items.length === 0) {
-      reply.code(500); return { error: 'no_catalog', message: 'catalog_items vazio' };
-    }
+    // Dependência de dados ainda não populada → serviço indisponível (não é bug do servidor).
+    if (!items || items.length === 0) throw serviceUnavailable('catálogo canônico ainda não foi carregado', 'catalog_not_loaded');
 
     // Quais itens já estão preenchidos? Se overwrite=false, mantém.
     const existingValues = overwrite
@@ -453,13 +451,10 @@ ${JSON.stringify(itemsForPrompt)}`;
       });
       aiResp = r.output;
     } catch (e: any) {
-      reply.code(502);
-      return { error: 'ai_failed', message: e.message };
+      req.log.warn({ err: e?.message }, '[auto-fill] falha no provedor de IA');
+      throw badGateway('o provedor de IA falhou ao processar a solicitação', 'ai_failed');
     }
-    if (!aiResp) {
-      reply.code(502);
-      return { error: 'ai_empty', message: 'IA não retornou resposta' };
-    }
+    if (!aiResp) throw badGateway('o provedor de IA não retornou resposta', 'ai_empty');
 
     // parse robusto
     let parsed: any;
@@ -467,8 +462,9 @@ ${JSON.stringify(itemsForPrompt)}`;
       const m = aiResp.match(/\{[\s\S]*\}/);
       parsed = JSON.parse(m ? m[0] : aiResp);
     } catch (e: any) {
-      reply.code(502);
-      return { error: 'invalid_ai_json', message: e.message, raw: aiResp.slice(0, 500) };
+      // Resposta crua da IA só no log — nunca devolvida ao cliente.
+      req.log.warn({ err: e?.message, raw: aiResp.slice(0, 500) }, '[auto-fill] IA devolveu JSON inválido');
+      throw badGateway('o provedor de IA devolveu uma resposta em formato inválido', 'invalid_ai_json');
     }
 
     const itemValidIds = new Set(items.map((it: any) => it.id));
@@ -534,8 +530,8 @@ ${JSON.stringify(itemsForPrompt)}`;
         force_refresh: z.boolean().optional().default(false),
       }),
     },
-  }, async (req, reply) => {
-    const u = requireRole(req, 'gestor');
+  }, async (req) => {
+    const u = requireUser(req);
     const { marca, modelo, versao, ano, force_refresh } = req.body as any;
     const sb = adminClient();
 
@@ -555,10 +551,7 @@ ${JSON.stringify(itemsForPrompt)}`;
     const aiModel = (req.headers['x-ai-model'] as string) ?? await getFunctionAiModel(u.id, 'vehicle_search');
     const manufacturerAiModel = await getFunctionAiModel(u.id, 'manufacturer_extract');
     const aggregated = await aggregateVehicle({ marca, modelo, versao, ano, aiModel, manufacturerAiModel });
-    if (!aggregated) {
-      reply.code(404);
-      return { error: 'not_found', message: 'veículo não encontrado em nenhuma fonte (FIPE, NHTSA, IA)' };
-    }
+    if (!aggregated) throw notFound('veículo não encontrado em nenhuma fonte (FIPE, NHTSA, IA)', 'vehicle_data_not_found');
 
     // 3. Upsert no banco
     const { data, error } = await sb.from('vehicles').upsert({
@@ -600,15 +593,13 @@ ${JSON.stringify(itemsForPrompt)}`;
       summary: 'Gera análise textual do comparativo com gpt-4o',
       body: z.object({ vehicle_ids: z.array(z.string().uuid()).min(2).max(5) }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const { vehicle_ids } = req.body as any;
     const { data: vehicles, error } = await adminClient()
       .from('vehicles').select('*').in('id', vehicle_ids);
-    if (error || !vehicles || vehicles.length < 2) {
-      reply.code(400);
-      return { error: 'bad_request', message: 'mínimo 2 veículos válidos' };
-    }
+    if (error) throw error;
+    if (!vehicles || vehicles.length < 2) throw unprocessable('necessário 2 ou mais veículos existentes no catálogo', 'vehicles_not_found');
 
     // Agrupa equipamentos por categoria pra apresentar diff estruturado
     const eqByCat = (items: string[]) => {
@@ -817,18 +808,20 @@ REGRAS DE OURO:
  * Campos top-level: "motor", "dimensoes", etc. devolvem o objeto inteiro.
  */
 function projectFields(v: Vehicle, fields: string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {
+  const out: Record<string, unknown> = Object.assign(Object.create(null), {
     id: v.id, marca: v.marca, modelo: v.modelo, versao: v.versao, ano: v.ano,
-  };
+  });
 
   for (const path of fields) {
+    const parts = path.split('.');
+    if (parts.some(part => !part || part === '__proto__' || part === 'prototype' || part === 'constructor')) continue;
     if (!path.includes('.')) {
-      out[path] = (v as any)[path] ?? null;
+      out[path] = Object.hasOwn(v, path) ? (v as any)[path] ?? null : null;
       continue;
     }
-    const [head, ...rest] = path.split('.');
+    const [head, ...rest] = parts;
     if (!head) continue;
-    if (!out[head]) out[head] = {};
+    if (!out[head]) out[head] = Object.create(null);
     let target = out[head] as Record<string, unknown>;
     const source = (v as any)[head];
     if (source == null) {
@@ -838,13 +831,13 @@ function projectFields(v: Vehicle, fields: string[]): Record<string, unknown> {
     }
     let cur = source;
     for (const k of rest) {
-      cur = cur?.[k];
+      cur = cur && Object.hasOwn(cur, k) ? cur[k] : null;
       if (cur === undefined) cur = null;
     }
     let bucket = target;
     for (let i = 0; i < rest.length - 1; i++) {
       const k = rest[i]!;
-      bucket[k] = bucket[k] ?? {};
+      bucket[k] = bucket[k] ?? Object.create(null);
       bucket = bucket[k] as Record<string, unknown>;
     }
     bucket[rest[rest.length - 1]!] = cur;
