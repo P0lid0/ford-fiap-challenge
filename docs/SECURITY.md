@@ -8,17 +8,6 @@ LGPD-ready e com controles de segurança implementados no nível de aplicação.
 Os itens de infraestrutura no checklist final permanecem como pendências de deploy
 produtivo.
 
-| Eixo | Pontos | Cobertura |
-|---|---|---|
-| 1. Validação e sanitização de entrada | 20 | ✅ Zod, sanitização XSS/SQL/cmd, rate-limit, multipart |
-| 2. Autenticação e autorização | 20 | ✅ JWT Supabase, RBAC 3 níveis, RLS Postgres |
-| 3. Proteção de APIs e serviços | 20 | ✅ TLS 1.3, rate-limit, CORS allowlist, HMAC payloads |
-| 4. Dados e privacidade | 25 | ✅ AES-256 at rest, VIN_Hash, anonimização ML, LGPD-ready |
-| 5. Monitoramento, logs e auditoria | 15 | ✅ Logs estruturados, audit_log, observabilidade |
-| **Total** | **100** | |
-
----
-
 ## 1. Validação e Sanitização de Entrada (20 pts)
 
 ### Validação de entradas

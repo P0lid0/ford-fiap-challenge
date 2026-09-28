@@ -13,6 +13,10 @@ if (existsSync(rootEnv)) {
   }
 }
 
+// Segredo padrão SÓ para desenvolvimento/testes locais. Em produção o refine abaixo
+// impede a API de subir com ele — obriga a definir JWT_SECRET no ambiente.
+const DEV_ONLY_JWT_SECRET = 'dev-only-insecure-jwt-secret-change-me-0000';
+
 const Env = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().optional().default(''),
@@ -37,8 +41,18 @@ const Env = z.object({
   ML_SERVICE_URL: z.string().url().default('http://127.0.0.1:8001'),
   ML_SERVICE_TOKEN: z.string().min(8).default('local-dev-shared-secret-please-change'),
 
+  // ----- JWT emitido pela própria API (POST /auth/login) -----
+  // HS256 exige segredo com pelo menos 256 bits (32 bytes).
+  JWT_SECRET: z.string().min(32).default(DEV_ONLY_JWT_SECRET),
+  JWT_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(3600), // 1 hora
+  JWT_ISSUER: z.string().min(1).default('faro-ai-api'),
+  JWT_AUDIENCE: z.string().min(1).default('faro-ai-clients'),
+
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-});
+}).refine(
+  (cfg) => cfg.NODE_ENV !== 'production' || cfg.JWT_SECRET !== DEV_ONLY_JWT_SECRET,
+  { message: 'JWT_SECRET precisa ser definido em produção', path: ['JWT_SECRET'] },
+);
 
 export const env = Env.parse(process.env);
 

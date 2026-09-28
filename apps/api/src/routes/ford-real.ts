@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { requireUser } from '../plugins/auth.js';
+import { serviceUnavailable } from '../lib/api-error.js';
 
 const SUMMARY_PATH = resolve(process.cwd(), '../../services/ml/data/ford-real-summary.json');
 
@@ -21,9 +22,8 @@ async function loadSummary() {
     const raw = await readFile(SUMMARY_PATH, 'utf-8');
     _cache = { data: JSON.parse(raw), loadedAt: Date.now() };
     return _cache.data;
-  } catch (err: any) {
-    throw new Error(`Resumo Ford real não encontrado em ${SUMMARY_PATH}: ${err.message}. ` +
-      'Rode scripts/generate-ford-real-summary.py primeiro.');
+  } catch {
+    return null;
   }
 }
 
@@ -33,13 +33,14 @@ export async function fordRealRoutes(app: FastifyInstance) {
       tags: ['Desafio 2 — Retenção'],
       summary: 'KPIs agregados da base real Ford BR (175k VINs, 600k serviços, 435 dealers)',
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
-    try {
-      return await loadSummary();
-    } catch (err: any) {
-      reply.code(503);
-      return { error: 'not_available', message: err.message };
+    const summary = await loadSummary();
+    if (!summary) {
+      // Caminho do arquivo só no log do servidor — nunca na resposta ao cliente.
+      req.log.warn({ path: SUMMARY_PATH }, '[ford-real] resumo ausente — rode scripts/generate-ford-real-summary.py');
+      throw serviceUnavailable('resumo da base Ford ainda não foi gerado', 'ford_summary_unavailable');
     }
+    return summary;
   });
 }

@@ -16,6 +16,14 @@ jobs:
       - run: pnpm install --frozen-lockfile=false
         working-directory: .
       - run: pnpm typecheck
+      - run: pnpm typecheck:test
+      - run: pnpm test:coverage
+      - name: Publica evidências dos testes (JUnit + cobertura)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-results
+          path: apps/api/test-results
 
   ml:
     runs-on: ubuntu-latest

@@ -5,10 +5,14 @@
  * - POST /competitive/vehicles       → cria manualmente
  * - PATCH /competitive/vehicles/:id  → edita campo a campo (verifica humano)
  * - POST /competitive/vehicles/import → upload CSV/JSON em lote
+ *
+ * Autorização: criar, editar, excluir e importar veículos → gestor ou admin.
+ * Consultas e enriquecimento automático (FIPE/refresh) → qualquer usuário autenticado.
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireUser } from '../plugins/auth.js';
+import { authorize, requireUser } from '../plugins/auth.js';
+import { badGateway, badRequest, notFound, unprocessable, unsupportedMediaType } from '../lib/api-error.js';
 import { adminClient } from '../lib/supabase.js';
 import { fipe } from '../lib/data-sources/fipe.js';
 import { SUPPORTED_MANUFACTURER_BRANDS, fetchManufacturerSpecs } from '../lib/data-sources/manufacturer.js';
@@ -48,39 +52,29 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       summary: 'Retorna um veículo pelo ID',
       params: z.object({ id: z.string().uuid() }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const { id } = req.params as any;
-    const { data, error } = await adminClient().from('vehicles').select('*').eq('id', id).single();
-    if (error || !data) { reply.code(404); return { error: 'not_found' }; }
+    const { data, error } = await adminClient().from('vehicles').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    if (!data) throw notFound('veículo não encontrado');
     return data;
   });
 
   // === DELETE veículo ===
   app.delete('/competitive/vehicles/:id', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
       summary: 'Remove veículo do catálogo (apenas admin/gestor)',
       params: z.object({ id: z.string().uuid() }),
     },
-  }, async (req, reply) => {
-    const u = requireUser(req);
-    if (u.role !== 'admin' && u.role !== 'gestor') {
-      reply.code(403);
-      return { error: 'forbidden', message: `role '${u.role}' não pode excluir (precisa admin ou gestor)` };
-    }
+  }, async (req) => {
     const { id } = req.params as any;
     const { error, count } = await adminClient()
       .from('vehicles').delete({ count: 'exact' }).eq('id', id);
-    if (error) {
-      req.log.error({ err: error }, '[delete vehicle] supabase error');
-      reply.code(400);
-      return { error: 'delete_failed', message: error.message, hint: (error as any).hint, code: (error as any).code };
-    }
-    if (count === 0) {
-      reply.code(404);
-      return { error: 'not_found', message: 'veículo já não existe' };
-    }
+    if (error) throw error; // falha de banco → 500 (mensagem/hint do Postgres só no log)
+    if (count === 0) throw notFound('veículo não encontrado');
     return { ok: true, deleted: id };
   });
 
@@ -95,13 +89,14 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
         skip_ebook: z.boolean().optional(),     // pula extração ($) mesmo se houver registry
       }).optional(),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const { id } = req.params as any;
     const body = (req.body ?? {}) as any;
     const sb = adminClient();
-    const { data: existing } = await sb.from('vehicles').select('*').eq('id', id).single();
-    if (!existing) { reply.code(404); return { error: 'not_found' }; }
+    const { data: existing, error: findErr } = await sb.from('vehicles').select('*').eq('id', id).maybeSingle();
+    if (findErr) throw findErr;
+    if (!existing) throw notFound('veículo não encontrado');
 
     const aggregated = await aggregateVehicle({
       marca: existing.marca, modelo: existing.modelo,
@@ -109,7 +104,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       ebookUrl: body.ebook_url,
       skipEbook: body.skip_ebook,
     });
-    if (!aggregated) { reply.code(404); return { error: 'no_data', message: 'nenhuma fonte retornou dados' }; }
+    if (!aggregated) throw notFound('nenhuma fonte externa retornou dados para este veículo', 'vehicle_data_not_found');
 
     // Mantém verificações manuais — só sobrescreve campos NÃO marcados como manual.
     const oldSources = (existing.data_sources ?? {}) as Record<string, string>;
@@ -148,7 +143,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       confianca_geral: aggregated.confianca_geral,
     }).eq('id', id).select().single();
 
-    if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
+    if (error) throw error;
     return data;
   });
 
@@ -204,7 +199,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       summary: 'Atualiza apenas o preço (FIPE) do veículo — sem mexer em specs',
       params: z.object({ id: z.string().uuid() }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const { id } = req.params as any;
     const sb = adminClient();
@@ -214,7 +209,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       .select('id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources')
       .eq('id', id).maybeSingle();
     if (vErr) throw vErr;
-    if (!vehicle) { reply.code(404); return { error: 'not_found' }; }
+    if (!vehicle) throw notFound('veículo não encontrado');
 
     // 1. Tenta a busca completa FIPE (marca + modelo+versao + ano)
     let fipeResult;
@@ -223,19 +218,14 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       fipeResult = await fipe.findVehicle(vehicle.marca, query, vehicle.ano);
     } catch (e: any) {
       req.log.warn({ err: e, vehicle: vehicle.id }, '[refresh-price] FIPE lookup failed');
-      reply.code(502);
-      return {
-        error: 'fipe_unavailable',
-        message: `Não consegui consultar FIPE: ${e.message}`,
-      };
+      throw badGateway('não foi possível consultar a tabela FIPE', 'fipe_unavailable');
     }
 
     if (!fipeResult) {
-      reply.code(404);
-      return {
-        error: 'not_in_fipe',
-        message: `FIPE não tem essa combinação cadastrada (${vehicle.marca} ${vehicle.modelo} ${vehicle.versao} ${vehicle.ano}).`,
-      };
+      throw notFound(
+        `FIPE não tem essa combinação cadastrada (${vehicle.marca} ${vehicle.modelo} ${vehicle.versao} ${vehicle.ano}).`,
+        'not_in_fipe',
+      );
     }
 
     const novoPreco = fipe.parseValor(fipeResult.Valor);
@@ -254,7 +244,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       'id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources'
     ).single();
 
-    if (error) { reply.code(400); return { error: 'update_failed', message: error.message }; }
+    if (error) throw error;
 
     return {
       ok: true,
@@ -278,7 +268,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
         ano_codigo: z.string().regex(/^\d{4}-\d$/),
       }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const { marca_codigo, modelo_codigo, ano_codigo } = req.body as any;
     const sb = adminClient();
@@ -288,7 +278,8 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     try {
       fipeData = await fipe.preco(marca_codigo, modelo_codigo, ano_codigo);
     } catch (e: any) {
-      reply.code(404); return { error: 'fipe_failed', message: e.message };
+      req.log.warn({ err: e?.message }, '[search/fipe] FIPE lookup failed');
+      throw badGateway('não foi possível consultar a tabela FIPE', 'fipe_unavailable');
     }
 
     const anoInt = parseInt(ano_codigo.slice(0, 4));
@@ -316,9 +307,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       marca: fipeData.Marca, modelo: modeloBase, versao, ano: anoInt,
       aiModel, manufacturerAiModel: prefExtract?.model_id,
     });
-    if (!aggregated) {
-      reply.code(404); return { error: 'no_data' };
-    }
+    if (!aggregated) throw notFound('nenhuma fonte externa retornou dados para este veículo', 'vehicle_data_not_found');
 
     const { data, error } = await sb.from('vehicles').upsert({
       marca: aggregated.marca, modelo: aggregated.modelo, versao: aggregated.versao,
@@ -332,7 +321,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       confianca_geral: aggregated.confianca_geral,
     }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
 
-    if (error) { reply.code(400); return { error: 'upsert_failed', message: error.message }; }
+    if (error) throw error;
     return { source: 'fresh', vehicle: data };
   });
 
@@ -360,6 +349,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
 
   // === Criação manual ===
   app.post('/competitive/vehicles', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
       summary: 'Cria veículo manualmente (já marcado como verificado_manualmente)',
@@ -394,31 +384,30 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       confianca_geral: 'alta',
     }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
 
-    if (error) {
-      req.log.error({ error }, 'create vehicle failed');
-      reply.code(400);
-      return { error: 'create_failed', message: error.message };
-    }
+    if (error) throw error; // falha de banco → 500 (detalhe só no log)
     reply.code(201);
     return data;
   });
 
   // === Edição manual ===
   app.patch('/competitive/vehicles/:id', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
       summary: 'Edita campos do veículo manualmente (e marca como verificado)',
       params: z.object({ id: z.string().uuid() }),
       body: VehicleUpdateSchema,
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
     const updates = req.body as any;
     const sb = adminClient();
 
     // Marca campos modificados como `manual` em data_sources
-    const { data: current } = await sb.from('vehicles').select('data_sources').eq('id', id).single();
+    const { data: current, error: findErr } = await sb.from('vehicles').select('data_sources').eq('id', id).maybeSingle();
+    if (findErr) throw findErr;
+    if (!current) throw notFound('veículo não encontrado');
     const newSources = { ...(current?.data_sources ?? {}) };
     for (const k of ['marca', 'modelo', 'versao', 'ano', 'categoria', 'preco_brl', 'pais_origem']) {
       if (k in updates) newSources[k] = 'manual';
@@ -443,15 +432,13 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       confianca_geral: 'alta',
     }).eq('id', id).select().single();
 
-    if (error) {
-      reply.code(400);
-      return { error: 'update_failed', message: error.message };
-    }
+    if (error) throw error;
     return data;
   });
 
   // === Import em lote (JSON ou CSV-as-text) ===
   app.post('/competitive/vehicles/import', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
       summary: 'Importa lista de veículos (JSON array ou CSV-text)',
@@ -460,7 +447,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
         content: z.string().min(10),
       }),
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     const u = requireUser(req);
     const { format, content } = req.body as any;
     const sb = adminClient();
@@ -494,13 +481,11 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
         });
       }
     } catch (e: any) {
-      reply.code(400);
-      return { error: 'parse_failed', message: e.message };
+      throw badRequest(`conteúdo ${format.toUpperCase()} malformado: ${e.message}`, 'parse_failed');
     }
 
     if (!Array.isArray(items) || items.length === 0) {
-      reply.code(400);
-      return { error: 'empty', message: 'nenhum item válido' };
+      throw unprocessable('o conteúdo não contém nenhum veículo válido', 'no_valid_items');
     }
 
     const rows = items.map((it: any) => ({
@@ -528,10 +513,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     }));
 
     const { data, error } = await sb.from('vehicles').upsert(rows, { onConflict: 'hash_dedupe' }).select();
-    if (error) {
-      reply.code(400);
-      return { error: 'import_failed', message: error.message };
-    }
+    if (error) throw error;
     return { inserted: data?.length ?? 0, vehicles: data ?? [] };
   });
 
@@ -539,30 +521,24 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   // Aceita multipart upload de PDF/PNG/JPG, manda pro Anthropic/OpenAI vision,
   // retorna preview de veículos detectados. Front decide quais persistir.
   app.post('/competitive/import/file', {
+    onRequest: [authorize('gestor', 'admin')],
     schema: {
       tags: ['Desafio 1 — Inteligência Competitiva'],
       summary: 'Upload PDF/imagem (e-book de carro) → IA extrai veículos + specs',
       consumes: ['multipart/form-data'],
     },
-  }, async (req, reply) => {
+  }, async (req) => {
     requireUser(req);
     const file = await (req as any).file();
-    if (!file) {
-      reply.code(400);
-      return { error: 'no_file', message: 'envie um arquivo via multipart/form-data' };
-    }
+    if (!file) throw badRequest('envie um arquivo via multipart/form-data', 'no_file');
 
     const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
     if (!allowed.includes(file.mimetype)) {
-      reply.code(400);
-      return { error: 'unsupported_type', message: `tipo ${file.mimetype} não suportado. Use PDF, PNG, JPG ou WEBP.` };
+      throw unsupportedMediaType(`tipo ${file.mimetype} não suportado. Use PDF, PNG, JPG ou WEBP.`);
     }
 
     const buf = await file.toBuffer();
-    if (buf.length === 0) {
-      reply.code(400);
-      return { error: 'empty_file', message: 'arquivo vazio' };
-    }
+    if (buf.length === 0) throw badRequest('arquivo vazio', 'empty_file');
 
     const EXTRACT_SYSTEM = `Você é EXTRATOR LITERAL de specs automotivos a partir de e-books, brochuras
 e fichas técnicas em PT-BR ou EN. Os dados vão pro cliente final tomar DECISÃO DE COMPRA —
@@ -634,15 +610,11 @@ Formato da resposta:
       extracted = JSON.parse(cleaned);
     } catch (e: any) {
       req.log.error({ err: e }, '[import/file] extraction failed');
-      reply.code(502);
-      return { error: 'extraction_failed', message: e.message };
+      throw badGateway('o provedor de IA não conseguiu extrair os dados do documento', 'extraction_failed');
     }
 
     const veiculos = Array.isArray(extracted?.veiculos) ? extracted.veiculos : [];
-    if (veiculos.length === 0) {
-      reply.code(422);
-      return { error: 'no_vehicles_found', message: 'A IA não encontrou veículos no documento.' };
-    }
+    if (veiculos.length === 0) throw unprocessable('A IA não encontrou veículos no documento.', 'no_vehicles_found');
 
     return {
       filename: file.filename,
