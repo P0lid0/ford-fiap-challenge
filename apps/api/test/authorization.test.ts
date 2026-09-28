@@ -71,6 +71,9 @@ describe('Matriz de perfis', () => {
     ['POST', '/acoes/campanha', { perfil: 'fiel', tipo: 'email', titulo: 'Campanha' }, 'gestor', 200],
     ['GET', '/competitive/vehicles', undefined, 'analista', 200],
     ['GET', '/admin/ai-function-models', undefined, 'analista', 200],
+    ['GET', '/clients/leads', undefined, 'analista', 403],
+    ['GET', '/clients/leads/stats', undefined, 'analista', 403],
+    ['GET', '/metrics/anomalias-dealer', undefined, 'analista', 403],
   ] as const)('%s %s como %s → %i', async (method, url, payload, role, expected) => {
     const res = await app.inject({ method, url, payload, headers: await authAs(role) });
     expect(res.statusCode).toBe(expected);

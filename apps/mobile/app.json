@@ -15,7 +15,8 @@
       "backgroundColor": "#001A3D"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-secure-store"
     ],
     "ios": {
       "supportsTablet": false,

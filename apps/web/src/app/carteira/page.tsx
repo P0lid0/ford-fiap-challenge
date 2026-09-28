@@ -544,7 +544,7 @@ export default function Carteira() {
             <div className="bg-ford-blue-soft/30 border border-ford-blue/15 rounded-2xl p-4 text-xs text-charcoal flex items-start gap-3">
               <Database className="w-4 h-4 text-ford-blue flex-shrink-0 mt-0.5" />
               <div className="leading-relaxed">
-                <b>Fonte:</b> {fordReal?.fonte ?? 'dataset oficial Ford'}. Dados anonimizados via VIN_Hash, nunca expostos em claro.
+                <b>Fonte:</b> {fordReal?.fonte ?? 'dataset oficial Ford'}. Identificadores VIN são pseudonimizados; o VIN original não aparece na tela.
                 {' '}Pipeline ETL em <code>scripts/etl-d2-real.py</code>, modelo em <code>services/ml/src/classifier_real.py</code>.
               </div>
             </div>

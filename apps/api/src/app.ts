@@ -34,7 +34,7 @@ function defaultLogger(): FastifyServerOptions['logger'] {
       : undefined,
     // ⚠ Cybersec: nunca logar Authorization nem chaves
     serializers: {
-      req: (req) => ({ method: req.method, url: req.url, ip: req.ip }),
+      req: (req) => ({ method: req.method, url: req.url.split('?')[0], ip: req.ip }),
     },
     redact: ['req.headers.authorization', 'req.headers.cookie', '*.SUPABASE_SERVICE_ROLE_KEY', '*.ANTHROPIC_API_KEY'],
   };
@@ -50,7 +50,7 @@ function defaultLogger(): FastifyServerOptions['logger'] {
 export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({
     logger: options.logger ?? defaultLogger(),
-    trustProxy: true,
+    trustProxy: env.TRUST_PROXY,
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
@@ -99,7 +99,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
     keyGenerator: (req) => req.user?.id ?? req.ip,
   });
 
-  await app.register(swagger, {
+  if (env.NODE_ENV !== 'production') {
+    await app.register(swagger, {
     openapi: {
       info: {
         title: 'Faro AI API — Ford × FIAP Challenge',
@@ -124,7 +125,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
     transform: jsonSchemaTransform,
     transformObject: openApiTransformObject, // ProblemDetails como $ref + application/problem+json
   });
-  await app.register(swaggerUi, { routePrefix: '/docs' });
+    await app.register(swaggerUi, { routePrefix: '/docs' });
+  }
 
   // ===== Rotas =====
   // Registrado ANTES das rotas: completa o schema de cada rota com acesso e erros.

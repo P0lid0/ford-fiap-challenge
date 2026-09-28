@@ -7,6 +7,7 @@ import { badGateway, notFound, serviceUnavailable, unprocessable } from '../lib/
 import { compareVehicles, type Vehicle, COMPARABLE_FIELDS } from '../modules/competitive/compare.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
 import { chat } from '../lib/ai.js';
+import { logAudit } from '../lib/audit.js';
 
 /**
  * Rotas do Desafio 1 — Inteligência Competitiva.
@@ -318,7 +319,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { id } = req.params as any;
     const { values } = req.body as any;
     const sb = adminClient();
@@ -356,6 +357,11 @@ export async function vehicleRoutes(app: FastifyInstance) {
         .upsert(toUpsert, { onConflict: 'vehicle_id,item_id' });
       if (error) throw error;
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.catalog_values_updated', entity: 'vehicles', entity_id: id,
+      metadata: { upserted: toUpsert.length, deleted: toDelete.length },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return { ok: true, upserted: toUpsert.length, deleted: toDelete.length };
   });
 
@@ -371,7 +377,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       }).optional(),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { id } = req.params as any;
     const overwrite = (req.body as any)?.overwrite ?? false;
     const sb = adminClient();
@@ -489,6 +495,11 @@ ${JSON.stringify(itemsForPrompt)}`;
         .upsert(toUpsert, { onConflict: 'vehicle_id,item_id' });
       if (error) throw error;
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.catalog_values_auto_filled', entity: 'vehicles', entity_id: id,
+      metadata: { filled: toUpsert.length, skipped: skipped.length, overwritten: overwrite },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
 
     return {
       ok: true,
@@ -567,6 +578,11 @@ ${JSON.stringify(itemsForPrompt)}`;
       req.log.error({ error }, '[search] upsert failed');
       throw error;
     }
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.imported_from_search', entity: 'vehicles', entity_id: data.id,
+      metadata: { marca, ano: aggregated.ano },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
     return { source: 'fresh', vehicle: data };
   });
 
@@ -791,38 +807,42 @@ REGRAS DE OURO:
  * Suporta dot-notation: "motor.potencia_cv" devolve só esse campo.
  * Campos top-level: "motor", "dimensoes", etc. devolvem o objeto inteiro.
  */
+function withNestedField(record: Record<string, unknown>, path: string[], value: unknown): Record<string, unknown> {
+  const [head, ...rest] = path;
+  if (!head) return record;
+  const previous = Object.hasOwn(record, head) ? record[head] : null;
+  const nested = rest.length
+    ? withNestedField(previous && typeof previous === 'object' && !Array.isArray(previous)
+      ? previous as Record<string, unknown> : Object.create(null), rest, value)
+    : value;
+  return Object.assign(Object.create(null), record, { [head]: nested });
+}
+
 function projectFields(v: Vehicle, fields: string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {
+  let out: Record<string, unknown> = Object.assign(Object.create(null), {
     id: v.id, marca: v.marca, modelo: v.modelo, versao: v.versao, ano: v.ano,
-  };
+  });
 
   for (const path of fields) {
+    const parts = path.split('.');
+    if (parts.some(part => !part || part === '__proto__' || part === 'prototype' || part === 'constructor')) continue;
     if (!path.includes('.')) {
-      out[path] = (v as any)[path] ?? null;
+      out[path] = Object.hasOwn(v, path) ? (v as any)[path] ?? null : null;
       continue;
     }
-    const [head, ...rest] = path.split('.');
+    const head = parts[0];
     if (!head) continue;
-    if (!out[head]) out[head] = {};
-    let target = out[head] as Record<string, unknown>;
     const source = (v as any)[head];
     if (source == null) {
-      // Constrói com null explícito (regra Ford)
-      target[rest.join('.')] = null;
+      out = withNestedField(out, parts, null);
       continue;
     }
     let cur = source;
-    for (const k of rest) {
-      cur = cur?.[k];
+    for (const k of parts.slice(1)) {
+      cur = cur && Object.hasOwn(cur, k) ? cur[k] : null;
       if (cur === undefined) cur = null;
     }
-    let bucket = target;
-    for (let i = 0; i < rest.length - 1; i++) {
-      const k = rest[i]!;
-      bucket[k] = bucket[k] ?? {};
-      bucket = bucket[k] as Record<string, unknown>;
-    }
-    bucket[rest[rest.length - 1]!] = cur;
+    out = withNestedField(out, parts, cur);
   }
   return out;
 }

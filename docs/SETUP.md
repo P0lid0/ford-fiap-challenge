@@ -15,9 +15,16 @@ Edite e preencha:
 | `SUPABASE_URL` | já está no arquivo | ✓ |
 | `SUPABASE_ANON_KEY` | Supabase Dashboard → Project Settings → API → **anon public** | ✓ |
 | `SUPABASE_SERVICE_ROLE_KEY` | já está no arquivo | ✓ |
-| `SUPABASE_JWT_SECRET` | Dashboard → Project Settings → API → **JWT Settings → JWT Secret** | (recomendada para o backend) |
+| `CLIENT_CPF_PEPPER` | gere um segredo aleatório com `openssl rand -hex 32` | ✓ |
+| `ML_SERVICE_TOKEN` | gere um segredo aleatório com `openssl rand -hex 32`; use o mesmo valor na API e no serviço ML | ✓ |
+| `API_HOST` | padrão `127.0.0.1`; use `0.0.0.0` apenas se outro dispositivo ou container precisar acessar a API | opcional |
+| `TRUST_PROXY` | `false` localmente; `true` somente atrás de um proxy confiável | recomendado |
 | `SUPABASE_DB_PASSWORD` | Dashboard → Project Settings → Database → **Connection string** (a senha aparece colada na string) | só se for usar `pnpm db:migrate` |
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys | só para usar Claude (senão cai em fallback) |
+
+Não troque `CLIENT_CPF_PEPPER` sem planejar a migração dos hashes existentes.
+O CPF original não é guardado, então um hash antigo não pode ser recalculado sem
+receber o CPF novamente de uma fonte autorizada.
 
 **Mobile (`apps/mobile/.env.local`)** — adicione também:
 ```
@@ -28,11 +35,20 @@ EXPO_PUBLIC_API_URL=http://localhost:3333
 
 ## Passo 2 — Aplicar schema no Supabase
 
-### Opção A — manual (1 minuto, recomendada se não quiser configurar `SUPABASE_DB_PASSWORD`)
+### Opção A — manual
 1. Supabase Dashboard → **SQL Editor → New Query**
-2. Abra `supabase/migrations.combined.sql` deste repo
-3. Copie tudo, cole no editor, **Run**
-4. Aguarde "Success. No rows returned"
+2. Abra cada arquivo em `supabase/migrations/` pela ordem do nome, começando em `20260514_001_init.sql` e terminando em `20260926_019_sprint3_security_hardening.sql`.
+3. Execute uma migração por vez e confirme sucesso antes da próxima.
+
+Para uma instalação nova, você também pode colar `supabase/migrations.combined.sql`
+no SQL Editor. Regenere a cópia depois de alterar migrations:
+
+```bash
+python scripts/combine-migrations.py
+```
+
+Não execute o arquivo combinado em um banco já existente. Use `pnpm db:migrate`
+para aplicar somente migrations pendentes.
 
 ### Opção B — automatizado (precisa `SUPABASE_DB_PASSWORD`)
 ```bash
@@ -52,7 +68,9 @@ Insere Ranger Raptor, Hilux GR-S, RAM 1500 TRX, Amarok V6, Bronco Wildtrack.
 
 No app mobile, abra `Cadastrar` na tela de login. Você vai criar um usuário com o role default `analista`. O trigger `handle_new_user` cria automaticamente o `profile` no banco.
 
-**Para virar admin:** abra Supabase Dashboard → SQL Editor → cole:
+**Para virar admin:** abra Supabase Dashboard → SQL Editor → cole. Mudanças de
+role e concessionária são provisionadas por um administrador no banco, não pelo
+app:
 ```sql
 update public.profiles set role = 'admin' where email = 'seu@email.com';
 ```

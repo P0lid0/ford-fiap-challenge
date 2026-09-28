@@ -50,7 +50,7 @@ export async function authRoutes(app: FastifyInstance) {
 
     const identity = await authenticateWithPassword(email, password);
     if (!identity) {
-      await logAudit({ action: 'auth.login_failed', entity: 'auth', metadata: { email }, ...auditContext });
+      await logAudit({ action: 'auth.login_failed', entity: 'auth', metadata: { email }, ...auditContext }, req.log);
       // Mensagem genérica: não revela se o e-mail existe.
       throw unauthorized('e-mail ou senha inválidos', 'invalid_credentials');
     }
@@ -63,7 +63,7 @@ export async function authRoutes(app: FastifyInstance) {
       dealershipId: profile.dealershipId,
     });
 
-    await logAudit({ actor_id: identity.id, action: 'auth.login', entity: 'auth', entity_id: identity.id, ...auditContext });
+    await logAudit({ actor_id: identity.id, action: 'auth.login', entity: 'auth', entity_id: identity.id, ...auditContext }, req.log);
 
     return reply.code(200).send({
       access_token: accessToken,

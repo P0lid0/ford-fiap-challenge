@@ -10,9 +10,10 @@ from pathlib import Path
 
 import hashlib
 import hmac
+import re
+import time
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .classifier import ACOES_POR_PERFIL, load as load_classifier, predict as run_predict
@@ -27,57 +28,78 @@ logging.basicConfig(
 )
 log = logging.getLogger("ml")
 
+is_production = settings.node_env == "production"
 app = FastAPI(
     title="Ford FIAP ML Service",
     version="0.1.0",
     description="Classificação de perfil + ingestão de fichas técnicas.",
+    docs_url=None if is_production else "/docs",
+    redoc_url=None,
+    openapi_url=None if is_production else "/openapi.json",
 )
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 MODEL_PATH = settings.models_dir / "classifier_base2.joblib"
 _classifier = None
+_used_nonces: dict[str, float] = {}
 
 
 def _get_classifier():
     global _classifier
     if _classifier is None:
         if not MODEL_PATH.exists():
-            raise HTTPException(503, f"modelo não encontrado em {MODEL_PATH}; rode train_models.py")
+            raise HTTPException(503, "modelo indisponível; treine o modelo antes de iniciar o serviço")
         _classifier = load_classifier(str(MODEL_PATH))
     return _classifier
 
 
 def auth_token(authorization: str | None = Header(default=None)):
     """Token compartilhado entre API gateway e ML service."""
-    if not settings.ml_service_token or settings.ml_service_token in ("", "change-me"):
-        # Modo dev sem token configurado → permite.
-        return True
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
     if not hmac.compare_digest(token, settings.ml_service_token):
-        raise HTTPException(403, "invalid token")
+        raise HTTPException(401, "invalid bearer token")
     return True
 
 
-async def verify_payload_signature(request: Request, x_payload_signature: str | None = Header(default=None)) -> None:
-    """Integridade: HMAC-SHA256 do body com ML_SERVICE_TOKEN.
-    Se header ausente em dev → tolera. Em prod, configurar header obrigatório.
-    """
-    if not x_payload_signature:
-        if settings.ml_service_token in ("", "change-me"):
-            return
-        # Header ausente em prod: log mas não bloqueia (compat com clients antigos).
-        log.warning("missing X-Payload-Signature on /predict")
-        return
+async def verify_payload_signature(
+    request: Request,
+    x_payload_signature: str | None = Header(default=None),
+    x_payload_timestamp: str | None = Header(default=None),
+    x_payload_nonce: str | None = Header(default=None),
+) -> None:
+    """Validate a fresh, one-time HMAC over timestamp, nonce, and raw body."""
+    if not x_payload_signature or not x_payload_timestamp or not x_payload_nonce:
+        raise HTTPException(401, "missing payload signature headers")
+    if not re.fullmatch(r"[a-f0-9]{32}", x_payload_nonce):
+        raise HTTPException(400, "invalid payload nonce")
+    try:
+        timestamp = int(x_payload_timestamp)
+    except ValueError as exc:
+        raise HTTPException(400, "invalid payload timestamp") from exc
+    now = int(time.time())
+    if abs(now - timestamp) > 60:
+        raise HTTPException(401, "expired payload signature")
+
+    expired_nonces = [nonce for nonce, seen_at in _used_nonces.items() if now - seen_at > 60]
+    for nonce in expired_nonces:
+        del _used_nonces[nonce]
+    if x_payload_nonce in _used_nonces:
+        raise HTTPException(409, "replayed payload")
+
     body = await request.body()
     expected = hmac.new(
         settings.ml_service_token.encode(),
-        body,
+        b"ml-payload-signature:v1\0"
+        + f"{x_payload_timestamp}.{x_payload_nonce}.".encode()
+        + body,
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(expected, x_payload_signature):
-        raise HTTPException(400, "invalid payload signature")
+        raise HTTPException(401, "invalid payload signature")
+    if x_payload_nonce in _used_nonces:
+        raise HTTPException(409, "replayed payload")
+    _used_nonces[x_payload_nonce] = now
 
 
 # ============== Schemas ==============
@@ -126,7 +148,6 @@ def health():
     return {
         "status": "ok",
         "model_loaded": has_model,
-        "model_path": str(MODEL_PATH),
     }
 
 

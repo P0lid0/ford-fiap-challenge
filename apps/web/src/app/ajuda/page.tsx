@@ -22,8 +22,8 @@ const GLOSSARY: { term: string; def: string }[] = [
   { term: '411 Vehicle Data', def: 'API comercial (RapidAPI) com specs detalhadas de veículos USA — bom pra Ford, Chevrolet, RAM, Jeep. Cobertura BR limitada.' },
   { term: 'NHTSA vPIC', def: 'Vehicle Product Information Catalog do governo americano. Free, global, ótimo pra decodificar VIN.' },
   { term: 'RLS', def: 'Row Level Security — recurso nativo do Postgres. Garante que analistas de uma loja só veem dados da loja deles, mesmo se tentarem queries diretas.' },
-  { term: 'HMAC', def: 'Hash-based Message Authentication Code. Usamos HMAC-SHA256 pra assinar payloads entre API gateway e ML service — garante integridade e previne manipulação.' },
-  { term: 'Pseudonimização', def: 'Substituir identificadores diretos (UUID da loja, nome) por hashes irreversíveis antes de mandar pra modelo. LGPD compliance.' },
+  { term: 'HMAC', def: 'Hash-based Message Authentication Code. A API assina o corpo de /predict com HMAC-SHA256, timestamp e nonce; o serviço ML valida a assinatura e rejeita replays dentro da janela configurada.' },
+  { term: 'Pseudonimização', def: 'Substituir um identificador direto, como o UUID da concessionária, por um código derivado antes de enviar. Isso reduz a exposição do identificador, mas não torna os dados anônimos nem comprova conformidade.' },
   { term: 'Tier rápido / smart', def: 'Convenção interna: tier "fast" usa modelos baratos (gpt-4o-mini, claude-haiku) pra extração e gap-fill. Tier "smart" usa modelos topo (gpt-4o, claude-sonnet) pra análises complexas.' },
   { term: 'Provenance', def: 'Rastreamento de origem de cada dado. Cada spec do catálogo carrega o tag da fonte que o produziu (manufacturer.com.br, fipe, 411, ai:gpt-4o-mini).' },
 ];
@@ -35,7 +35,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'O cliente precisa saber que foi classificado?',
-    a: 'Não. A classificação é interna, pra orientar a ação do consultor. O cliente vê apenas o resultado: lembretes, ofertas, convites a programas. Conforme LGPD, predições automatizadas são tratadas como decisão de suporte, não decisão final.',
+    a: 'A classificação é exibida ao consultor como apoio; o sistema não toma a decisão final nem envia a comunicação automaticamente. Antes de usar dados reais, a equipe deve definir transparência, base de tratamento, direitos e revisão humana.',
   },
   {
     q: 'Posso confiar 100% nos specs dos carros?',
@@ -621,7 +621,8 @@ const SECTIONS: Section[] = [
         <Lead>
           O slide D2 pede &quot;lembretes de serviço e ofertas&quot; — a gente implementou
           isso como <b>envio REAL de e-mail</b> via provider Resend, com templates por perfil
-          comportamental, registro em <Code>email_logs</Code> e auditoria LGPD.
+          comportamental e registros em <Code>email_logs</Code>, <Code>acoes_retencao</Code>
+          e <Code>audit_log</Code>.
         </Lead>
 
         <H3>Como configurar (3 minutos)</H3>
@@ -675,7 +676,7 @@ const SECTIONS: Section[] = [
           enviado&quot;</i>. Nada de status verde enganoso.
         </Callout>
 
-        <H3>Auditoria LGPD</H3>
+        <H3>Registro de envio</H3>
         <p>
           Cada envio cria 1 linha em <Code>public.email_logs</Code>:
         </p>
@@ -875,8 +876,8 @@ const SECTIONS: Section[] = [
           </FeatureCard>
           <FeatureCard icon={Sparkles} title="IA sozinha">
             Vê contexto rico, explica o raciocínio — mas custa $$$, demora 2-5s,
-            pode alucinar, e LGPD trata decisão totalmente automatizada por LLM
-            com mais rigor.
+            pode alucinar. Por isso, o resultado deve apoiar a revisão do consultor,
+            e a equipe precisa definir governança antes de usar dados reais.
           </FeatureCard>
         </Grid>
 
@@ -1001,38 +1002,42 @@ const SECTIONS: Section[] = [
     id: 'seguranca',
     icon: Shield,
     title: 'Segurança e privacidade',
-    summary: 'O que o sistema faz pra proteger dados (LGPD-ready)',
+    summary: 'Controles de privacidade e pendências de produção',
     body: (
       <>
         <H3>Em uma frase</H3>
         <Lead>
-          Validação Zod em tudo, JWT + RBAC, pseudonimização de PII no pipeline de ML,
-          HMAC nas chamadas entre serviços, RLS por concessionária e trilha de auditoria
-          de toda ação crítica.
+          Schemas Zod nas entradas, JWT + RBAC, remoção de identificadores diretos comuns
+          no contexto de ML, HMAC entre a API e o ML, RLS por concessionária e registro
+          de eventos críticos.
         </Lead>
 
         <Grid cols={2}>
           <SecCard icon={Eye} title="Validação de entrada">
-            Todas as rotas usam Zod schemas. SQL injection impossível (prepared statements
-            via PostgREST). XSS bloqueado (React escapa automaticamente).
+            As entradas das rotas são validadas com schemas Zod. Consultas usam o cliente
+            Supabase/PostgREST, sem SQL montado a partir da entrada. React escapa texto
+            por padrão; qualquer HTML explícito ainda exige validação própria.
           </SecCard>
           <SecCard icon={Lock} title="Autenticação">
             JWT Supabase validado contra <Code>/auth/v1/user</Code>. RBAC com 3 papéis
             (analista/gestor/admin). Rotas sensíveis exigem admin.
           </SecCard>
           <SecCard icon={Shield} title="Pseudonimização">
-            <Code>dealership_id</Code> vira hash HMAC-SHA256 antes de sair pro ML.
-            Nome/CPF/email <b>nunca</b> entram no payload do modelo.
+            O ML recebe dados de compra e perfil, como renda e score de crédito.
+            <Code>dealership_id</Code> vira HMAC-SHA256; nome, CPF e e-mail não entram no payload.
+            Notas e ações removem padrões comuns de CPF, e-mail, telefone e VIN, mas podem
+            conter outros identificadores.
           </SecCard>
           <SecCard icon={Activity} title="Auditoria">
-            Toda alteração de chave de IA, criação/exclusão de cliente, exclusão de veículo
-            é logada em <Code>audit_log</Code> com IP + user-agent. RLS admin-only na leitura.
+            A API tenta registrar alterações de clientes, ações, veículos e chaves de IA
+            em <Code>audit_log</Code>, com IP + user-agent. Falhas aparecem no log da API,
+            mas não bloqueiam a operação. Só admins leem a tabela.
           </SecCard>
         </Grid>
 
         <Callout type="info">
-          Política de segurança completa em <Code>docs/SECURITY.md</Code>. Cobre os 5
-          eixos avaliativos da disciplina de Cybersecurity.
+          Política de segurança em <Code>docs/SECURITY.md</Code>. Cobre os quatro grupos
+          avaliativos da disciplina. IoT e MQTT estão fora deste sprint.
         </Callout>
       </>
     ),

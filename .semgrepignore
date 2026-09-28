@@ -1,0 +1,2 @@
+# Generated Istanbul HTML report; CI publishes it as a test artifact.
+apps/api/test-results/coverage/

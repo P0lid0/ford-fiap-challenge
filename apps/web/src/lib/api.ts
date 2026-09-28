@@ -153,7 +153,7 @@ export const api = {
   searchByFipe: (b: { marca_codigo: string; modelo_codigo: string | number; ano_codigo: string }) =>
     post<{ source: 'cache' | 'fresh'; vehicle: any }>('/competitive/search/fipe', b, 'vehicle_search'),
   // AI config (admin)
-  getAiKeys: () => get<Record<string, { configured: boolean; source: string; preview?: string }>>('/admin/ai-keys'),
+  getAiKeys: () => get<Record<string, { configured: boolean; source: string }>>('/admin/ai-keys'),
   setAiKey: async (provider: 'openai' | 'anthropic' | 'gemini' | 'fipe' | 'vehicle411' | 'resend' | 'email_from', api_key: string) => {
     const r = await fetch(`${API_URL}/admin/ai-keys/${provider}`, {
       method: 'PUT', headers: await authedHeaders(), body: JSON.stringify({ api_key }),
@@ -286,9 +286,6 @@ export const api = {
   sendEmailAcao: (b: {
     client_id: string;
     subject?: string;
-    body_html?: string;
-    use_template?: boolean;
-    to_override?: string;
   }) => post<{
     ok: boolean;
     acao_id: string;
@@ -299,7 +296,7 @@ export const api = {
     really_sent: boolean;
     mock_simulation: boolean;
     error?: string;
-    preview: { to: string; subject: string; body_html: string };
+    preview: { to: string; subject: string };
   }>('/acoes/email-send', b),
   emailConfigStatus: () =>
     get<{

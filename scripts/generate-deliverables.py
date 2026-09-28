@@ -9,15 +9,6 @@ Saída: docs/deliverables/
 from pathlib import Path
 import json
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
-)
-
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -43,27 +34,35 @@ TAGLINE = "AI que tem faro pro cliente certo."
 CHALLENGE = "Ford × FIAP 2026 · 1ª Sprint"
 ENTREGA = "24/05/2026"
 
-# Ford brand colors
-FORD_BLUE = colors.HexColor("#003478")
-FORD_BLUE_LIGHT = colors.HexColor("#0066B2")
-FORD_GREY = colors.HexColor("#4A4A4A")
-FORD_AMBER = colors.HexColor("#FFA500")
-
-# Métricas: prioriza métricas REAIS Ford BR (175k VINs), com fallback ao sintético.
-METRICS = json.loads((ROOT / "services" / "ml" / "models" / "metrics.json").read_text(encoding="utf-8"))
-_real_path = ROOT / "services" / "ml" / "models" / "metrics_real.json"
-METRICS_REAL = json.loads(_real_path.read_text(encoding="utf-8")) if _real_path.exists() else None
-
-# D1 schema canônico (262 itens × 14 seções)
-_d1_path = ROOT / "services" / "ml" / "data" / "ford-d1-ranger-26my.json"
-D1_SCHEMA = json.loads(_d1_path.read_text(encoding="utf-8")) if _d1_path.exists() else None
-
-
 # ============================================================
 # 1. RELATÓRIO D2 (PDF) — ML segmentation + classification
 # ============================================================
 
 def build_ml_report():
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
+    )
+
+    # Ford brand colors
+    FORD_BLUE = colors.HexColor("#003478")
+    FORD_BLUE_LIGHT = colors.HexColor("#0066B2")
+    FORD_GREY = colors.HexColor("#4A4A4A")
+    FORD_AMBER = colors.HexColor("#FFA500")
+
+    # Prefer real Ford BR metrics (175k VINs), with synthetic fallback.
+    METRICS = json.loads((ROOT / "services" / "ml" / "models" / "metrics.json").read_text(encoding="utf-8"))
+    real_path = ROOT / "services" / "ml" / "models" / "metrics_real.json"
+    METRICS_REAL = json.loads(real_path.read_text(encoding="utf-8")) if real_path.exists() else None
+
+    # Canonical Ford D1 schema (262 items × 14 sections).
+    d1_path = ROOT / "services" / "ml" / "data" / "ford-d1-ranger-26my.json"
+    D1_SCHEMA = json.loads(d1_path.read_text(encoding="utf-8")) if d1_path.exists() else None
+
     pdf_path = OUT / "Relatorio_Desafio_2_ML.pdf"
     doc = SimpleDocTemplate(
         str(pdf_path), pagesize=A4,
@@ -514,11 +513,11 @@ def build_ml_report():
         "probabilidades, risco_evasao, recomendacoes_acao</i>) é gravado em "
         "<code>ai_predictions</code> e renderizado no card do cliente.", BODY))
     story.append(Paragraph(
-        "<b>Segurança/Privacidade:</b> o payload enviado ao serviço de ML não contém "
-        "PII — <code>dealership_id</code> é pseudonimizado via HMAC-SHA256 antes do "
-        "envio, e nome/CPF/email/telefone nunca entram no modelo. A integridade do "
-        "payload é validada via assinatura <code>X-Payload-Signature</code> (também "
-        "HMAC-SHA256 da request body). Detalhes em <code>docs/SECURITY.md</code>.", BODY))
+        "<b>Privacidade:</b> <code>/predict</code> recebe atributos de compra e perfil, que "
+        "continuam sendo dados pessoais, mas não inclui nome/CPF/e-mail/telefone. "
+        "<code>dealership_id</code> é pseudonimizado com HMAC-SHA256. A API assina o corpo, "
+        "timestamp e nonce; o ML exige assinatura recente e rejeita nonces repetidos no mesmo "
+        "processo. Detalhes em <code>docs/SECURITY.md</code>.", BODY))
 
     # ---- Conclusão ----
     story.append(Paragraph("8. Conclusão e Próximos Passos", H2))
@@ -873,10 +872,10 @@ QV_ROWS = [
     ),
     (
         "Time de Segurança / Compliance Ford",
-        "Garantia de proteção de dados pessoais (LGPD) e auditabilidade.",
+        "Proteção de dados pessoais e trilha de auditoria revisadas continuamente.",
         "Pseudonimização no pipeline de ML, HMAC nas chamadas, audit log de ações críticas, RLS por dealership.",
-        "Zero incidentes de vazamento; operação LGPD-ready contínua",
-        "100% requisições ML com payload anonimizado; 100% ações sensíveis auditadas.",
+        "Controles básicos implementados; requisitos legais e de produção ainda precisam de validação.",
+        "Sem nome/CPF/e-mail no payload /predict; falhas de audit_log aparecem no Pino.",
         "ALTA",
     ),
     (
@@ -1004,7 +1003,7 @@ def build_readme_docx():
         ("FaroAI_Architecture.archimate",
          "Modelo de arquitetura no padrão TOGAF/ArchiMate 3.1 — abrir no Archi (https://www.archimatetool.com)."),
         ("../SECURITY.md",
-         "Política de segurança cobrindo os 5 eixos avaliativos de Cybersecurity (validação, auth, APIs, dados, monitoramento)."),
+         "Política de segurança cobrindo os quatro grupos de Cybersecurity do Sprint 3. IoT e MQTT estão fora do escopo."),
     ]
     table = doc.add_table(rows=1 + len(items), cols=2)
     table.style = "Table Grid"
@@ -1044,10 +1043,10 @@ def build_readme_docx():
 
     add_heading(doc, "Notas de avaliação por disciplina", level=1)
     notes = [
-        ("Arquitetura SOA & Web Services", "API REST com Swagger em /docs, separação routes/lib/db, 8 migrations Supabase ordenadas, serviços independentes."),
-        ("Mobile Development & IoT", "App Expo 52 + RN 0.76 com expo-router, AsyncStorage, consumo async."),
+        ("Arquitetura SOA & Web Services", "API REST com Swagger em /docs, separação routes/lib/db, 19 migrations Supabase ordenadas, serviços independentes."),
+        ("Mobile Development", "App Expo 52 + RN 0.76 com expo-router, SecureStore nativo, consumo async."),
         ("Testing, Compliance & QA", "Veja Business_Canvas.docx, Quadro_de_Valor.docx, FaroAI_Architecture.archimate. Métricas de negócio + qualidade em todas promessas."),
-        ("Cybersecurity", "Veja SECURITY.md — cobre os 5 eixos: validação (Zod), auth (JWT + RBAC), APIs (helmet, rate-limit, CORS, HMAC), dados (pseudonimização, RLS, retenção), monitoramento (Pino + audit_log)."),
+        ("Cybersecurity", "Veja SECURITY.md — cobre DevSecOps, segurança de código e infraestrutura, monitoramento e resposta, compliance e segurança contínua."),
         ("IA & Machine Learning", "Veja Relatorio_Desafio_2_ML.pdf + services/ml/notebooks/ford_segmentation.ipynb. Clustering KMeans k=4 + classificador XGBoost sem data leakage."),
     ]
     for d, txt in notes:

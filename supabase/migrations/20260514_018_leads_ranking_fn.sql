@@ -50,7 +50,7 @@ returns table (
 )
 language sql
 stable
-security definer
+security invoker
 set search_path = public, pg_temp
 as $$
   with base as (
@@ -117,11 +117,12 @@ as $$
   where risco_composto >= risco_min
     and (filtro_sinal is null or filtro_sinal = any(sinais))
   order by risco_composto desc, num_revisoes asc
-  limit limite;
+  limit least(greatest(coalesce(limite, 50), 1), 500);
 $$;
 
 comment on function public.leads_ranqueados is
   'Lead ranking com risco composto = perfil_real + sinais (revisão atrasada, garantia, dealer loyalty, idade). Usado em /clients/leads.';
 
+revoke all on function public.leads_ranqueados(numeric, text, text, integer, text, integer) from public, anon;
 grant execute on function public.leads_ranqueados(numeric, text, text, integer, text, integer) to authenticated;
 grant execute on function public.leads_ranqueados(numeric, text, text, integer, text, integer) to service_role;

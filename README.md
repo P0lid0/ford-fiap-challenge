@@ -4,9 +4,9 @@
 >
 > Guilherme (RM 554962) · Pedro (RM 555556) · Fabrício (RM 558216) · Vitor (RM 554893) · Matheus (RM 555447)
 
-Plataforma única que resolve os **dois desafios da Ford**:
+Plataforma única para os **dois desafios da Ford**:
 - **Desafio 1 — Inteligência Competitiva:** schema canônico de 262 atributos × 14 seções (template oficial Ford), comparação 2-5 veículos lado a lado, busca FIPE + IA com web search.
-- **Desafio 2 — VIN Share / Retenção:** classificador XGBoost treinado em **175.554 VINs reais Ford BR**, leads priorizados via risco composto, ação real via Resend, visão 360 do cliente.
+- **Desafio 2 — VIN Share / Retenção:** classificação de perfis, priorização de leads, ações de retenção e visão 360 do cliente.
 
 ---
 
@@ -30,7 +30,7 @@ pnpm install                     # na raiz do repositório
 pnpm dev:api                     # API em http://localhost:3333 · Swagger em http://localhost:3333/docs
 ```
 
-1. No Swagger, abra `POST /auth/login` → **Try it out** → informe e-mail e senha (ver [Login demo](#7-login-demo)).
+1. No Swagger, abra `POST /auth/login` → **Try it out** → informe as credenciais de um usuário criado no seu projeto Supabase.
 2. Copie o `access_token` da resposta e clique em **Authorize** (cadeado no topo).
 3. As rotas protegidas passam a responder; sem o token elas devolvem `401`.
 
@@ -39,7 +39,7 @@ Pelo terminal:
 ```bash
 curl -X POST http://localhost:3333/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@faroai.com.br","password":"Ford2026!"}'
+  -d '{"email":"seu-usuario@example.com","password":"sua-senha"}'
 
 curl http://localhost:3333/me -H "Authorization: Bearer <access_token>"
 ```
@@ -82,14 +82,15 @@ O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK
 | Disciplina | Entregável | Caminho |
 |---|---|---|
 | 1. SOA / Web Services | API REST Fastify + Swagger | `apps/api/` |
-| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**18 migrations**) |
-| 2. Mobile & IoT | App React Native + Expo Router | `apps/mobile/` |
+| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**19 migrations**) |
+| 2. Mobile Development | App React Native + Expo Router | `apps/mobile/` |
 | 3. Testing / QA | Frontend web Next.js 15 | `apps/web/` |
-| 4. Cybersecurity | Documento de segurança (5 eixos) | `docs/SECURITY.md` |
+| 4. Cybersecurity | Pipeline e controles do Sprint 3 | `docs/SECURITY.md` |
 | 5. IA / ML | Serviço FastAPI + XGBoost | `services/ml/` |
-| 5. IA / ML | Notebook Jupyter (EDA + cluster + classif) | `services/ml/notebooks/ford_segmentation.ipynb` |
-| 5. IA / ML | Modelo treinado serializado | Gerado localmente em `services/ml/models/classifier_real_v1.joblib` |
-| 5. IA / ML | Métricas reais (175k VINs) | Geradas localmente em `services/ml/models/metrics_real.json` |
+| 5. IA / ML | Notebook da sprint anterior | `services/ml/notebooks/ford_segmentation.ipynb` |
+| 5. IA / ML | Notebook Sprint 3 — Challenge 2 | `services/ml/notebooks/ford_retention_sprint3.ipynb` |
+| 5. IA / ML | Relatório Sprint 3 | `docs/deliverables/Relatorio_Sprint3_IA_ML_Challenge2.md` |
+| 5. IA / ML | Treinamento com dados Ford | ETL e trainer locais; requer a planilha autorizada, ausente do repositório |
 
 ## 📨 Entregas finais via Teams
 
@@ -121,7 +122,7 @@ O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK
 │  apps/mobile — React Native + Expo Router        │
 │  Login · Tabs · Cliente [id] · Compare           │
 └──────────────────┬───────────────────────────────┘
-                   │ HTTPS + JWT (emitido pela API) 
+                   │ HTTPS + JWT (emitido pela API)
 ┌──────────────────▼───────────────────────────────┐
 │  apps/api — Node.js + Fastify + TypeScript + Zod │
 │  30+ rotas REST · Swagger UI em /docs            │
@@ -131,12 +132,12 @@ O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK
        │              ┌────────▼─────────────────┐
        │              │ services/ml — FastAPI    │
        │              │ XGBoost + scikit-learn   │
-       │              │ classifier_real_v1       │
+       │              │ classifier_base2.joblib  │
        │              └──────────────────────────┘
        │
 ┌──────▼───────────────────────────────────────────┐
 │  Supabase Postgres (managed)                     │
-│  18 migrations · RLS por dealership × role       │
+│  19 migrations · RLS por dealership × role       │
 │  profiles · dealerships · clients · vehicles     │
 │  catalog_items · vehicle_catalog_values          │
 │  acoes_retencao · email_logs · audit_log         │
@@ -150,18 +151,18 @@ O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK
 ford-fiap-challenge/
 ├── apps/
 │   ├── api/                     # Fastify + Zod + Swagger + Supabase (30+ rotas)
-│   ├── mobile/                  # Expo + Expo Router + AsyncStorage (9 telas)
+│   ├── mobile/                  # Expo + Expo Router + SecureStore nativo (9 telas)
 │   └── web/                     # Next.js 15 (painel operacional)
 ├── services/ml/                 # FastAPI + scikit-learn + XGBoost
 │   ├── src/                     # classifier, classifier_real, clustering, scrapers, main.py
 │   ├── data/                    # gerado localmente: Parquet das bases + JSON canônico D1
 │   ├── models/                  # gerado localmente: .joblib + metrics.json + metrics_real.json
-│   └── notebooks/               # ford_segmentation.ipynb (entrega oficial D5)
+│   └── notebooks/               # notebooks de IA das sprints anteriores e Sprint 3
 ├── packages/
 │   ├── types/                   # tipos compartilhados TS
 │   └── ui/                      # design tokens Ford (cores, tipografia, spacing)
 ├── supabase/
-│   └── migrations/              # 18 migrations versionadas + RLS + seeds
+│   └── migrations/              # 19 migrations versionadas + RLS + seeds
 ├── scripts/
 │   ├── run-migrations.mjs       # aplica SQL no Postgres
 │   ├── apply-migrations-via-api.mjs # alternativa via Management API
@@ -175,7 +176,7 @@ ford-fiap-challenge/
 │   ├── SECURITY.md              # política de segurança (entrega D4)
 │   ├── SETUP.md
 │   └── deliverables/            # PPTX, PDFs, DOCX, .archimate
-└── .github/workflows/ci.yml     # lint + typecheck + train smoke + gitleaks
+└── .github/workflows/ci.yml     # typecheck + ML + SAST + SCA + secret scan
 ```
 
 ---
@@ -203,7 +204,7 @@ Preencha `.env.local` com:
 pnpm install
 ```
 
-### 4. Banco de dados — aplicar as 18 migrations
+### 4. Banco de dados — aplicar as 19 migrations
 **Opção A — Script automatizado (recomendado):**
 ```bash
 SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
@@ -214,17 +215,23 @@ SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
 2. Cole o conteúdo de cada arquivo em `supabase/migrations/` (em ordem)
 3. Click em Run
 
-### 5. Treinar o modelo ML
+### 5. Gerar o modelo usado pelo serviço ML
 ```bash
 cd services/ml
 pip install -r requirements.txt
-python ../../scripts/etl-d2-real.py  # gera Parquets reais a partir do XLSX Ford
-python -m src.scripts.train_real     # gera classifier_real_v1 + metrics_real.json
+python -m src.scripts.train_models   # gera classifier_base2.joblib
 ```
 
-Os artefatos em `services/ml/data/` e `services/ml/models/` são gerados
-localmente pelos scripts de ETL/treino e não são commitados por tamanho e
-governança de dados.
+Esse é o artefato carregado por `src.main` na rota `/predict`. Os arquivos em
+`services/ml/data/` e `services/ml/models/` são gerados localmente e não são
+commitados.
+
+O treinamento com a planilha Ford é uma trilha separada. Ele gera
+`classifier_real_v1.joblib`, que a API não carrega. `scripts/etl-d2-real.py`
+depende de uma planilha autorizada fora do repositório, pressupõe caminhos de
+uma estação Windows e lê XLSX sem que `openpyxl` esteja declarado em
+`services/ml/requirements.txt`. Configure os caminhos e instale um engine XLSX
+antes de executar `python -m src.scripts.train_real`.
 
 ### 6. Rodar tudo (4 terminais)
 ```bash
@@ -248,46 +255,34 @@ URLs:
 - ML: http://localhost:8001
 - ML OpenAPI: http://localhost:8001/docs
 
-### 7. Login demo
-```
-email: admin@faroai.com.br
-senha: Ford2026!
-role:  admin
-```
+### 7. Usuário de demonstração
+
+Crie um usuário no Supabase Auth e atribua o perfil desejado em `profiles`.
+Não use credenciais compartilhadas no repositório.
 
 ---
 
 ## 🧠 ML & IA (Disciplina 5)
 
-- **Pipeline em 2 etapas**:
-  1. Segmentação não-supervisionada na Base 1 (histórico completo) → K-Means K=4 validado por elbow + silhouette → 4 perfis: **fiel** · **abandono** · **esquecido** · **econômico**
-  2. Classificação supervisionada na Base 2 (apenas dados pré-compra) → XGBoost → **zero data leakage**
+O projeto continua no **Challenge 2 — VIN Share e retenção**, o mesmo da sprint anterior. O notebook anterior permanece em [`ford_segmentation.ipynb`](services/ml/notebooks/ford_segmentation.ipynb). A Sprint 3 acrescenta comparação e ajuste de classificadores em [`ford_retention_sprint3.ipynb`](services/ml/notebooks/ford_retention_sprint3.ipynb), com relatório em [`Relatorio_Sprint3_IA_ML_Challenge2.md`](docs/deliverables/Relatorio_Sprint3_IA_ML_Challenge2.md).
 
-- **Modelo técnico do MVP (`xgb-real-v1`)** — treinado em **175.554 VINs reais Ford BR** (`vin_share_Desafio_02.xlsx`):
-  - accuracy = **62,7%**
-  - F1 weighted = **0,60**
-  - F1 macro = **0,48**
-  - 140.443 amostras treino · 35.111 amostras teste
+O notebook da Sprint 3 usa 10.000 registros gerados por `services/ml/src/synthetic.py`. Como o gerador cria o rótulo e os atributos juntos, os resultados medem a recuperação de rótulos sintéticos; não são métricas de desempenho em clientes Ford. O XGBoost usa CUDA quando detecta uma GPU NVIDIA e um build compatível; K-Means, regressão logística e Random Forest continuam na CPU.
 
-- **Bases sintéticas** (`services/ml/src/synthetic.py`) — usadas só durante desenvolvimento inicial pra validar o pipeline. Métricas sintéticas (≈ 60% acc) ficam como baseline histórico.
-
-- **Artefatos de treino**: `services/ml/data/*.parquet`, `services/ml/models/classifier_real_v1.joblib` e `services/ml/models/metrics_real.json` são gerados localmente por `scripts/etl-d2-real.py` e `python -m src.scripts.train_real`; não são commitados por tamanho e governança de dados.
-
-- **Notebook oficial**: [`services/ml/notebooks/ford_segmentation.ipynb`](services/ml/notebooks/ford_segmentation.ipynb)
+O serviço FastAPI carrega `services/ml/models/classifier_base2.joblib` e chama `src.classifier`. O trainer com dados reais (`scripts/etl-d2-real.py` e `python -m src.scripts.train_real`) é uma trilha separada que depende da planilha autorizada, não versionada aqui. Ele não é o artefato carregado pela rota `/predict`. Além disso, o ETL atual calcula agregados de perfil por concessionária e modelo antes da divisão treino/teste, apesar do comentário dizer leave-one-out; essas métricas não devem ser tratadas como validação sem vazamento até que esse fluxo seja corrigido. O notebook da Sprint 3 não usa esses agregados nem promove seu candidato ao serviço.
 
 ---
 
-## 🛡 Segurança (Disciplina 4 — 5 eixos)
+## Segurança (Sprint 3)
 
-Documento completo em **[`docs/SECURITY.md`](docs/SECURITY.md)**. Cobre os 5 eixos:
+[`docs/SECURITY.md`](docs/SECURITY.md) descreve os quatro grupos do trabalho.
+A solução atual não tem dispositivo IoT nem broker MQTT; o documento registra essa ausência.
 
-| Eixo | Pontos | Status |
-|---|---|---|
-| 1. Validação & Sanitização | 20 | ✅ Zod em todas rotas · sem SQL raw · rate-limit · multipart 30MB |
-| 2. Autenticação & RBAC | 20 | ✅ JWT próprio (HS256) · 3 roles · escopo por concessionária na API + RLS Postgres |
-| 3. Proteção de APIs | 20 | ✅ TLS 1.3 · CORS allowlist · HMAC payloads |
-| 4. Dados & Privacidade | 25 | ✅ AES-256 at rest · VIN_Hash · LGPD-ready |
-| 5. Monitoramento & Auditoria | 15 | ✅ audit_log estruturado · email_logs · sem stack trace |
+| Atividade | Estado |
+|---|---|
+| Pipeline DevSecOps | CI com testes, Semgrep, auditoria de dependências e Gitleaks; achados de dependências ainda abertos |
+| Código e infraestrutura | JWT, RBAC, RLS, limites HTTP, HMAC API→ML e proteção de dados implementados; controles de deploy pendentes |
+| Monitoramento e resposta | Logs e auditoria implementados; alertas e dashboard pendentes de implantação |
+| Compliance contínuo | STRIDE e mapeamento OWASP/LGPD documentados; retenção e backup ainda pendentes |
 
 ---
 
@@ -320,10 +315,12 @@ Swagger UI completo: **http://localhost:3333/docs** — cada rota mostra quem po
 
 ---
 
-## ✅ Status final
+## ✅ Status registrado na sprint anterior
+
+Os números abaixo reproduzem o status documentado na entrega anterior e não foram revalidados neste checkout. A planilha e os Parquets da base Ford não estão incluídos no repositório.
 
 - **18 migrations** versionadas em `supabase/migrations/`
-- **175.554 VINs reais Ford BR** importados na base
+- **175.554 VINs reais Ford BR** reportados como importados na entrega anterior; a base não está disponível neste checkout
 - **786 valores canônicos** populados (262 atributos × 3 Ranger 26MY)
 - **135.839 leads** detectados via risco composto
 - **30+ endpoints REST** documentados em Swagger

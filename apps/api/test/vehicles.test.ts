@@ -46,6 +46,16 @@ describe('Consulta e comparação', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('GET /competitive/lookup ignora caminhos que tentam alterar protótipos', async () => {
+    const res = await app.inject({
+      method: 'GET', headers: await authAs('analista'),
+      url: '/competitive/lookup?marca=ford&modelo=ranger&fields=motor.__proto__.polluted,motor.potencia_cv',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()[0].motor).toEqual({ potencia_cv: 170 });
+    expect(Object.prototype).not.toHaveProperty('polluted');
+  });
+
   it('POST /competitive/compare 200 — indica o vencedor de cada critério', async () => {
     const res = await app.inject({
       method: 'POST', url: '/competitive/compare', headers: await authAs('analista'),

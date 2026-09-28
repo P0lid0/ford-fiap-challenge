@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { authorize, requireUser } from '../plugins/auth.js';
 import { adminClient } from '../lib/supabase.js';
 import { AVAILABLE_MODELS, clearKeyCache, getApiKey, type Provider } from '../lib/ai.js';
+import { logAudit } from '../lib/audit.js';
 
 const PROVIDERS = [
   'openai', 'anthropic', 'gemini',     // LLMs
@@ -26,7 +27,7 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     schema: { tags: ['Admin · IA'], summary: 'Status de cada provedor (configurado?) — admin' },
   }, async () => {
 
-    const status: Record<string, { configured: boolean; source: 'env' | 'db' | 'none'; preview?: string }> = {};
+    const status: Record<string, { configured: boolean; source: 'env' | 'db' | 'none' }> = {};
     // Providers "não-IA" (FIPE, 411) usam env var dedicada + lookup direto no DB.
     const nonAiEnvMap: Record<string, string> = {
       fipe: 'FIPE_API_TOKEN',
@@ -52,7 +53,6 @@ export async function aiConfigRoutes(app: FastifyInstance) {
       status[p] = {
         configured: !!k,
         source: fromEnv ? 'env' : (k ? 'db' : 'none'),
-        preview: k ? `${k.slice(0, 7)}…${k.slice(-4)}` : undefined,
       };
     }
     return status;
@@ -84,7 +84,11 @@ export async function aiConfigRoutes(app: FastifyInstance) {
       const { clear411TokenCache } = await import('../lib/data-sources/vehicle-411.js');
       clear411TokenCache();
     }
-    return { ok: true, provider, preview: `${api_key.slice(0, 7)}…${api_key.slice(-4)}` };
+    await logAudit({
+      actor_id: u.id, action: 'ai_key.updated', entity: 'ai_keys', entity_id: provider,
+      metadata: { provider }, ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
+    return { ok: true, provider };
   });
 
   // === Remover chave ===
@@ -97,7 +101,12 @@ export async function aiConfigRoutes(app: FastifyInstance) {
     },
   }, async (req, reply) => {
     const { provider } = req.params as any;
-    await adminClient().from('ai_keys').delete().eq('provider', provider);
+    const { error } = await adminClient().from('ai_keys').delete().eq('provider', provider);
+    if (error) {
+      req.log.error({ err: error, provider }, 'failed to delete AI provider key');
+      reply.code(400);
+      return { error: 'delete_failed' };
+    }
     clearKeyCache();
     if (provider === 'fipe') {
       const { clearFipeTokenCache } = await import('../lib/data-sources/fipe.js');

@@ -44,7 +44,7 @@ const FUNCTIONS: { id: AiFunction; label: string; desc: string; tier: 'fast' | '
 export default function Configuracoes() {
   const { confirm, dialog } = useConfirm();
   const [tab, setTab] = useState<'keys' | 'functions'>('keys');
-  const [keysStatus, setKeysStatus] = useState<Record<string, { configured: boolean; source: string; preview?: string }>>({});
+  const [keysStatus, setKeysStatus] = useState<Record<string, { configured: boolean; source: string }>>({});
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [keyVisible, setKeyVisible] = useState<Record<string, boolean>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -169,9 +169,6 @@ export default function Configuracoes() {
                         <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-50 border border-emerald-300 text-emerald-700 rounded-full text-xs font-bold uppercase tracking-wider">
                           <Check className="w-3 h-3" /> {fromEnv ? 'env var' : 'banco'}
                         </span>
-                        {status?.preview && (
-                          <code className="text-xs bg-gray-100 px-2 py-1 rounded font-mono">{status.preview}</code>
-                        )}
                       </div>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase tracking-wider">
