@@ -155,20 +155,28 @@ def write_import_csv(data):
         tasks_by_parent[task["parent"]].append(task)
     rows = []
     for epic in data["epics"]:
+        epic_priority = min(
+            item["azure_priority"]
+            for feature in epic["features"]
+            for item in feature["items"]
+        )
         rows.append(
             {
                 "Work Item Type": "Epic",
                 "Title 1": epic["title"],
                 "Description": html_description({"type": "Epic", **epic}),
+                "Priority": epic_priority,
                 "Tags": "FaroAI;Epic",
             }
         )
         for feature in epic["features"]:
+            feature_priority = min(item["azure_priority"] for item in feature["items"])
             rows.append(
                 {
                     "Work Item Type": "Feature",
                     "Title 2": feature["title"],
                     "Description": html_description({"type": "Feature", **feature}),
+                    "Priority": feature_priority,
                     "Tags": "FaroAI;Feature",
                 }
             )
@@ -200,6 +208,7 @@ def write_import_csv(data):
                             "Work Item Type": "Task",
                             "Title 4": task["title"],
                             "Description": description,
+                            "Priority": item["azure_priority"],
                             "Tags": f"FaroAI;Sprint 3;Task;{task['id']}",
                         }
                     )
@@ -214,7 +223,9 @@ def write_import_csv(data):
         writer.writerows(rows)
     with IMPORT.open(encoding="utf-8-sig", newline="") as source:
         imported = list(csv.DictReader(source))
-    if len(imported) != len(rows) or any(not row["Work Item Type"] for row in imported):
+    if len(imported) != len(rows) or any(
+        not row["Work Item Type"] or not row["Priority"] for row in imported
+    ):
         raise ValueError("O CSV gerado não passou pela verificação de leitura.")
     hierarchy_columns = ["Title 1", "Title 2", "Title 3", "Title 4"]
     expected_types = ["Epic", "Feature", "Product Backlog Item", "Task"]
