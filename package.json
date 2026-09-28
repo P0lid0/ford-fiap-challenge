@@ -18,7 +18,7 @@
     "db:seed": "node scripts/seed-vehicles.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.47.10",
+    "@supabase/supabase-js": "2.117.1",
     "postgres": "3.4.5"
   },
   "devDependencies": {
