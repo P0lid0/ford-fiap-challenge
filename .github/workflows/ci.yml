@@ -27,7 +27,7 @@ jobs:
       - run: pnpm --filter @ford/api test:coverage
       - name: Publica evidências dos testes (JUnit + cobertura)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: api-test-results
           path: apps/api/test-results
@@ -84,7 +84,7 @@ jobs:
         continue-on-error: true
       - name: Publish audit reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-audits
           path: |
