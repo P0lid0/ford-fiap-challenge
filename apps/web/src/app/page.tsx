@@ -53,11 +53,11 @@ export default function Login() {
           </h2>
           <p className="text-white/70 text-lg leading-relaxed">
             Catálogo competitivo confiável, predição de perfil de cliente
-            e ações de retenção no momento certo — tudo auditável.
+            e ações de retenção no momento certo — com acesso por concessionária e eventos registrados.
           </p>
 
           <div className="grid grid-cols-3 gap-4 mt-12">
-            <FeatureBadge icon={ShieldCheck} label="LGPD-ready" />
+            <FeatureBadge icon={ShieldCheck} label="RLS + eventos" />
             <FeatureBadge icon={Zap} label="ML em tempo real" />
             <FeatureBadge icon={BarChart3} label="Insights por loja" />
           </div>

@@ -21,7 +21,7 @@ returns table (
 )
 language sql
 stable
-security definer
+security invoker
 set search_path = public, pg_temp
 as $$
   select
@@ -47,5 +47,6 @@ comment on function public.dealer_perfil_stats(integer) is
   'Agregação de perfil_real por dealer — usado em /metrics/anomalias-dealer pra calcular z-score de retenção.';
 
 -- Permissões: authenticated pode chamar (read-only function)
+revoke all on function public.dealer_perfil_stats(integer) from public, anon;
 grant execute on function public.dealer_perfil_stats(integer) to authenticated;
 grant execute on function public.dealer_perfil_stats(integer) to service_role;

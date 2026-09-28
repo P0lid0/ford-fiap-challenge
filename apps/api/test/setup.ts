@@ -10,8 +10,10 @@ import { beforeEach, vi } from 'vitest';
 process.env.NODE_ENV = 'test';
 process.env.LOG_LEVEL = 'error';
 process.env.SUPABASE_URL = 'https://supabase.test';
-process.env.SUPABASE_ANON_KEY = 'test-anon-key';
+process.env.SUPABASE_ANON_KEY = 'test-anon-key-000000000000';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key-0000000000';
+process.env.CLIENT_CPF_PEPPER = 'test-only-cpf-pepper-more-than-32-chars';
+process.env.ML_SERVICE_TOKEN = 'test-only-ml-service-token-more-than-32-chars';
 process.env.JWT_SECRET = 'test-only-jwt-secret-with-more-than-32-chars';
 process.env.JWT_EXPIRES_IN_SECONDS = '3600';
 process.env.RATE_LIMIT_MAX = '10000'; // o limite global não interfere; o do login é testado à parte

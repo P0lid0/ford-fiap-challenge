@@ -59,7 +59,7 @@ async function jget(path: string, tok: string): Promise<any | null> {
     }
     return await r.json();
   } catch (err: any) {
-    console.warn(`[411] timeout/erro ${path}:`, err?.message);
+    console.warn('[411] request failed:', { path, error: err?.message });
     return null;
   }
 }

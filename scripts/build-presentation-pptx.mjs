@@ -301,7 +301,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
   const blocks = [
     { color: FERRARI, num: '01', titulo: 'Catálogo Canônico', desc: '262 atributos × 14 seções no template oficial Ford. Comparação 1:1 com qualquer concorrente.' },
     { color: FORD_BLUE, num: '02', titulo: 'Retenção Preditiva', desc: '175k VINs reais classificados em 4 perfis. 135k leads detectados via risco composto.' },
-    { color: '00A896', num: '03', titulo: 'Ação Real', desc: 'E-mail real via Resend com template por perfil. Auditoria LGPD. Loop fechado de retenção.' },
+    { color: '00A896', num: '03', titulo: 'Ação Real', desc: 'E-mail via Resend com template por perfil. Ação e envio ficam registrados.' },
   ];
   blocks.forEach((b, i) => {
     const x = 0.5 + i * 4.3;
@@ -453,7 +453,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     { n: '1', t: 'Lead aparece no topo', d: 'Filtros: perfil, modelo, dealer, sinal' },
     { n: '2', t: 'Vendedor abre a ficha', d: 'Visão 360: garantia, próxima revisão, histórico' },
     { n: '3', t: 'Dispara e-mail real', d: 'Provider Resend · template por perfil' },
-    { n: '4', t: 'Ação fica auditada', d: 'email_logs + acoes_retencao + LGPD' },
+    { n: '4', t: 'Ação fica registrada', d: 'email_logs + acoes_retencao + audit_log' },
   ];
   steps.forEach((st, i) => {
     const y = 2.7 + i * 0.95;
@@ -499,10 +499,10 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
       'Swagger UI em /docs',
     ]},
     { titulo: 'Dados & ML', cor: '00A896', items: [
-      'Postgres (Supabase) · 18 migrations',
+      'Postgres (Supabase) · 19 migrations',
       'RLS por dealership + role',
       'FastAPI + XGBoost (ML service)',
-      'HMAC X-Payload-Signature',
+      'HMAC · timestamp · nonce',
     ]},
   ];
   cols.forEach((c, i) => {
@@ -599,17 +599,16 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
 // =====================================================================
 {
   const s = pres.addSlide();
-  addSlideTitle(s, { eyebrow: 'DISCIPLINA 4 · CYBERSECURITY', title: '5 eixos de segurança — 100 pts cobertos', slideNum: '10 / 14', isDark: true });
+  addSlideTitle(s, { eyebrow: 'DISCIPLINA 4 · CYBERSECURITY', title: 'Segurança no Sprint 3 · 10 pontos', slideNum: '10 / 14', isDark: true });
 
   const eixos = [
-    { p: '20', t: 'Validação & Sanitização', d: 'Zod em todas rotas · sem SQL raw · rate-limit 120 req/min · Helmet · multipart 30MB' },
-    { p: '20', t: 'Autenticação & RBAC', d: 'JWT Supabase com expiração · 3 papéis (analista/gestor/admin) · RLS Postgres por dealership' },
-    { p: '20', t: 'Proteção de APIs', d: 'HTTPS/TLS 1.3 · CORS allowlist · HMAC X-Payload-Signature no ML · throttling' },
-    { p: '25', t: 'Dados & Privacidade', d: 'AES-256 at rest · VIN_Hash (pseudonimização) · sem PII em prompts de IA · LGPD-ready' },
-    { p: '15', t: 'Monitoramento & Logs', d: 'audit_log estruturado · sem stack trace ao cliente · email_logs LGPD · trilha completa' },
+    { p: '3,0', t: 'DevSecOps e pipeline', d: 'Typecheck · Semgrep · pnpm audit · pip-audit · Gitleaks · Dependabot' },
+    { p: '2,5', t: 'Código e infraestrutura', d: 'RBAC · RLS · HMAC com nonce · SecureStore · e-books em domínios oficiais' },
+    { p: '2,0', t: 'Monitoramento e resposta', d: 'Pino · audit_log · alertas centralizados pendentes no deploy' },
+    { p: '2,5', t: 'Compliance e segurança contínua', d: 'Minimização · CPF com HMAC · dados financeiros em ML/IA · retenção pendente' },
   ];
   eixos.forEach((e, i) => {
-    const y = 1.95 + i * 0.95;
+    const y = 2.15 + i * 1.05;
     s.addShape('roundRect', {
       x: 0.5, y, w: 12.3, h: 0.8,
       fill: { color: NAVY_2 }, line: { color: '20354A' }, rectRadius: 0.08,
@@ -646,7 +645,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
 // =====================================================================
 {
   const s = pres.addSlide();
-  addSlideTitle(s, { eyebrow: 'DISCIPLINA 2 · MOBILE & IoT', title: 'App React Native + Expo Router', slideNum: '11 / 14' });
+  addSlideTitle(s, { eyebrow: 'DISCIPLINA 2 · MOBILE DEVELOPMENT', title: 'App React Native + Expo Router', slideNum: '11 / 14' });
 
   // Lado esquerdo: stack
   s.addText('Stack técnica', {
@@ -656,7 +655,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
   const stack = [
     'React Native 0.76 + Expo SDK 52',
     'Expo Router (file-based, deep links)',
-    'AsyncStorage + Supabase JS',
+    'SecureStore nativo · storage do navegador na web',
     'TypeScript estrito · @ford/ui + @ford/types',
     'iOS + Android (multiplataforma)',
   ];
@@ -716,7 +715,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     ['Custo entrada',           'Open-stack',     'US$150/user',  'R$ 1k/mês',  'US$ 10k/mês'],
     ['Dataset Ford BR real',    '✓ 175k VINs',    '—',            '—',           '—'],
     ['IA explicável (sinais)',  '✓',              'Parcial',      '—',           'SHAP only'],
-    ['LGPD-first',              '✓ VIN_Hash+RLS', '✓',            'Parcial',     'Parcial'],
+    ['Controles de acesso',     '✓ RLS + minimização', '✓',       'Parcial',     'Parcial'],
     ['Arquitetura prod-ready',  'MVP funcional', '3-6 meses',    '1-2 meses',   '2-3 meses'],
     ['Integração FIPE',         '✓ Nativa',       '—',            'Parcial',     '—'],
   ];
@@ -761,7 +760,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     x: 0.5, y: 6.0, w: 12.3, h: 0.35,
     fontFace: 'Calibri', fontSize: 12, bold: true, color: NAVY,
   });
-  s.addText('Stack brasileira · IA explicável · ML hybrid + LLM crítico · MVP prod-ready · LGPD-ready', {
+  s.addText('Stack brasileira · IA explicável · controles no app · deploy e adequação LGPD pendentes', {
     x: 0.5, y: 6.4, w: 12.3, h: 0.35,
     fontFace: 'Calibri', fontSize: 11, italic: true, color: FERRARI,
   });
@@ -780,7 +779,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
   const sprints = [
     { t: 'Sprint 1 ✓', d: 'MVP entregue: D1 + D2, 175k VINs, 135k leads', c: '00A896' },
     { t: 'Sprint 2', d: 'Mobile responsivo · re-treino XGBoost · onboarding', c: FORD_BLUE },
-    { t: 'Sprint 3', d: 'API telematics · dashboards regionais · KPIs financeiros', c: 'F4A11A' },
+    { t: 'Sprint 3', d: 'DevSecOps · RBAC/RLS · HMAC anti-replay · SecureStore', c: 'F4A11A' },
     { t: 'Sprint 4', d: 'Motor de campanhas A/B · API pública pro CRM Ford', c: FERRARI },
   ];
   sprints.forEach((sp, i) => {
@@ -817,7 +816,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Performance: <2s render · <1s ranking 175k leads\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
-    { text: 'Segurança: RLS · HMAC · audit log · LGPD-ready\n', options: { color: '2A3A4A', fontSize: 10 } },
+    { text: 'Segurança: RBAC · RLS · HMAC · audit log; TLS e alertas pendentes no deploy\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Usabilidade: ≤4 cliques pra ação · 100% PT-BR\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },

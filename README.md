@@ -30,7 +30,7 @@ pnpm install                     # na raiz do repositório
 pnpm dev:api                     # API em http://localhost:3333 · Swagger em http://localhost:3333/docs
 ```
 
-1. No Swagger, abra `POST /auth/login` → **Try it out** → informe e-mail e senha (ver [Login demo](#7-login-demo)).
+1. No Swagger, abra `POST /auth/login` → **Try it out** → informe as credenciais de um usuário criado no seu projeto Supabase.
 2. Copie o `access_token` da resposta e clique em **Authorize** (cadeado no topo).
 3. As rotas protegidas passam a responder; sem o token elas devolvem `401`.
 
@@ -39,7 +39,7 @@ Pelo terminal:
 ```bash
 curl -X POST http://localhost:3333/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@faroai.com.br","password":"Ford2026!"}'
+  -d '{"email":"seu-usuario@example.com","password":"sua-senha"}'
 
 curl http://localhost:3333/me -H "Authorization: Bearer <access_token>"
 ```
@@ -60,10 +60,10 @@ pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-result
 | Disciplina | Entregável | Caminho |
 |---|---|---|
 | 1. SOA / Web Services | API REST Fastify + Swagger | `apps/api/` |
-| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**18 migrations**) |
-| 2. Mobile & IoT | App React Native + Expo Router | `apps/mobile/` |
+| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**19 migrations**) |
+| 2. Mobile Development | App React Native + Expo Router | `apps/mobile/` |
 | 3. Testing / QA | Frontend web Next.js 15 | `apps/web/` |
-| 4. Cybersecurity | Documento de segurança (5 eixos) | `docs/SECURITY.md` |
+| 4. Cybersecurity | Pipeline e controles do Sprint 3 | `docs/SECURITY.md` |
 | 5. IA / ML | Serviço FastAPI + XGBoost | `services/ml/` |
 | 5. IA / ML | Notebook da sprint anterior | `services/ml/notebooks/ford_segmentation.ipynb` |
 | 5. IA / ML | Notebook Sprint 3 — Challenge 2 | `services/ml/notebooks/ford_retention_sprint3.ipynb` |
@@ -100,7 +100,7 @@ pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-result
 │  apps/mobile — React Native + Expo Router        │
 │  Login · Tabs · Cliente [id] · Compare           │
 └──────────────────┬───────────────────────────────┘
-                   │ HTTPS + JWT (emitido pela API) 
+                   │ HTTPS + JWT (emitido pela API)
 ┌──────────────────▼───────────────────────────────┐
 │  apps/api — Node.js + Fastify + TypeScript + Zod │
 │  30+ rotas REST · Swagger UI em /docs            │
@@ -115,7 +115,7 @@ pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-result
        │
 ┌──────▼───────────────────────────────────────────┐
 │  Supabase Postgres (managed)                     │
-│  18 migrations · RLS por dealership × role       │
+│  19 migrations · RLS por dealership × role       │
 │  profiles · dealerships · clients · vehicles     │
 │  catalog_items · vehicle_catalog_values          │
 │  acoes_retencao · email_logs · audit_log         │
@@ -129,7 +129,7 @@ pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-result
 ford-fiap-challenge/
 ├── apps/
 │   ├── api/                     # Fastify + Zod + Swagger + Supabase (30+ rotas)
-│   ├── mobile/                  # Expo + Expo Router + AsyncStorage (9 telas)
+│   ├── mobile/                  # Expo + Expo Router + SecureStore nativo (9 telas)
 │   └── web/                     # Next.js 15 (painel operacional)
 ├── services/ml/                 # FastAPI + scikit-learn + XGBoost
 │   ├── src/                     # classifier, classifier_real, clustering, scrapers, main.py
@@ -140,7 +140,7 @@ ford-fiap-challenge/
 │   ├── types/                   # tipos compartilhados TS
 │   └── ui/                      # design tokens Ford (cores, tipografia, spacing)
 ├── supabase/
-│   └── migrations/              # 18 migrations versionadas + RLS + seeds
+│   └── migrations/              # 19 migrations versionadas + RLS + seeds
 ├── scripts/
 │   ├── run-migrations.mjs       # aplica SQL no Postgres
 │   ├── apply-migrations-via-api.mjs # alternativa via Management API
@@ -154,7 +154,7 @@ ford-fiap-challenge/
 │   ├── SECURITY.md              # política de segurança (entrega D4)
 │   ├── SETUP.md
 │   └── deliverables/            # PPTX, PDFs, DOCX, .archimate
-└── .github/workflows/ci.yml     # lint + typecheck + train smoke + gitleaks
+└── .github/workflows/ci.yml     # typecheck + ML + SAST + SCA + secret scan
 ```
 
 ---
@@ -182,7 +182,7 @@ Preencha `.env.local` com:
 pnpm install
 ```
 
-### 4. Banco de dados — aplicar as 18 migrations
+### 4. Banco de dados — aplicar as 19 migrations
 **Opção A — Script automatizado (recomendado):**
 ```bash
 SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
@@ -233,12 +233,10 @@ URLs:
 - ML: http://localhost:8001
 - ML OpenAPI: http://localhost:8001/docs
 
-### 7. Login demo
-```
-email: admin@faroai.com.br
-senha: Ford2026!
-role:  admin
-```
+### 7. Usuário de demonstração
+
+Crie um usuário no Supabase Auth e atribua o perfil desejado em `profiles`.
+Não use credenciais compartilhadas no repositório.
 
 ---
 
@@ -252,17 +250,17 @@ O serviço FastAPI carrega `services/ml/models/classifier_base2.joblib` e chama 
 
 ---
 
-## 🛡 Segurança (Disciplina 4 — 5 eixos)
+## Segurança (Sprint 3)
 
-Documento completo em **[`docs/SECURITY.md`](docs/SECURITY.md)**. Cobre os 5 eixos:
+[`docs/SECURITY.md`](docs/SECURITY.md) descreve os quatro grupos do trabalho.
+A solução atual não tem dispositivo IoT nem broker MQTT; o documento registra essa ausência.
 
-| Eixo | Pontos | Status |
-|---|---|---|
-| 1. Validação & Sanitização | 20 | ✅ Zod em todas rotas · sem SQL raw · rate-limit · multipart 30MB |
-| 2. Autenticação & RBAC | 20 | ✅ JWT próprio (HS256) · 3 roles · escopo por concessionária na API + RLS Postgres |
-| 3. Proteção de APIs | 20 | ✅ TLS 1.3 · CORS allowlist · HMAC payloads |
-| 4. Dados & Privacidade | 25 | ✅ AES-256 at rest · VIN_Hash · LGPD-ready |
-| 5. Monitoramento & Auditoria | 15 | ✅ audit_log estruturado · email_logs · sem stack trace |
+| Atividade | Estado |
+|---|---|
+| Pipeline DevSecOps | CI com testes, Semgrep, auditoria de dependências e Gitleaks; achados de dependências ainda abertos |
+| Código e infraestrutura | JWT, RBAC, RLS, limites HTTP, HMAC API→ML e proteção de dados implementados; controles de deploy pendentes |
+| Monitoramento e resposta | Logs e auditoria implementados; alertas e dashboard pendentes de implantação |
+| Compliance contínuo | STRIDE e mapeamento OWASP/LGPD documentados; retenção e backup ainda pendentes |
 
 ---
 

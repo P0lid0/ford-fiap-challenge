@@ -50,31 +50,27 @@ A challenge tem **5 disciplinas**. A nota é a média das entregas, e TODAS as d
 | **Separação apresentação/serviço/dados** | 10% | ✅ | `apps/web` (apresent.) · `apps/api` (serviço) · `supabase` (dados) |
 | **Padrões REST/JSON/OpenAPI** | 8% | ✅ | OpenAPI 3 gerado automaticamente |
 | **Tratamento de erros** | 7% | ✅ | Try/catch + Zod errors + Fastify error handler |
-| **Configuração BD + Migrations** | 15% | ✅ | `supabase/migrations/` — 18 migrations versionadas |
+| **Configuração BD + Migrations** | 15% | ✅ | `supabase/migrations/` — 19 migrations versionadas |
 
 **Onde provar**: rode `pnpm dev:api` e acesse `http://localhost:3333/docs` — Swagger UI lista todos os endpoints, com schemas, exemplos e validação Zod.
 
 ---
 
-### ✅ Disciplina 2 — Mobile Development and IoT
+### ✅ Disciplina 2 — Mobile Development
 
-> Slide 12 do PPTX — React Native com Expo
+> React Native com Expo; IoT está fora do escopo deste sprint.
 
 | Item | Status | Onde está |
 |---|---|---|
 | **App React Native funcional** | ✅ | `apps/mobile/` (Expo SDK 52 + RN 0.76) |
-| **iOS + Android (multiplataforma)** | ✅ | `app.json` com `bundleIdentifier` e `adaptiveIcon` |
+| **iOS + Android** | ✅ | `app.json` com identificadores de bundle e ícones |
 | **Navegação Expo Router** | ✅ | `apps/mobile/app/` (file-based routing) |
-| **Componentes RN** | ✅ | 9 telas (login, tabs, client, compare) |
-| **Gerenciamento de estado** | ✅ | useState/useEffect + AsyncStorage |
-| **Consumo de APIs** | ✅ | `apps/mobile/lib/api.ts` consume `apps/api` |
-| **AsyncStorage (armazenamento local)** | ✅ | Sessão persistente via `@react-native-async-storage/async-storage` |
-| **TypeScript estrito** | ✅ | `tsconfig.json` strict mode |
-| **Aderência ao desafio Ford** | ✅ | Cobre D1 (veículos/compare) + D2 (clientes/leads/insights) |
+| **Sessão nativa protegida** | ✅ | `expo-secure-store`; web usa armazenamento do navegador |
+| **Consumo de APIs** | ✅ | `apps/mobile/lib/api.ts` chama `apps/api` |
+| **TypeScript estrito** | ✅ | `tsconfig.json` |
+| **Aderência ao desafio Ford** | ✅ | D1 (veículos e comparação) + D2 (clientes, leads e insights) |
 
-**Como rodar**: `pnpm dev:mobile` → QR code Expo → abre no Expo Go ou simulador.
-
----
+**Como rodar**: `pnpm dev:mobile` mostra o QR code do Expo para Expo Go ou simulador.
 
 ### ✅ Disciplina 3 — Testing, Compliance & Quality Assurance
 
@@ -107,32 +103,16 @@ A challenge tem **5 disciplinas**. A nota é a média das entregas, e TODAS as d
 
 ### ✅ Disciplina 4 — Cybersecurity
 
-> Slides 15-17 do PPTX — 100 pts em 5 eixos
+> Sprint 3: quatro grupos avaliativos, total de 10 pontos. IoT e MQTT estão fora do escopo.
 
-| Eixo | Pontos | Item | Status | Implementação |
-|---|---|---|---|---|
-| **1. Validação & sanitização** | 20 | Validação de entradas (Zod) | ✅ | Todas rotas usam `fastify-type-provider-zod` |
-| | | SQL Injection prevention | ✅ | Sem SQL raw — supabase-js + migrations versionadas |
-| | | XSS / Command injection | ✅ | React escapa output automaticamente |
-| | | Limite tamanho/formato | ✅ | `@fastify/rate-limit` 120 req/min + multipart 30MB |
-| | | Erros seguros (sem stack trace) | ✅ | Error handler customizado em produção |
-| **2. Autenticação & autorização** | 20 | JWT/OAuth2 | ✅ | Supabase Auth com JWT assinado + expiração |
-| | | RBAC | ✅ | Roles `analista` · `gestor` · `admin` (Postgres enum) |
-| **3. Proteção de APIs** | 20 | HTTPS/TLS 1.2+ | ✅ | Supabase managed (TLS 1.3) |
-| | | Rate limiting | ✅ | `@fastify/rate-limit` por user.id ou IP |
-| | | CORS allowlist | ✅ | `@fastify/cors` com origins explícitas |
-| | | Assinatura de payloads | ✅ | HMAC-SHA256 via `X-Payload-Signature` no ML |
-| **4. Dados & privacidade** | 25 | Criptografia at rest | ✅ | Supabase (AES-256 por padrão) |
-| | | Política de retenção | ✅ | `data_source` + anonimização via VIN_Hash |
-| | | Anonimização para ML | ✅ | `dealership_id` pseudonimizado via HMAC antes de ir pro ML |
-| | | Proteção contra exposição | ✅ | Logs sem PII + endpoints todos autenticados |
-| **5. Monitoramento, logs, auditoria** | 15 | Logs estruturados | ✅ | Fastify logger pino + sem PII |
-| | | Detecção de anomalias | ✅ | `metrics/anomalias-dealer` + audit log |
-| | | Trilha de auditoria | ✅ | `audit_log` + `email_logs` (LGPD) |
+| Grupo | Pontos | Implementação no repositório | Operação pendente |
+|---|---:|---|---|
+| **DevSecOps e pipeline** | 3,0 | CI com typecheck, Semgrep, `pnpm audit`, `pip-audit`, Gitleaks e Dependabot | Exigir os jobs nas regras de proteção da branch |
+| **Segurança de código e infraestrutura** | 2,5 | Zod, RBAC, RLS, segredos obrigatórios, SecureStore nativo e fetch de e-book restrito | Configurar TLS, proxy, firewall e rede privada no deploy |
+| **Monitoramento e resposta a incidentes** | 2,0 | Pino, limite de requisições e `audit_log` | Centralizar logs, configurar alertas e definir responsáveis |
+| **Compliance e segurança contínua** | 2,5 | Minimização de dados, escopo por concessionária e atualização semanal de dependências | Aprovar fluxos de IA, retenção e resposta conforme LGPD |
 
-**Documento mestre**: `docs/SECURITY.md` (10 KB) — cobre os 5 eixos com snippets de código.
-
----
+**Documento de referência**: [`docs/SECURITY.md`](../SECURITY.md). O workflow está configurado, mas seus jobs ainda precisam rodar no CI. Branch protection, alertas e controles de produção dependem da configuração do ambiente.
 
 ### ✅ Disciplina 5 — Inteligência Artificial & Machine Learning
 
@@ -212,7 +192,7 @@ services/ml/notebooks/
 | Admin `admin@faroai.com.br` criado no Supabase | ✅ |
 | Mobile typecheck (warnings pré-existentes, sem bloqueios) | ✅ |
 | API rotas: 30+ endpoints REST documentados em Swagger | ✅ |
-| Banco: 18 migrations versionadas + RLS habilitada | ✅ |
+| Banco: 19 migrations versionadas + RLS habilitada | ✅ |
 | Base real de 175.554 VINs acessível neste checkout | ❌ | Planilha e Parquet não incluídos; importação anterior consta no histórico do projeto |
 | Schema canônico Ford D1 (262 atributos × 14 seções) populado | ✅ |
 | Métricas do XGBoost real sem vazamento | ⏳ | Métricas anteriores foram reportadas, mas o ETL calcula agregados de perfil na base completa antes do split; revalidar após corrigir |

@@ -73,7 +73,7 @@ Registro cronológico das decisões não-óbvias e o porquê. Padrão: `[DATA] �
 - **DB password ausente.** Migrations precisam ser aplicadas manualmente até o `SUPABASE_DB_PASSWORD` ser preenchido no `.env.local`.
 - **`SUPABASE_ANON_KEY` precisa ser preenchido** pelo Pólido (pegar no Dashboard). Sem ele, o mobile não conecta.
 - **`carrosnaweb` está com backend off** (500 em todas as fichas). LLM fallback cobre o gap.
-- **`SUPABASE_JWT_SECRET` não foi compartilhado**; quando preenchido, o backend valida JWTs localmente sem chamar `auth.getUser()`. Por enquanto, valida via Supabase API (1 round-trip extra por request).
+- **Validação de JWT.** O backend valida tokens chamando `/auth/v1/user` do Supabase. `SUPABASE_JWT_SECRET` não é usado nem necessário na configuração atual.
 - **Sem testes de RLS policy** ainda; risco real de policy mal escrita silenciosamente abrir dado. M2 vai adicionar.
 - **Modelo F1 macro 0.56** — bom, mas a classe "esquecido" tem o pior recall (features sutis no momento da compra). SMOTE/ADASYN podem subir.
 - **Detox e2e não configurado** ainda. M3 vai cobrir.

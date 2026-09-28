@@ -219,7 +219,7 @@ export async function chat(prompt: string, tier: AiTier = 'fast', opts: ChatOpts
         if (output) return { output, model, provider };
       }
     } catch (err: any) {
-      console.warn(`[ai] ${provider}:${model} failed:`, err?.message);
+      console.warn('[ai] provider call failed:', { provider, model, error: err?.message });
     }
   }
   return { output: '', model: 'none', provider: 'fallback' };

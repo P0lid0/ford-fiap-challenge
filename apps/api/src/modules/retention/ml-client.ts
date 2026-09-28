@@ -2,12 +2,12 @@
 // Cybersec:
 //  - dealership_id é PSEUDONIMIZADO via HMAC-SHA256 antes de sair da API gateway
 //    (ML service nunca vê o UUID original).
-//  - Body assinado com HMAC-SHA256 no header X-Payload-Signature (integridade
-//    em trânsito + previne replay manipulado).
+//  - HMAC-SHA256 assina timestamp, nonce e body; o ML valida frescor e rejeita
+//    nonces já usados durante a janela aceita.
 //  - Sem PII direta no payload (nome, cpf, email, telefone NUNCA sobem).
 // Falha silenciosamente para resposta mock se o serviço estiver fora — MVP-friendly.
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fetch } from 'undici';
 import { env } from '../../config.js';
 
@@ -30,12 +30,15 @@ export type PredictOutput = {
 
 /** HMAC-SHA256(secret, value) → hex de 16 chars (suficiente pra colisão prática zero a essa escala). */
 function pseudonymize(value: string): string {
-  return createHmac('sha256', env.ML_SERVICE_TOKEN).update(value).digest('hex').slice(0, 16);
+  return createHmac('sha256', env.ML_SERVICE_TOKEN)
+    .update('dealership-pseudonym:v1\0').update(value).digest('hex').slice(0, 16);
 }
 
 /** Assina body para garantir integridade — ML service verifica antes de processar. */
-function signPayload(body: string): string {
-  return createHmac('sha256', env.ML_SERVICE_TOKEN).update(body).digest('hex');
+function signPayload(body: string, timestamp?: string, nonce?: string): string {
+  const message = timestamp && nonce ? `${timestamp}.${nonce}.${body}` : body;
+  return createHmac('sha256', env.ML_SERVICE_TOKEN)
+    .update('ml-payload-signature:v1\0').update(message).digest('hex');
 }
 
 export async function predict(input: PredictInput): Promise<PredictOutput> {
@@ -46,7 +49,9 @@ export async function predict(input: PredictInput): Promise<PredictOutput> {
     dealership_id: pseudonymize(input.dealership_id),
   };
   const body = JSON.stringify(safeInput);
-  const signature = signPayload(body);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = randomBytes(16).toString('hex');
+  const signature = signPayload(body, timestamp, nonce);
 
   try {
     const res = await fetch(`${env.ML_SERVICE_URL}/predict`, {
@@ -55,6 +60,8 @@ export async function predict(input: PredictInput): Promise<PredictOutput> {
         'content-type': 'application/json',
         'authorization': `Bearer ${env.ML_SERVICE_TOKEN}`,
         'x-payload-signature': signature,
+        'x-payload-timestamp': timestamp,
+        'x-payload-nonce': nonce,
       },
       body,
     });

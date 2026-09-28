@@ -1,4 +1,5 @@
 import { adminClient } from './supabase.js';
+import type { FastifyBaseLogger } from 'fastify';
 
 export type AuditEvent = {
   actor_id?: string | null;
@@ -10,9 +11,9 @@ export type AuditEvent = {
   user_agent?: string | null;
 };
 
-export async function logAudit(ev: AuditEvent): Promise<void> {
+export async function logAudit(ev: AuditEvent, logger: FastifyBaseLogger): Promise<void> {
   try {
-    await adminClient().from('audit_log').insert({
+    const { error } = await adminClient().from('audit_log').insert({
       actor_id: ev.actor_id ?? null,
       action: ev.action,
       entity: ev.entity,
@@ -21,8 +22,9 @@ export async function logAudit(ev: AuditEvent): Promise<void> {
       ip: ev.ip ?? null,
       user_agent: ev.user_agent ?? null,
     });
+    if (error) logger.error({ err: error, action: ev.action }, '[audit] failed to write event');
   } catch (err) {
     // Audit failure não pode quebrar request — só loga.
-    console.error('[audit] failed to write event', err);
+    logger.error({ err, action: ev.action }, '[audit] failed to write event');
   }
 }

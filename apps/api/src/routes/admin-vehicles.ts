@@ -16,8 +16,10 @@ import { badGateway, badRequest, notFound, unprocessable, unsupportedMediaType }
 import { adminClient } from '../lib/supabase.js';
 import { fipe } from '../lib/data-sources/fipe.js';
 import { SUPPORTED_MANUFACTURER_BRANDS, fetchManufacturerSpecs } from '../lib/data-sources/manufacturer.js';
+import { isTrustedEbookUrl } from '../lib/data-sources/manufacturer-ebook.js';
 import { aggregateVehicle } from '../lib/data-sources/aggregator.js';
 import { extractFromFile } from '../lib/ai-vision.js';
+import { logAudit } from '../lib/audit.js';
 
 const VehicleUpdateSchema = z.object({
   marca: z.string().optional(),
@@ -200,7 +202,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       params: z.object({ id: z.string().uuid() }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { id } = req.params as any;
     const sb = adminClient();
 
@@ -246,6 +248,12 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
 
     if (error) throw error;
 
+    await logAudit({
+      actor_id: u.id, action: 'vehicle.price_refreshed', entity: 'vehicles', entity_id: id,
+      metadata: { fipe_code: fipeResult.CodigoFipe },
+      ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
+    }, req.log);
+
     return {
       ok: true,
       preco_antigo: precoAntigo,
@@ -269,7 +277,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       }),
     },
   }, async (req) => {
-    requireUser(req);
+    const u = requireUser(req);
     const { marca_codigo, modelo_codigo, ano_codigo } = req.body as any;
     const sb = adminClient();
 
@@ -294,7 +302,6 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     if (existing) return { source: 'cache', vehicle: existing };
 
     // 3. Roda agregador com dados FIPE já em mãos (manufacturer + IA pra gaps)
-    const u = requireUser(req);
     let aiModel = req.headers['x-ai-model'] as string | undefined;
     if (!aiModel) {
       const { data: pref } = await sb.from('ai_function_models')
