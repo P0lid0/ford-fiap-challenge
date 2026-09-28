@@ -807,8 +807,19 @@ REGRAS DE OURO:
  * Suporta dot-notation: "motor.potencia_cv" devolve só esse campo.
  * Campos top-level: "motor", "dimensoes", etc. devolvem o objeto inteiro.
  */
+function withNestedField(record: Record<string, unknown>, path: string[], value: unknown): Record<string, unknown> {
+  const [head, ...rest] = path;
+  if (!head) return record;
+  const previous = Object.hasOwn(record, head) ? record[head] : null;
+  const nested = rest.length
+    ? withNestedField(previous && typeof previous === 'object' && !Array.isArray(previous)
+      ? previous as Record<string, unknown> : Object.create(null), rest, value)
+    : value;
+  return Object.assign(Object.create(null), record, { [head]: nested });
+}
+
 function projectFields(v: Vehicle, fields: string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = Object.assign(Object.create(null), {
+  let out: Record<string, unknown> = Object.assign(Object.create(null), {
     id: v.id, marca: v.marca, modelo: v.modelo, versao: v.versao, ano: v.ano,
   });
 
@@ -819,28 +830,19 @@ function projectFields(v: Vehicle, fields: string[]): Record<string, unknown> {
       out[path] = Object.hasOwn(v, path) ? (v as any)[path] ?? null : null;
       continue;
     }
-    const [head, ...rest] = parts;
+    const head = parts[0];
     if (!head) continue;
-    if (!out[head]) out[head] = Object.create(null);
-    let target = out[head] as Record<string, unknown>;
     const source = (v as any)[head];
     if (source == null) {
-      // Constrói com null explícito (regra Ford)
-      target[rest.join('.')] = null;
+      out = withNestedField(out, parts, null);
       continue;
     }
     let cur = source;
-    for (const k of rest) {
+    for (const k of parts.slice(1)) {
       cur = cur && Object.hasOwn(cur, k) ? cur[k] : null;
       if (cur === undefined) cur = null;
     }
-    let bucket = target;
-    for (let i = 0; i < rest.length - 1; i++) {
-      const k = rest[i]!;
-      bucket[k] = bucket[k] ?? Object.create(null);
-      bucket = bucket[k] as Record<string, unknown>;
-    }
-    bucket[rest[rest.length - 1]!] = cur;
+    out = withNestedField(out, parts, cur);
   }
   return out;
 }
