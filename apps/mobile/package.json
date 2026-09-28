@@ -15,7 +15,7 @@
   "dependencies": {
     "@babel/runtime": "^7.29.2",
     "@expo-google-fonts/inter": "^0.4.2",
-    "@expo/metro-runtime": "~4.0.1",
+    "@expo/metro-runtime": "~57.0.16",
     "@expo/vector-icons": "~14.0.4",
     "@ford/ui": "workspace:*",
     "@react-native-async-storage/async-storage": "1.23.1",
