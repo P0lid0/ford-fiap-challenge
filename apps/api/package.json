@@ -25,7 +25,7 @@
     "@fastify/swagger-ui": "5.2.1",
     "@ford/types": "workspace:*",
     "@google/generative-ai": "^0.24.1",
-    "@scalar/fastify-api-reference": "1.25.96",
+    "@scalar/fastify-api-reference": "1.72.0",
     "@supabase/supabase-js": "2.47.10",
     "cheerio": "^1.2.0",
     "dotenv": "16.4.7",
