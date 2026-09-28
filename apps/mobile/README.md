@@ -21,6 +21,16 @@ App Android/iOS da plataforma **Faro AI** para o **Ford × FIAP Challenge 2026**
 
 ## 📱 Telas
 
+### Capturas da atividade Mobile Development and IoT
+
+O painel abaixo reúne as capturas da entrega. Abra [contact.png](../../docs/mobile/screenshots/atividade-mobile/contact.png) em tamanho original para ampliar os detalhes. Os arquivos individuais estão em [`docs/mobile/screenshots/atividade-mobile/`](../../docs/mobile/screenshots/atividade-mobile/).
+
+<p>
+  <img src="../../docs/mobile/screenshots/atividade-mobile/contact.png" width="100%" alt="Visão geral das telas do app Faro AI na atividade Mobile Development and IoT" />
+</p>
+
+### Galeria de telas
+
 | Login | Carteira | Carteira · clientes |
 |---|---|---|
 | <img src="../../docs/mobile/screenshots/01-login.png" width="240" alt="Tela de login" /> | <img src="../../docs/mobile/screenshots/02-carteira.png" width="240" alt="Carteira com KPIs" /> | <img src="../../docs/mobile/screenshots/03-carteira-clientes.png" width="240" alt="Clientes recentes" /> |
