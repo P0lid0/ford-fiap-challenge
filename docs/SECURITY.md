@@ -60,8 +60,9 @@ workflow, sozinho, não bloqueia merges pelas configurações do repositório.
 ### Entrada, acesso e banco
 
 - As rotas Fastify validam parâmetros, consultas e corpos com Zod.
-- O plugin de autenticação valida o bearer token no Supabase Auth e carrega o
-  perfil do usuário.
+- O plugin de autenticação valida JWTs emitidos pela API localmente; tokens
+  Supabase usados pelo web/mobile são validados no Supabase Auth, com o perfil
+  carregado de `profiles`.
 - `authorize` limita operações de escrita do catálogo a `gestor` e `admin`.
   Configuração de chaves de IA exige `admin`.
 - A política de perfil não permite que um usuário altere o próprio role ou a
