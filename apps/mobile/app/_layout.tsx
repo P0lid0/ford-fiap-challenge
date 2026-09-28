@@ -1,43 +1,55 @@
+import {
+  Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, useFonts,
+} from '@expo-google-fonts/inter';
 import { Stack, useRouter, useSegments } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { supabase } from '../lib/supabase';
+import { AuthProvider, useAuth } from '../lib/auth/AuthProvider';
 import { colors } from '../lib/theme';
 
 export default function RootLayout() {
-  const [ready, setReady] = useState(false);
-  const [session, setSession] = useState<any>(null);
+  return (
+    <AuthProvider>
+      <RootNavigator />
+    </AuthProvider>
+  );
+}
+
+/** Carrega as fontes e redireciona conforme a sessão: sem sessão → login; com sessão → abas. */
+function RootNavigator() {
+  const { session, isReady: isAuthReady } = useAuth();
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold,
+  });
+  // Se a fonte falhar, segue com a fonte do sistema em vez de travar o app.
+  const isReady = isAuthReady && (fontsLoaded || fontError !== null);
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setReady(true);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
-  }, []);
+    if (!isReady) return;
+    const inAuthGroup = segments[0] === '(auth)';
+    if (!session && !inAuthGroup) router.replace('/(auth)/login');
+    else if (session && inAuthGroup) router.replace('/(tabs)');
+  }, [isReady, session, segments, router]);
 
-  useEffect(() => {
-    if (!ready) return;
-    const inAuth = segments[0] === '(auth)';
-    if (!session && !inAuth) router.replace('/(auth)/login');
-    else if (session && inAuth) router.replace('/(tabs)');
-  }, [ready, session, segments]);
-
-  if (!ready) {
+  if (!isReady) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.fordBlueDark }}>
+        <StatusBar style="light" />
         <ActivityIndicator color={colors.white} size="large" />
       </View>
     );
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <>
+      <StatusBar style="dark" />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+    </>
   );
 }

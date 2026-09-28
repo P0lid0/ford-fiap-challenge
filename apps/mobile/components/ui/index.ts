@@ -1,0 +1,21 @@
+/** Design system do app — as telas importam daqui: `import { Button, Card } from '../components/ui'`. */
+export { AppHeader, type AppHeaderProps } from './AppHeader';
+export { AppText, type AppTextProps } from './AppText';
+export { Banner } from './Banner';
+export { Button, type ButtonVariant } from './Button';
+export { Card } from './Card';
+export { ChipGroup, type ChipOption } from './ChipGroup';
+export { FaroLogo } from './FaroLogo';
+export { FieldLabel, FormSection } from './FormSection';
+export { IconButton } from './IconButton';
+export { InfoRow } from './InfoRow';
+export { KpiCard } from './KpiCard';
+export { PerfilBadge } from './PerfilBadge';
+export { ProgressBar } from './ProgressBar';
+export { Screen } from './Screen';
+export { SectionTitle } from './SectionTitle';
+export { SwitchField } from './SwitchField';
+export { EmptyState, ErrorState, LoadingState } from './StateView';
+export { Tag } from './Tag';
+export { TextField, type TextFieldProps } from './TextField';
+export type { IconName } from './types';

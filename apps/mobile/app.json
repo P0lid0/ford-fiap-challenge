@@ -1,39 +1,53 @@
 {
   "expo": {
-    "name": "Ford Retenção FIAP",
-    "slug": "ford-retencao-fiap",
-    "version": "0.1.0",
+    "name": "Faro AI",
+    "slug": "faro-ai-mobile",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "fordretencao",
+    "scheme": "faroai",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "backgroundColor": "#F5F5F5",
     "splash": {
-      "backgroundColor": "#003478",
-      "resizeMode": "contain"
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#001A3D"
     },
     "plugins": [
       "expo-router",
       "expo-secure-store"
     ],
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.faroai.fordretencao"
     },
     "android": {
+      "package": "com.faroai.fordretencao",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#003478"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#001A3D"
       },
-      "package": "com.threeamit.fordretencao"
+      "permissions": [],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "favicon": "./assets/favicon.png"
     },
     "extra": {
       "router": {
         "origin": false
+      },
+      "eas": {
+        "projectId": "92a170e2-9388-4795-b8e5-3919a3a5f410"
       }
-    }
+    },
+    "owner": "hisamoto"
   }
 }

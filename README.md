@@ -55,6 +55,28 @@ pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-result
 
 ---
 
+## 📱 Sprint 3 — Mobile Development and IoT
+
+O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK**, identidade visual unificada com a web e todos os fluxos do desafio funcionando — inclusive **offline**, no modo demonstração.
+
+| Objetivo | O que foi entregue | Onde ver |
+|---|---|---|
+| APK publicável com os fluxos sem erros | Expo EAS Build (perfil `preview` → APK), modo demonstração offline, 7 fluxos verificados de ponta a ponta | [`apps/mobile/README.md`](apps/mobile/README.md#-gerar-o-apk) · `apps/mobile/eas.json` |
+| Identidade visual consistente | Design system próprio (`components/ui`), tokens compartilhados com a web, fonte Inter, contraste WCAG AA, ícone e splash Faro AI | [Identidade visual](apps/mobile/README.md#-identidade-visual) |
+| Código organizado | Camada de dados com interface `DataSource` (API ou local), TypeScript estrito sem erros, telas sem acesso direto à rede | [Arquitetura](apps/mobile/README.md#-arquitetura) |
+| Demonstração de todas as telas | 12 prints das 9 telas | [`docs/mobile/screenshots/`](docs/mobile/screenshots/) · [galeria](apps/mobile/README.md#-telas) |
+
+<p>
+  <img src="docs/mobile/screenshots/02-carteira.png" width="190" alt="Carteira" />
+  <img src="docs/mobile/screenshots/04-leads.png" width="190" alt="Leads" />
+  <img src="docs/mobile/screenshots/06-comparar.png" width="190" alt="Comparar" />
+  <img src="docs/mobile/screenshots/09-cliente.png" width="190" alt="Detalhe do cliente" />
+</p>
+
+**Login de demonstração do APK:** `admin@faroai.com.br` · `Ford2026!` (ou o botão *Entrar com conta demonstração*).
+
+---
+
 ## 📦 Entregas técnicas no GitHub (este repositório)
 
 | Disciplina | Entregável | Caminho |
@@ -223,7 +245,7 @@ pnpm dev:api          # http://localhost:3333
 pnpm dev:web          # http://localhost:3000
 
 # Terminal 4 — Mobile (Expo)
-pnpm dev:mobile       # QR code para Expo Go
+pnpm dev:mobile       # QR code para Expo Go (modo API; veja apps/mobile/README.md para o modo demonstração)
 ```
 
 URLs:

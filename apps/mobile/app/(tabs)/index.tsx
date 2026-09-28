@@ -1,123 +1,202 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { Card } from '../../components/Card';
-import { PerfilBadge } from '../../components/PerfilBadge';
-import { Screen } from '../../components/Screen';
-import { api } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
-import { colors, radius, spacing, typography } from '../../lib/theme';
+import { StyleSheet, View } from 'react-native';
+import { ClientCard } from '../../components/ClientCard';
+import {
+  AppText, Banner, Button, Card, EmptyState, ErrorState, IconButton, KpiCard, LoadingState,
+  PerfilBadge, ProgressBar, Screen, SectionTitle,
+} from '../../components/ui';
+import { useAuth } from '../../lib/auth/AuthProvider';
+import { confirmAction } from '../../lib/confirm';
+import { dataSource } from '../../lib/data';
+import { clientDisplayName, latestPrediction, vehicleSummary } from '../../lib/domain';
+import { formatCurrency, formatNumber, formatPercent, perfilDescription, perfilLabel } from '../../lib/format';
+import { useAsync } from '../../lib/hooks/useAsync';
+import { useRevalidateOnFocus } from '../../lib/hooks/useRevalidateOnFocus';
+import { perfilTone, spacing, surface, type Tone } from '../../lib/theme';
+import { PERFIS, type ClientSummary, type DealershipMetrics } from '../../lib/types';
 
-export default function Carteira() {
+const RECENT_CLIENTS_LIMIT = 8;
+
+type CarteiraData = {
+  metrics: DealershipMetrics;
+  clients: ClientSummary[];
+};
+
+async function loadCarteira(): Promise<CarteiraData> {
+  const [metrics, page] = await Promise.all([dataSource.getMetrics(), dataSource.listClients()]);
+  return { metrics, clients: page.results };
+}
+
+/** Indicadores "quanto maior, melhor": ≥ 60% verde · ≥ 40% âmbar · abaixo, vermelho. */
+function shareTone(value: number): Tone {
+  if (value >= 0.6) return 'success';
+  if (value >= 0.4) return 'warning';
+  return 'danger';
+}
+
+export default function CarteiraScreen() {
   const router = useRouter();
-  const [metrics, setMetrics] = useState<any>(null);
-  const [clients, setClients] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { signOut } = useAuth();
+  const { data, error, isLoading, isRefreshing, reload, refresh, revalidate } = useAsync(loadCarteira, []);
+  useRevalidateOnFocus(revalidate);
 
-  useEffect(() => { load(); }, []);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const [m, c] = await Promise.all([api.metrics(), api.listClients()]);
-      setMetrics(m);
-      setClients(c.results);
-    } catch (e) {
-      console.warn('[carteira] load error', e);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (loading) {
-    return (
-      <Screen title="Carteira" scroll={false}>
-        <View style={{ alignItems: 'center', marginTop: 80 }}>
-          <ActivityIndicator color={colors.fordBlue} />
-        </View>
-      </Screen>
-    );
+  function handleSignOut() {
+    confirmAction({
+      title: 'Sair da conta?',
+      message: 'Você precisará entrar novamente para acessar a carteira.',
+      confirmLabel: 'Sair',
+      destructive: true,
+      onConfirm: () => { void signOut(); },
+    });
   }
 
   return (
     <Screen
       title="Carteira"
-      subtitle="KPIs da concessionária + clientes recentes"
-      action={
-        <Pressable
-          onPress={() => supabase.auth.signOut()}
-          style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}
-        >
-          <Ionicons name="log-out-outline" size={22} color={colors.gray600} />
-        </Pressable>
-      }
+      subtitle="Visão geral da concessionária"
+      right={<IconButton icon="log-out-outline" accessibilityLabel="Sair da conta" onPress={handleSignOut} />}
+      onRefresh={data ? refresh : undefined}
+      refreshing={isRefreshing}
     >
-      <View style={styles.kpis}>
-        <Kpi label="VIN Share" value={metrics ? `${Math.round(metrics.vin_share_estimado * 100)}%` : '—'} color={colors.success} />
-        <Kpi label="Clientes" value={metrics?.total_clientes ?? '—'} />
-        <Kpi label="Alto risco" value={metrics?.alto_risco_count ?? '—'} color={colors.danger} />
-      </View>
-
-      <Text style={styles.sectionTitle}>Distribuição de perfis</Text>
-      <Card>
-        {(['fiel', 'abandono', 'esquecido', 'economico'] as const).map(p => (
-          <View key={p} style={styles.profileRow}>
-            <View style={{ flex: 1 }}>
-              <PerfilBadge perfil={p} />
-            </View>
-            <Text style={styles.profileCount}>{metrics?.perfil_counts?.[p] ?? 0}</Text>
-          </View>
-        ))}
-      </Card>
-
-      <Text style={styles.sectionTitle}>Clientes recentes</Text>
-      {clients.length === 0 ? (
-        <Card>
-          <Text style={styles.empty}>Nenhum cliente ainda. Cadastre uma venda em Leads → Novo cliente.</Text>
-        </Card>
-      ) : (
-        clients.slice(0, 12).map(c => (
-          <Card key={c.id} onPress={() => router.push(`/client/${c.id}`)}>
-            <View style={styles.clientHeader}>
-              <Text style={styles.clientName} numberOfLines={1}>
-                {c.nome_cliente ?? `Cliente ${c.id.slice(0, 8)}`}
-              </Text>
-              {c.predictions?.[0] && <PerfilBadge perfil={c.predictions[0].perfil_predito} />}
-            </View>
-            <Text style={styles.clientMeta}>
-              {c.modelo_comprado} {c.versao_comprada} · R$ {c.preco_pago_brl.toLocaleString('pt-BR')}
-            </Text>
-          </Card>
-        ))
-      )}
+      {isLoading && !data ? (
+        <LoadingState message="Carregando carteira…" />
+      ) : error && !data ? (
+        <ErrorState error={error} onRetry={reload} />
+      ) : data ? (
+        <CarteiraContent
+          data={data}
+          refreshError={error?.message}
+          onNewClient={() => router.push('/client/new')}
+          onOpenClient={id => router.push(`/client/${id}`)}
+        />
+      ) : null}
     </Screen>
   );
 }
 
-function Kpi({ label, value, color }: { label: string; value: any; color?: string }) {
+type CarteiraContentProps = {
+  data: CarteiraData;
+  refreshError?: string;
+  onNewClient: () => void;
+  onOpenClient: (clientId: string) => void;
+};
+
+/** Conteúdo da tela — devolve um fragmento para herdar o espaçamento do Screen. */
+function CarteiraContent({ data, refreshError, onNewClient, onOpenClient }: CarteiraContentProps) {
+  const { metrics, clients } = data;
+  const recentClients = clients.slice(0, RECENT_CLIENTS_LIMIT);
+
   return (
-    <View style={styles.kpi}>
-      <Text style={[styles.kpiValue, color && { color }]}>{value}</Text>
-      <Text style={styles.kpiLabel}>{label}</Text>
-    </View>
+    <>
+      {refreshError && (
+        <Banner tone="danger" icon="cloud-offline-outline" title="Não foi possível atualizar" message={refreshError} />
+      )}
+
+      <View style={styles.kpiGrid}>
+        <View style={styles.kpiRow}>
+          <KpiCard
+            label="VIN Share"
+            value={formatPercent(metrics.vin_share_estimado)}
+            icon="pie-chart-outline"
+            tone={shareTone(metrics.vin_share_estimado)}
+            hint="revisam na rede"
+          />
+          <KpiCard
+            label="Clientes"
+            value={formatNumber(metrics.total_clientes)}
+            icon="people-outline"
+            hint={`${formatNumber(metrics.clientes_ativos)} ativos`}
+          />
+        </View>
+        <View style={styles.kpiRow}>
+          <KpiCard
+            label="Alto risco"
+            value={formatNumber(metrics.alto_risco_count)}
+            icon="warning-outline"
+            tone={metrics.alto_risco_count > 0 ? 'danger' : 'success'}
+            hint="prioridade de contato"
+          />
+          <KpiCard
+            label="Aderência"
+            value={formatPercent(metrics.taxa_aderencia_revisoes)}
+            icon="construct-outline"
+            tone={shareTone(metrics.taxa_aderencia_revisoes)}
+            hint="2+ revisões na rede"
+          />
+        </View>
+      </View>
+
+      <Button
+        title="Cadastrar venda"
+        icon="add-circle-outline"
+        fullWidth
+        onPress={onNewClient}
+        accessibilityHint="Abre o formulário de nova venda com classificação automática"
+      />
+
+      <PerfilDistribution counts={metrics.perfil_counts} />
+
+      <SectionTitle title="Clientes recentes" subtitle="Toque para ver risco e ações sugeridas" />
+      {recentClients.length === 0 ? (
+        <Card padded={false}>
+          <EmptyState
+            icon="people-outline"
+            title="Nenhum cliente ainda"
+            message="Cadastre a primeira venda para ver a classificação de retenção."
+          />
+        </Card>
+      ) : (
+        <View style={styles.list}>
+          {recentClients.map(client => {
+            const prediction = latestPrediction(client.predictions);
+            return (
+              <ClientCard
+                key={client.id}
+                name={clientDisplayName(client)}
+                details={vehicleSummary(client)}
+                detailsTrailing={client.preco_pago_brl != null ? formatCurrency(client.preco_pago_brl) : undefined}
+                perfil={prediction?.perfil_predito}
+                risk={prediction?.risco_evasao}
+                onPress={() => onOpenClient(client.id)}
+              />
+            );
+          })}
+        </View>
+      )}
+    </>
+  );
+}
+
+function PerfilDistribution({ counts }: { counts: DealershipMetrics['perfil_counts'] }) {
+  const total = PERFIS.reduce((sum, perfil) => sum + (counts[perfil] ?? 0), 0);
+  return (
+    <>
+      <SectionTitle title="Perfis da carteira" subtitle={`${formatNumber(total)} clientes classificados`} />
+      <Card style={styles.perfis}>
+        {PERFIS.map(perfil => {
+          const count = counts[perfil] ?? 0;
+          const share = total > 0 ? count / total : 0;
+          return (
+            <View key={perfil} style={styles.perfilItem}>
+              <View style={styles.perfilHeader}>
+                <PerfilBadge perfil={perfil} size="sm" />
+                <AppText variant="smallStrong">{`${formatNumber(count)} · ${formatPercent(share)}`}</AppText>
+              </View>
+              <ProgressBar value={share} tone={perfilTone[perfil]} accessibilityLabel={`Perfil ${perfilLabel[perfil]}: ${formatPercent(share)}`} />
+              <AppText variant="caption" color={surface.textMuted}>{perfilDescription[perfil]}</AppText>
+            </View>
+          );
+        })}
+      </Card>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  iconBtn: { padding: 6 },
-  kpis: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.xl },
-  kpi: {
-    flex: 1, backgroundColor: colors.white, borderRadius: radius.lg,
-    padding: spacing.md, borderWidth: 1, borderColor: colors.gray300,
-  },
-  kpiValue: { fontSize: typography.size['2xl'], fontWeight: '700', color: colors.fordBlue },
-  kpiLabel: { fontSize: typography.size.xs, color: colors.gray600, marginTop: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
-  sectionTitle: { fontSize: typography.size.lg, fontWeight: '700', color: colors.text, marginBottom: spacing.md, marginTop: spacing.lg },
-  profileRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm, justifyContent: 'space-between' },
-  profileCount: { fontSize: typography.size.lg, fontWeight: '700', color: colors.text },
-  empty: { color: colors.gray600, fontSize: typography.size.sm },
-  clientHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-  clientName: { fontSize: typography.size.base, fontWeight: '600', color: colors.text, flex: 1 },
-  clientMeta: { fontSize: typography.size.sm, color: colors.gray600, marginTop: 4 },
+  kpiGrid: { gap: spacing.md },
+  kpiRow: { flexDirection: 'row', gap: spacing.md },
+  perfis: { gap: spacing.lg },
+  perfilItem: { gap: 6 },
+  perfilHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  list: { gap: spacing.md },
 });
