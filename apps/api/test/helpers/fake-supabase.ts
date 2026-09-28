@@ -28,8 +28,21 @@ function matches(row: Row, filter: Filter): boolean {
     case 'in':
       return (filter.value as unknown[]).some((v) => String(v) === String(actual));
     case 'ilike': {
-      const pattern = String(filter.value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*');
-      return new RegExp(`^${pattern}$`, 'i').test(String(actual ?? ''));
+      const value = String(actual ?? '').toLowerCase();
+      const parts = String(filter.value).toLowerCase().split('%');
+      const prefix = parts.at(0) ?? '';
+      const suffix = parts.at(-1) ?? '';
+      if (!value.startsWith(prefix) || !value.endsWith(suffix)) return false;
+      if (parts.length === 1) return value === prefix;
+
+      const suffixStart = value.length - suffix.length;
+      let position = prefix.length;
+      for (const part of parts.slice(1, -1)) {
+        const found = value.indexOf(part, position);
+        if (found < 0 || found + part.length > suffixStart) return false;
+        position = found + part.length;
+      }
+      return position <= suffixStart;
     }
   }
 }
