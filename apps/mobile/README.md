@@ -90,7 +90,7 @@ lib/data/DataSource.ts ── interface + DataSourceError (mensagens em portugu�
 | Modo | `EXPO_PUBLIC_DATA_MODE` | Onde é usado | Dados |
 |---|---|---|---|
 | **Demonstração** | `local` | APK de entrega (`eas.json` → `preview`/`production`) | 20 clientes e 8 picapes fictícios; cadastros ficam salvos no aparelho (AsyncStorage) |
-| **API** | `api` (padrão) | Desenvolvimento | `apps/api` + Supabase + serviço de ML; URL em `EXPO_PUBLIC_API_URL` |
+| **API** | `api` (padrão) | Desenvolvimento | `apps/api` + PostgreSQL + serviço de ML; URL em `EXPO_PUBLIC_API_URL` |
 
 No modo demonstração o app deixa claro que os dados são de exemplo (etiqueta **Demonstração** no topo e avisos em Comparar e Insights).
 

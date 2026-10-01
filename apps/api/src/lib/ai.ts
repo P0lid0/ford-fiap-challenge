@@ -1,14 +1,14 @@
 /**
  * Camada de IA multi-provedor (OpenAI, Anthropic, Google Gemini).
  *
- * Chave por provedor: env var > tabela ai_keys do Supabase > não-disponível.
+ * Chave por provedor: env var > tabela ai_keys do banco > não-disponível.
  * Modelo: vem em formato "provider:model" (ex: "openai:gpt-4o-mini").
  */
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config.js';
-import { adminClient } from './supabase.js';
+import { sql } from './db.js';
 
 export type Provider = 'openai' | 'anthropic' | 'gemini';
 export type AiTier = 'fast' | 'smart';
@@ -50,7 +50,7 @@ const DEFAULT_MODEL_SMART: Record<Provider, string> = {
   gemini: 'gemini-1.5-pro',
 };
 
-// === Resolve API key: env > Supabase ai_keys ===
+// === Resolve API key: env > tabela ai_keys ===
 const _keyCache = new Map<Provider, { key: string; expires: number }>();
 const KEY_CACHE_TTL = 30_000;
 
@@ -62,8 +62,9 @@ export async function getApiKey(provider: Provider): Promise<string> {
   const cached = _keyCache.get(provider);
   if (cached && cached.expires > Date.now()) return cached.key;
   try {
-    const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', provider).maybeSingle();
-    const dbKey = data?.api_key ?? '';
+    const [row] = await sql<{ api_key: string | null }[]>`
+      select api_key from public.ai_keys where provider = ${provider} limit 1`;
+    const dbKey = row?.api_key ?? '';
     _keyCache.set(provider, { key: dbKey, expires: Date.now() + KEY_CACHE_TTL });
     return dbKey;
   } catch {

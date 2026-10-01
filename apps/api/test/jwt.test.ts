@@ -108,7 +108,7 @@ describe('JWT — identificação do emissor', () => {
   });
 
   it('não reconhece tokens de outro emissor nem texto inválido', async () => {
-    const other = await craftToken().setIssuer('https://projeto.supabase.co/auth/v1').setExpirationTime('1h').sign(secret);
+    const other = await craftToken().setIssuer('https://outro-provedor.test/auth/v1').setExpirationTime('1h').sign(secret);
     expect(isIssuedByThisApi(other)).toBe(false);
     expect(isIssuedByThisApi('lixo')).toBe(false);
   });

@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authorize, requireUser } from '../plugins/auth.js';
-import { dbFor, readScopeOf } from '../lib/data-access.js';
+import { readScopeOf, scopeFilter } from '../lib/data-access.js';
+import { sql } from '../lib/db.js';
 
 /**
  * KPIs da concessionária / rede pro Desafio 2 (Retenção VIN Share).
@@ -38,76 +39,86 @@ export async function metricRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const u = requireUser(req);
-    const sb = dbFor(u);
     const scope = readScopeOf(u);
     const { dealer_code, model_name, idade_bucket } = req.query as any;
 
-    // Helper: aplica filtros opcionais (granularidade pedida no slide D2)
+    // Filtros opcionais (granularidade pedida no slide D2) como fragmentos SQL.
+    // O escopo da concessionária é aplicado explicitamente (não há RLS).
     const anoAtual = new Date().getFullYear();
-    const applyFilters = (q: any) => {
-      if (scope.kind === 'dealership') q = q.eq('dealership_id', scope.dealershipId);
-      if (dealer_code) q = q.eq('dealer_code_venda', dealer_code);
-      if (model_name) q = q.eq('model_name', model_name);
-      if (idade_bucket) {
-        const [minA, maxA] = IDADE_BUCKETS[idade_bucket as keyof typeof IDADE_BUCKETS];
-        q = q.gte('model_year', anoAtual - maxA).lte('model_year', anoAtual - minA);
-      }
-      return q;
+    const idadeRange = (bucket: keyof typeof IDADE_BUCKETS) => {
+      const [minA, maxA] = IDADE_BUCKETS[bucket];
+      return sql`(model_year >= ${anoAtual - maxA} and model_year <= ${anoAtual - minA})`;
     };
+    const filters = sql`
+      ${scopeFilter(scope)}
+      ${dealer_code ? sql`and dealer_code_venda = ${dealer_code}` : sql``}
+      ${model_name ? sql`and model_name = ${model_name}` : sql``}
+      ${idade_bucket ? sql`and ${idadeRange(idade_bucket as keyof typeof IDADE_BUCKETS)}` : sql``}
+    `;
 
     // === KPIs ===
-    const { count: totalCount, error: totalErr } = await applyFilters(
-      sb.from('clients').select('id', { count: 'exact', head: true })
-    );
-    if (totalErr) throw totalErr;
-    const totalClients = totalCount ?? 0;
+    // Uma única passada com count(*) filter (antes eram ~20 contagens HEAD no PostgREST).
+    const [kpi] = await sql<{
+      total: number; ativos: number; aderentes: number;
+      fiel: number; abandono: number; esquecido: number; economico: number;
+      idade_novo: number; idade_intermediario: number; idade_veterano: number;
+    }[]>`
+      select
+        count(*)::int as total,
+        count(*) filter (where dias_desde_ultima_revisao <= 365)::int as ativos,
+        count(*) filter (where num_revisoes >= 2)::int as aderentes,
+        count(*) filter (where perfil_real = 'fiel')::int as fiel,
+        count(*) filter (where perfil_real = 'abandono')::int as abandono,
+        count(*) filter (where perfil_real = 'esquecido')::int as esquecido,
+        count(*) filter (where perfil_real = 'economico')::int as economico,
+        count(*) filter (where ${idadeRange('novo')})::int as idade_novo,
+        count(*) filter (where ${idadeRange('intermediario')})::int as idade_intermediario,
+        count(*) filter (where ${idadeRange('veterano')})::int as idade_veterano
+      from public.clients
+      where true ${filters}
+    `;
 
-    // Ativos: dias_desde_ultima_revisao <= 365
-    const { count: ativosCount } = await applyFilters(
-      sb.from('clients').select('id', { count: 'exact', head: true }).lte('dias_desde_ultima_revisao', 365)
-    );
+    const totalClients = kpi?.total ?? 0;
+    const ativosCount = kpi?.ativos ?? 0;   // Ativos: dias_desde_ultima_revisao <= 365
 
     // Por perfil_real
-    const perfilCounts: Record<string, number> = { fiel: 0, abandono: 0, esquecido: 0, economico: 0 };
-    for (const perfil of Object.keys(perfilCounts)) {
-      const { count } = await applyFilters(
-        sb.from('clients').select('id', { count: 'exact', head: true }).eq('perfil_real', perfil)
-      );
-      perfilCounts[perfil] = count ?? 0;
-    }
+    const perfilCounts: Record<string, number> = {
+      fiel: kpi?.fiel ?? 0,
+      abandono: kpi?.abandono ?? 0,
+      esquecido: kpi?.esquecido ?? 0,
+      economico: kpi?.economico ?? 0,
+    };
 
     // Alto risco: abandono + 40% dos esquecidos (heurística)
     const altoRisco = (perfilCounts.abandono ?? 0)
       + Math.round((perfilCounts.esquecido ?? 0) * 0.4);
 
-    // Por modelo
+    // Por modelo (só modelos com contagem > 0)
     const FORD_MODELS = ['RANGER', 'KA', 'ECOSPORT', 'TERRITORY', 'BRONCO SPORT',
       'MAVERICK', 'TRANSIT', 'F-150', 'MUSTANG', 'EDGE', 'MUSTANG MACH-E'];
+    const modeloRows = await sql<{ model_name: string; count: number }[]>`
+      select model_name, count(*)::int as count
+      from public.clients
+      where model_name in ${sql(FORD_MODELS)} ${filters}
+      group by model_name
+    `;
     const porModelo: Record<string, number> = {};
-    await Promise.all(FORD_MODELS.map(async (modelo) => {
-      const { count } = await applyFilters(
-        sb.from('clients').select('id', { count: 'exact', head: true }).eq('model_name', modelo)
-      );
-      if ((count ?? 0) > 0) porModelo[modelo] = count!;
-    }));
-
-    // Por bucket de idade do veículo
-    const porIdade: Record<string, number> = {};
-    for (const [bucket, [minA, maxA]] of Object.entries(IDADE_BUCKETS)) {
-      const { count } = await applyFilters(
-        sb.from('clients').select('id', { count: 'exact', head: true })
-          .gte('model_year', anoAtual - maxA).lte('model_year', anoAtual - minA)
-      );
-      porIdade[bucket] = count ?? 0;
+    for (const modelo of FORD_MODELS) {
+      const row = modeloRows.find((r) => r.model_name === modelo);
+      if (row && row.count > 0) porModelo[modelo] = row.count;
     }
 
-    // Taxa de aderência: num_revisoes >= 2
-    const { count: aderentes } = await applyFilters(
-      sb.from('clients').select('id', { count: 'exact', head: true }).gte('num_revisoes', 2)
-    );
-    const taxaAderenciaRevisoes = totalClients > 0 ? (aderentes ?? 0) / totalClients : 0;
+    // Por bucket de idade do veículo
+    const porIdade: Record<string, number> = {
+      novo: kpi?.idade_novo ?? 0,
+      intermediario: kpi?.idade_intermediario ?? 0,
+      veterano: kpi?.idade_veterano ?? 0,
+    };
 
-    const vinShareEstimado = totalClients > 0 ? (ativosCount ?? 0) / totalClients : 0;
+    // Taxa de aderência: num_revisoes >= 2
+    const taxaAderenciaRevisoes = totalClients > 0 ? (kpi?.aderentes ?? 0) / totalClients : 0;
+
+    const vinShareEstimado = totalClients > 0 ? ativosCount / totalClients : 0;
 
     return {
       escopo: u.role === 'admin' || u.role === 'gestor' ? 'rede' : (u.dealership_id ?? 'sem_concessionaria'),
@@ -144,21 +155,21 @@ export async function metricRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { dentro_de_dias, limit } = req.query as any;
-    const sb = dbFor(u);
     const scope = readScopeOf(u);
 
-    // Pegamos um lote maior e filtramos em memória — Supabase não tem date_add nativo
-    let query = sb.from('clients')
-      .select('id, nome_cliente, model_name, model_year, vin_hash, dealer_code_venda, ' +
-              'sales_date, delivery_date, ultimo_servico, num_revisoes, km_max, ' +
-              'dias_desde_ultima_revisao, perfil_real, warranty_start_date')
-      .not('model_name', 'is', null);
-    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
-    const { data, error } = await query.limit(2000);
-    if (error) throw error;
+    // Pegamos um lote maior e filtramos em memória (a data estimada depende de
+    // aritmética de meses sobre 3 colunas candidatas)
+    const data = await sql<any[]>`
+      select id, nome_cliente, model_name, model_year, vin_hash, dealer_code_venda,
+             sales_date, delivery_date, ultimo_servico, num_revisoes, km_max,
+             dias_desde_ultima_revisao, perfil_real, warranty_start_date
+      from public.clients
+      where model_name is not null ${scopeFilter(scope)}
+      limit 2000
+    `;
 
     const hoje = new Date();
-    const linhas = (data ?? []).map((c: any) => {
+    const linhas = data.map((c: any) => {
       // base = última visita conhecida (último serviço OU entrega se nunca foi)
       const base = c.ultimo_servico ? new Date(c.ultimo_servico)
         : c.delivery_date ? new Date(c.delivery_date)
@@ -228,19 +239,18 @@ export async function metricRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { anos_garantia, limit } = req.query as any;
-    const sb = dbFor(u);
     const scope = readScopeOf(u);
 
-    let query = sb.from('clients')
-      .select('id, nome_cliente, model_name, model_year, vin_hash, dealer_code_venda, ' +
-              'warranty_start_date, perfil_real, num_revisoes')
-      .not('warranty_start_date', 'is', null);
-    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
-    const { data, error } = await query.limit(2000);
-    if (error) throw error;
+    const data = await sql<any[]>`
+      select id, nome_cliente, model_name, model_year, vin_hash, dealer_code_venda,
+             warranty_start_date, perfil_real, num_revisoes
+      from public.clients
+      where warranty_start_date is not null ${scopeFilter(scope)}
+      limit 2000
+    `;
 
     const hoje = new Date();
-    const enriched = (data ?? []).map((c: any) => {
+    const enriched = data.map((c: any) => {
       const inicio = new Date(c.warranty_start_date);
       const fim = new Date(inicio);
       fim.setFullYear(fim.getFullYear() + anos_garantia);
@@ -305,18 +315,16 @@ export async function metricRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { min_clientes, limit } = req.query as any;
-    const sb = dbFor(u);
 
-    // Agregação roda DENTRO do Postgres via RPC. Postgrest tem limite de 1000
-    // linhas no SELECT direto, então uma agregação manual em JS com 175k VINs
-    // não funcionaria. A função dealer_perfil_stats devolve uma linha por
-    // dealer (~412 linhas) com pct_fiel/abandono/esquecido/economico já calculado.
-    const { data: rpcData, error } = await sb.rpc('dealer_perfil_stats', {
-      min_clientes,
-    });
-    if (error) throw error;
+    // Agregação roda DENTRO do Postgres (função dealer_perfil_stats): uma
+    // agregação manual em JS sobre 175k VINs seria desperdício. A função devolve
+    // uma linha por dealer (~412 linhas) com pct_fiel/abandono/esquecido/economico
+    // já calculado. A rota é restrita a gestor/admin, então o escopo é a rede inteira.
+    const rpcData = await sql<any[]>`
+      select * from public.dealer_perfil_stats(min_clientes => ${min_clientes}::int)
+    `;
 
-    const dealers = (rpcData ?? []).map((r: any) => ({
+    const dealers = rpcData.map((r: any) => ({
       dealer_code: r.dealer_code as number,
       total_clientes: Number(r.total_clientes),
       pct_fiel: Number(r.pct_fiel),

@@ -1,27 +1,49 @@
 /**
  * Acesso a dados de acordo com QUEM está autenticado.
  *
- * Regras de visibilidade (as mesmas das políticas RLS do Postgres):
+ * Regras de visibilidade:
  *   LEITURA   → analista: só a própria concessionária · gestor/admin: rede inteira
  *   ALTERAÇÃO → admin: rede inteira · analista/gestor: só a própria concessionária
  *
- * Tokens legados do Supabase continuam usando o cliente com RLS (o banco filtra).
- * Tokens da API usam o cliente de serviço e o filtro é aplicado pela API,
- * com base nas claims `role` e `dealership_id` do JWT. Em ambos os casos a rota
- * aplica o escopo — o RLS vira uma segunda camada de defesa.
+ * A API conecta ao PostgreSQL com um único papel e NÃO há RLS: o escopo é
+ * aplicado EXPLICITAMENTE em cada query, com base nas claims `role` e
+ * `dealership_id` do JWT (ver `scopeFilter` abaixo).
  */
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type postgres from 'postgres';
 import type { AuthUser } from '../plugins/auth.js';
-import { adminClient, publicClient } from './supabase.js';
+import { sql } from './db.js';
 import { forbidden, notFound } from './api-error.js';
 
 export type DealershipScope =
   | { kind: 'network' }
   | { kind: 'dealership'; dealershipId: string };
 
-/** Cliente de banco adequado à origem do token do usuário. */
-export function dbFor(user: AuthUser): SupabaseClient {
-  return user.authSource === 'supabase' ? publicClient(user.jwt) : adminClient();
+/**
+ * Identificador de coluna, opcionalmente qualificado ('c.dealership_id').
+ * `sql('c.dealership_id')` viraria um identificador único "c.dealership_id",
+ * então separamos alias e coluna. Só aceita nomes fixos vindos do código.
+ */
+function columnIdent(column: string): postgres.Fragment {
+  const parts = column.split('.');
+  if (parts.length === 1) return sql`${sql(column)}`;
+  if (parts.length === 2) return sql`${sql(parts[0]!)}.${sql(parts[1]!)}`;
+  throw new Error(`identificador de coluna inválido: ${column}`);
+}
+
+/**
+ * Fragmento SQL que aplica o escopo a uma query. Use depois de um `where`:
+ *
+ *   sql`select * from clients where true ${scopeFilter(readScopeOf(u))}`
+ *   sql`select * from clients c where c.perfil_real = ${p} ${scopeFilter(scope, 'c.dealership_id')}`
+ *
+ * - escopo `network`      → fragmento vazio (sem restrição);
+ * - escopo `dealership`   → `and <coluna> = $id`.
+ *
+ * `column` precisa ser um nome fixo do código (nunca vem do usuário).
+ */
+export function scopeFilter(scope: DealershipScope, column = 'dealership_id'): postgres.Fragment {
+  if (scope.kind === 'network') return sql``;
+  return sql`and ${columnIdent(column)} = ${scope.dealershipId}`;
 }
 
 function ownDealership(user: AuthUser): DealershipScope {
@@ -29,7 +51,7 @@ function ownDealership(user: AuthUser): DealershipScope {
 }
 
 /**
- * Escopo de LEITURA (espelha as políticas RLS de SELECT).
+ * Escopo de LEITURA: gestor/admin veem a rede inteira; analista só a própria concessionária.
  * @throws ApiError 403 se o usuário restrito não tiver concessionária vinculada
  */
 export function readScopeOf(user: AuthUser): DealershipScope {
@@ -38,7 +60,7 @@ export function readScopeOf(user: AuthUser): DealershipScope {
 }
 
 /**
- * Escopo de ALTERAÇÃO (espelha as políticas RLS de UPDATE).
+ * Escopo de ALTERAÇÃO: só admin altera a rede inteira; os demais, só a própria concessionária.
  * @throws ApiError 403 se o usuário restrito não tiver concessionária vinculada
  */
 export function writeScopeOf(user: AuthUser): DealershipScope {

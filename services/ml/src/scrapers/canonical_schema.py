@@ -79,7 +79,7 @@ class Vehicle(BaseModel):
     fontes: list[str] = Field(default_factory=list)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
-    def to_supabase_row(self) -> dict[str, Any]:
+    def to_db_row(self) -> dict[str, Any]:
         d = self.model_dump(mode="json")
         d.pop("id", None)
         d.pop("atualizado_em", None)

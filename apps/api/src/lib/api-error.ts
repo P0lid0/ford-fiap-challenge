@@ -61,7 +61,7 @@ export function unsupportedMediaType(message: string, code = 'unsupported_media_
 
 // ---------- 5xx: problema no servidor ou em serviço externo ----------
 
-/** 502 — serviço externo (FIPE, IA, Supabase Auth…) respondeu com erro. */
+/** 502 — serviço externo (FIPE, IA, banco de identidade…) respondeu com erro. */
 export function badGateway(message: string, code = 'bad_gateway'): ApiError {
   return new ApiError(502, code, message);
 }

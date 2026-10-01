@@ -495,12 +495,12 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     { titulo: 'Backend (Gateway)', cor: FORD_BLUE, items: [
       'Fastify + TypeScript + Zod',
       '30+ rotas REST documentadas',
-      'JWT (Supabase) · RBAC 3 roles',
+      'JWT próprio (HS256) · RBAC 3 roles',
       'Swagger UI em /docs',
     ]},
     { titulo: 'Dados & ML', cor: '00A896', items: [
-      'Postgres (Supabase) · 19 migrations',
-      'RLS por dealership + role',
+      'PostgreSQL · 20 migrations',
+      'Escopo por dealership + role na API',
       'FastAPI + XGBoost (ML service)',
       'HMAC · timestamp · nonce',
     ]},
@@ -603,7 +603,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
 
   const eixos = [
     { p: '3,0', t: 'DevSecOps e pipeline', d: 'Typecheck · Semgrep · pnpm audit · pip-audit · Gitleaks · Dependabot' },
-    { p: '2,5', t: 'Código e infraestrutura', d: 'RBAC · RLS · HMAC com nonce · SecureStore · e-books em domínios oficiais' },
+    { p: '2,5', t: 'Código e infraestrutura', d: 'RBAC · escopo por dealership na API · HMAC com nonce · SecureStore · e-books em domínios oficiais' },
     { p: '2,0', t: 'Monitoramento e resposta', d: 'Pino · audit_log · alertas centralizados pendentes no deploy' },
     { p: '2,5', t: 'Compliance e segurança contínua', d: 'Minimização · CPF com HMAC · dados financeiros em ML/IA · retenção pendente' },
   ];
@@ -675,7 +675,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     fontFace: 'Calibri', fontSize: 16, bold: true, color: NAVY,
   });
   const telas = [
-    { t: 'Login', d: 'Auth Supabase + persistent session' },
+    { t: 'Login', d: 'Auth própria (JWT) + persistent session' },
     { t: 'Carteira (Home)', d: 'KPIs + lista clientes recentes' },
     { t: 'Leads', d: 'Lista priorizada por risco' },
     { t: 'Veículos', d: 'Catálogo + busca + filtros' },
@@ -715,7 +715,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     ['Custo entrada',           'Open-stack',     'US$150/user',  'R$ 1k/mês',  'US$ 10k/mês'],
     ['Dataset Ford BR real',    '✓ 175k VINs',    '—',            '—',           '—'],
     ['IA explicável (sinais)',  '✓',              'Parcial',      '—',           'SHAP only'],
-    ['Controles de acesso',     '✓ RLS + minimização', '✓',       'Parcial',     'Parcial'],
+    ['Controles de acesso',     '✓ escopo na API + minimização', '✓',       'Parcial',     'Parcial'],
     ['Arquitetura prod-ready',  'MVP funcional', '3-6 meses',    '1-2 meses',   '2-3 meses'],
     ['Integração FIPE',         '✓ Nativa',       '—',            'Parcial',     '—'],
   ];
@@ -779,7 +779,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
   const sprints = [
     { t: 'Sprint 1 ✓', d: 'MVP entregue: D1 + D2, 175k VINs, 135k leads', c: '00A896' },
     { t: 'Sprint 2', d: 'Mobile responsivo · re-treino XGBoost · onboarding', c: FORD_BLUE },
-    { t: 'Sprint 3', d: 'DevSecOps · RBAC/RLS · HMAC anti-replay · SecureStore', c: 'F4A11A' },
+    { t: 'Sprint 3', d: 'DevSecOps · RBAC/escopo por dealership · HMAC anti-replay · SecureStore', c: 'F4A11A' },
     { t: 'Sprint 4', d: 'Motor de campanhas A/B · API pública pro CRM Ford', c: FERRARI },
   ];
   sprints.forEach((sp, i) => {
@@ -816,7 +816,7 @@ function bigStat(slide, { x, y, w, value, label, color = FERRARI, isDark = false
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Performance: <2s render · <1s ranking 175k leads\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
-    { text: 'Segurança: RBAC · RLS · HMAC · audit log; TLS e alertas pendentes no deploy\n', options: { color: '2A3A4A', fontSize: 10 } },
+    { text: 'Segurança: RBAC · escopo por dealership · HMAC · audit log; TLS e alertas pendentes no deploy\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },
     { text: 'Usabilidade: ≤4 cliques pra ação · 100% PT-BR\n', options: { color: '2A3A4A', fontSize: 10 } },
     { text: '◆ ', options: { color: '00A896', bold: true } },

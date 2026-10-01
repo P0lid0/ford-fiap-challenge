@@ -9,11 +9,12 @@
  * Autorização: criar, editar, excluir e importar veículos → gestor ou admin.
  * Consultas e enriquecimento automático (FIPE/refresh) → qualquer usuário autenticado.
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
+import type postgres from 'postgres';
 import { z } from 'zod';
 import { authorize, requireUser } from '../plugins/auth.js';
 import { badGateway, badRequest, notFound, unprocessable, unsupportedMediaType } from '../lib/api-error.js';
-import { adminClient } from '../lib/supabase.js';
+import { sql } from '../lib/db.js';
 import { fipe } from '../lib/data-sources/fipe.js';
 import { SUPPORTED_MANUFACTURER_BRANDS, fetchManufacturerSpecs } from '../lib/data-sources/manufacturer.js';
 import { isTrustedEbookUrl } from '../lib/data-sources/manufacturer-ebook.js';
@@ -46,6 +47,54 @@ const VehicleCreateSchema = VehicleUpdateSchema.extend({
   categoria: z.string().min(2),
 });
 
+/** Linha de `vehicles` como as rotas a consomem (colunas jsonb/text[] já vêm parseadas). */
+type VehicleRow = Record<string, any>;
+
+/**
+ * Remove chaves `undefined` do payload. O contrato anterior descartava essas chaves ao
+ * serializar o JSON (a coluna ficava intocada); o driver `postgres` recusa
+ * `undefined` como parâmetro, então fazemos o mesmo explicitamente. `null` é mantido.
+ */
+function compact<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
+}
+
+/**
+ * Cláusula `set` de um `on conflict ... do update`: todas as colunas do payload
+ * recebem o valor proposto (`excluded`). Equivale ao antigo
+ * `upsert(..., { onConflict: 'hash_dedupe' })`, que atualizava as colunas enviadas
+ * (`hash_dedupe` é gerada e nunca faz parte do payload).
+ */
+function excludedSet(cols: string[]): postgres.Fragment {
+  return cols.reduce<postgres.Fragment>(
+    (acc, c, i) => (i === 0 ? sql`${sql(c)} = excluded.${sql(c)}` : sql`${acc}, ${sql(c)} = excluded.${sql(c)}`),
+    sql``,
+  );
+}
+
+/**
+ * Equivalente ao `.single()` do PostgREST quando o `insert/update ... returning`
+ * não devolve exatamente 1 linha (ex.: veículo removido entre o select e o update):
+ * era o erro PGRST116, relançado como 500 — mantemos o mesmo status (detalhe só no log).
+ */
+function singleRowOrThrow<T>(rows: T[]): T {
+  if (rows.length !== 1) throw new Error('JSON object requested, multiple (or no) rows returned');
+  return rows[0]!;
+}
+
+/**
+ * Consulta cujo erro era IGNORADO no código original (`const { data } = await ...`,
+ * sem checar `error`): a falha vira "sem resultado" e a rota segue. Só o log registra.
+ */
+async function softSelect<T>(log: FastifyBaseLogger, label: string, run: () => PromiseLike<T[]>): Promise<T[]> {
+  try {
+    return await run();
+  } catch (err) {
+    log.warn({ err }, `[${label}] consulta falhou; seguindo sem o dado`);
+    return [];
+  }
+}
+
 export async function adminVehicleRoutes(app: FastifyInstance) {
   // === GET individual por ID ===
   app.get('/competitive/vehicles/:id', {
@@ -57,8 +106,9 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req) => {
     requireUser(req);
     const { id } = req.params as any;
-    const { data, error } = await adminClient().from('vehicles').select('*').eq('id', id).maybeSingle();
-    if (error) throw error;
+    // Catálogo é leitura livre para qualquer autenticado (sem filtro de concessionária).
+    // Falha de banco → 500 (a exceção do driver chega ao error handler global).
+    const [data] = await sql<VehicleRow[]>`select * from public.vehicles where id = ${id}`;
     if (!data) throw notFound('veículo não encontrado');
     return data;
   });
@@ -73,10 +123,9 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     const { id } = req.params as any;
-    const { error, count } = await adminClient()
-      .from('vehicles').delete({ count: 'exact' }).eq('id', id);
-    if (error) throw error; // falha de banco → 500 (mensagem/hint do Postgres só no log)
-    if (count === 0) throw notFound('veículo não encontrado');
+    // Falha de banco → 500 (mensagem/hint do Postgres só no log).
+    const deleted = await sql`delete from public.vehicles where id = ${id} returning id`;
+    if (deleted.length === 0) throw notFound('veículo não encontrado');
     return { ok: true, deleted: id };
   });
 
@@ -95,9 +144,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     requireUser(req);
     const { id } = req.params as any;
     const body = (req.body ?? {}) as any;
-    const sb = adminClient();
-    const { data: existing, error: findErr } = await sb.from('vehicles').select('*').eq('id', id).maybeSingle();
-    if (findErr) throw findErr;
+    const [existing] = await sql<VehicleRow[]>`select * from public.vehicles where id = ${id}`;
     if (!existing) throw notFound('veículo não encontrado');
 
     const aggregated = await aggregateVehicle({
@@ -132,7 +179,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const newSources = { ...aggregated.data_sources };
     for (const [k, v] of Object.entries(oldSources)) if (v === 'manual') newSources[k] = 'manual';
 
-    const { data, error } = await sb.from('vehicles').update({
+    const patch = compact({
       categoria: aggregated.categoria,
       motor, dimensoes, transmissao, desempenho,
       equipamentos: aggregated.equipamentos,
@@ -143,10 +190,14 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       fipe_codigo: aggregated.fipe_codigo,
       fipe_mes_referencia: aggregated.fipe_mes_referencia,
       confianca_geral: aggregated.confianca_geral,
-    }).eq('id', id).select().single();
+    });
 
-    if (error) throw error;
-    return data;
+    const rows = await sql<VehicleRow[]>`
+      update public.vehicles set ${sql(patch)}
+      where id = ${id}
+      returning *
+    `;
+    return singleRowOrThrow(rows);
   });
 
   // === FIPE DRILLDOWN — escolha em cascata ===
@@ -204,13 +255,12 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const sb = adminClient();
 
-    const { data: vehicle, error: vErr } = await sb
-      .from('vehicles')
-      .select('id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources')
-      .eq('id', id).maybeSingle();
-    if (vErr) throw vErr;
+    const [vehicle] = await sql<VehicleRow[]>`
+      select id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources
+      from public.vehicles
+      where id = ${id}
+    `;
     if (!vehicle) throw notFound('veículo não encontrado');
 
     // 1. Tenta a busca completa FIPE (marca + modelo+versao + ano)
@@ -237,16 +287,18 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const novasFontes = { ...(vehicle.data_sources ?? {}) };
     novasFontes.preco_brl = 'fipe';
 
-    const { data, error } = await sb.from('vehicles').update({
+    const patch = compact({
       preco_brl: novoPreco,
       fipe_codigo: fipeResult.CodigoFipe,
       fipe_mes_referencia: fipeResult.MesReferencia,
       data_sources: novasFontes,
-    }).eq('id', id).select(
-      'id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources'
-    ).single();
-
-    if (error) throw error;
+    });
+    const rows = await sql<VehicleRow[]>`
+      update public.vehicles set ${sql(patch)}
+      where id = ${id}
+      returning id, marca, modelo, versao, ano, preco_brl, fipe_codigo, fipe_mes_referencia, data_sources
+    `;
+    const data = singleRowOrThrow(rows);
 
     await logAudit({
       actor_id: u.id, action: 'vehicle.price_refreshed', entity: 'vehicles', entity_id: id,
@@ -279,7 +331,6 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { marca_codigo, modelo_codigo, ano_codigo } = req.body as any;
-    const sb = adminClient();
 
     // 1. Busca preço FIPE direto pelos códigos (100% determinístico)
     let fipeData;
@@ -296,27 +347,38 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     const modeloBase = modeloPartes[0] ?? fipeData.Modelo;
     const versao = modeloPartes.slice(1).join(' ') || 'Padrão';
 
-    // 2. Verifica cache
-    const { data: existing } = await sb.from('vehicles').select('*')
-      .eq('fipe_codigo', fipeData.CodigoFipe).eq('ano', anoInt).maybeSingle();
+    // 2. Verifica cache. O antigo `.maybeSingle()` só devolvia dado com exatamente
+    // 1 linha (2+ virava erro PGRST116, ignorado → seguia para o agregador) e
+    // qualquer erro de banco também era ignorado: `limit 2` + softSelect preservam isso.
+    const cached = await softSelect(req.log, 'search/fipe cache', () => sql<VehicleRow[]>`
+      select * from public.vehicles
+      where fipe_codigo = ${fipeData.CodigoFipe} and ano = ${anoInt}
+      limit 2
+    `);
+    const existing = cached.length === 1 ? cached[0] : undefined;
     if (existing) return { source: 'cache', vehicle: existing };
 
     // 3. Roda agregador com dados FIPE já em mãos (manufacturer + IA pra gaps)
     let aiModel = req.headers['x-ai-model'] as string | undefined;
     if (!aiModel) {
-      const { data: pref } = await sb.from('ai_function_models')
-        .select('model_id').eq('user_id', u.id).eq('function_name', 'vehicle_search').maybeSingle();
+      // PK (user_id, function_name) → no máximo 1 linha. Erro de leitura era ignorado.
+      const [pref] = await softSelect(req.log, 'search/fipe ai_function_models', () => sql<{ model_id: string }[]>`
+        select model_id from public.ai_function_models
+        where user_id = ${u.id} and function_name = 'vehicle_search'
+      `);
       aiModel = pref?.model_id;
     }
-    const { data: prefExtract } = await sb.from('ai_function_models')
-      .select('model_id').eq('user_id', u.id).eq('function_name', 'manufacturer_extract').maybeSingle();
+    const [prefExtract] = await softSelect(req.log, 'search/fipe ai_function_models', () => sql<{ model_id: string }[]>`
+      select model_id from public.ai_function_models
+      where user_id = ${u.id} and function_name = 'manufacturer_extract'
+    `);
     const aggregated = await aggregateVehicle({
       marca: fipeData.Marca, modelo: modeloBase, versao, ano: anoInt,
       aiModel, manufacturerAiModel: prefExtract?.model_id,
     });
     if (!aggregated) throw notFound('nenhuma fonte externa retornou dados para este veículo', 'vehicle_data_not_found');
 
-    const { data, error } = await sb.from('vehicles').upsert({
+    const row = compact({
       marca: aggregated.marca, modelo: aggregated.modelo, versao: aggregated.versao,
       ano: aggregated.ano, categoria: aggregated.categoria,
       motor: aggregated.motor, dimensoes: aggregated.dimensoes,
@@ -326,10 +388,14 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       fontes: aggregated.fontes, data_sources: aggregated.data_sources,
       fipe_codigo: aggregated.fipe_codigo, fipe_mes_referencia: aggregated.fipe_mes_referencia,
       confianca_geral: aggregated.confianca_geral,
-    }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
+    });
 
-    if (error) throw error;
-    return { source: 'fresh', vehicle: data };
+    const rows = await sql<VehicleRow[]>`
+      insert into public.vehicles ${sql(row)}
+      on conflict (hash_dedupe) do update set ${excludedSet(Object.keys(row))}
+      returning *
+    `;
+    return { source: 'fresh', vehicle: singleRowOrThrow(rows) };
   });
 
   // === Combobox de marcas — FIPE é fonte autoritativa ===
@@ -365,9 +431,8 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const u = requireUser(req);
     const body = req.body as z.infer<typeof VehicleCreateSchema>;
-    const sb = adminClient();
 
-    const { data, error } = await sb.from('vehicles').upsert({
+    const row = {
       marca: body.marca,
       modelo: body.modelo,
       versao: body.versao,
@@ -389,11 +454,16 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       editado_por: u.id,
       editado_em: new Date().toISOString(),
       confianca_geral: 'alta',
-    }, { onConflict: 'hash_dedupe', ignoreDuplicates: false }).select().single();
+    };
 
-    if (error) throw error; // falha de banco → 500 (detalhe só no log)
+    // Falha de banco → 500 (detalhe só no log).
+    const rows = await sql<VehicleRow[]>`
+      insert into public.vehicles ${sql(row)}
+      on conflict (hash_dedupe) do update set ${excludedSet(Object.keys(row))}
+      returning *
+    `;
     reply.code(201);
-    return data;
+    return singleRowOrThrow(rows);
   });
 
   // === Edição manual ===
@@ -408,12 +478,10 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const updates = req.body as any;
-    const sb = adminClient();
+    const updates = compact(req.body as Record<string, unknown>) as any;
 
     // Marca campos modificados como `manual` em data_sources
-    const { data: current, error: findErr } = await sb.from('vehicles').select('data_sources').eq('id', id).maybeSingle();
-    if (findErr) throw findErr;
+    const [current] = await sql<VehicleRow[]>`select data_sources from public.vehicles where id = ${id}`;
     if (!current) throw notFound('veículo não encontrado');
     const newSources = { ...(current?.data_sources ?? {}) };
     for (const k of ['marca', 'modelo', 'versao', 'ano', 'categoria', 'preco_brl', 'pais_origem']) {
@@ -428,7 +496,7 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
     }
     if (updates.equipamentos) newSources['equipamentos'] = 'manual';
 
-    const { data, error } = await sb.from('vehicles').update({
+    const patch = {
       ...updates,
       data_sources: newSources,
       verificado_manualmente: true,
@@ -437,10 +505,14 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       editado_por: u.id,
       editado_em: new Date().toISOString(),
       confianca_geral: 'alta',
-    }).eq('id', id).select().single();
+    };
 
-    if (error) throw error;
-    return data;
+    const rows = await sql<VehicleRow[]>`
+      update public.vehicles set ${sql(patch)}
+      where id = ${id}
+      returning *
+    `;
+    return singleRowOrThrow(rows);
   });
 
   // === Import em lote (JSON ou CSV-as-text) ===
@@ -457,7 +529,6 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { format, content } = req.body as any;
-    const sb = adminClient();
 
     let items: any[] = [];
     try {
@@ -495,9 +566,11 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       throw unprocessable('o conteúdo não contém nenhum veículo válido', 'no_valid_items');
     }
 
+    // marca/modelo ausentes viram null (o PostgREST completava a chave faltante com
+    // null) → violação de not-null do banco → 500, como antes.
     const rows = items.map((it: any) => ({
-      marca: it.marca,
-      modelo: it.modelo,
+      marca: it.marca ?? null,
+      modelo: it.modelo ?? null,
       versao: it.versao ?? 'Padrão',
       ano: it.ano ?? 2025,
       categoria: it.categoria ?? 'sedan',
@@ -519,9 +592,12 @@ export async function adminVehicleRoutes(app: FastifyInstance) {
       confianca_geral: it.confianca_geral ?? 'alta',
     }));
 
-    const { data, error } = await sb.from('vehicles').upsert(rows, { onConflict: 'hash_dedupe' }).select();
-    if (error) throw error;
-    return { inserted: data?.length ?? 0, vehicles: data ?? [] };
+    const data = await sql<VehicleRow[]>`
+      insert into public.vehicles ${sql(rows)}
+      on conflict (hash_dedupe) do update set ${excludedSet(Object.keys(rows[0]!))}
+      returning *
+    `;
+    return { inserted: data.length, vehicles: [...data] };
   });
 
   // === EXTRAÇÃO de PDF/imagem via IA multimodal (e-books, brochuras, fichas) ===

@@ -1,13 +1,13 @@
 # Segurança do Faro AI
 
 Este documento descreve os controles do Sprint 3 para a API Fastify, o app Expo,
-o site Next.js, o serviço ML FastAPI e o banco Supabase. O escopo não inclui IoT,
+o site Next.js, o serviço ML FastAPI e o banco PostgreSQL. O escopo não inclui IoT,
 MQTT ou dispositivos conectados.
 
 | Área do sprint | Peso | Estado neste repositório |
 |---|---:|---|
 | DevSecOps e pipeline | 3,0 | Workflow de CI, análise estática, auditoria de dependências e secret scan configurados |
-| Segurança de código e infraestrutura | 2,5 | Validação, RBAC, RLS, gestão de segredos e controles de rede no código |
+| Segurança de código e infraestrutura | 2,5 | Validação, RBAC, escopo por concessionária na API, gestão de segredos e controles de rede no código |
 | Monitoramento e resposta a incidentes | 2,0 | Logs estruturados e trilha de auditoria; alertas e centralização dependem do deploy |
 | Compliance e segurança contínua | 2,5 | Minimização e controles de acesso; retenção, avaliação legal e operação contínua pendentes |
 
@@ -60,20 +60,29 @@ workflow, sozinho, não bloqueia merges pelas configurações do repositório.
 ### Entrada, acesso e banco
 
 - As rotas Fastify validam parâmetros, consultas e corpos com Zod.
-- O plugin de autenticação valida JWTs emitidos pela API localmente; tokens
-  Supabase usados pelo web/mobile são validados no Supabase Auth, com o perfil
-  carregado de `profiles`.
+- O plugin de autenticação valida localmente os JWTs emitidos pela própria API
+  (`POST /auth/login`, HS256). O login confere a senha contra o hash bcrypt
+  (custo 12) de `profiles.password_hash` e gasta o mesmo tempo quando o e-mail
+  não existe, para não revelar quais e-mails estão cadastrados. Não há rota de
+  cadastro: usuários são criados por script (`pnpm db:user`).
 - `authorize` limita operações de escrita do catálogo a `gestor` e `admin`.
   Configuração de chaves de IA exige `admin`.
-- A política de perfil não permite que um usuário altere o próprio role ou a
-  própria concessionária.
-- Tokens Supabase usados pelo web/mobile passam por RLS. Tokens emitidos pela API
-  usam `service_role`; por isso as rotas aplicam explicitamente o escopo de
-  concessionária. Os RPCs de leads e anomalias de rede exigem gestor/admin.
-- Funções SQL de leads e métricas usam `SECURITY INVOKER`, limitam resultados e
-  não concedem execução a `anon` ou `PUBLIC`.
-- Operações que precisam da chave `service_role` fazem verificações de papel e
-  concessionária na API. A chave ignora RLS e fica somente no backend.
+- Nenhuma rota da API altera `role` ou `dealership_id` de um perfil: essas
+  mudanças são feitas por um administrador (`pnpm db:user` ou SQL direto), e o
+  token só reflete a mudança no próximo login.
+- O banco é PostgreSQL padrão, sem RLS: a API é a **única** porta de acesso e
+  aplica o escopo de concessionária explicitamente em cada consulta
+  (`lib/data-access.ts`: `readScopeOf`, `writeScopeOf`, `scopeFilter`,
+  `assertCanModify`). Esse módulo concentra a regra e os testes a cobrem; uma
+  rota nova que esquecer o filtro enxerga todas as lojas, por isso a revisão de
+  PR deve conferir o escopo de toda consulta nova.
+- Todas as consultas são parametrizadas (`postgres.js`); `sql.unsafe` só é usado
+  pelo executor de migrations. As funções SQL de leads e métricas usam
+  `SECURITY INVOKER`, limitam resultados e só são chamadas por rotas de
+  gestor/admin (escopo de leitura da rede inteira).
+- A conexão do banco (`DATABASE_URL`) fica só no backend. Em produção use um
+  usuário de banco com privilégios mínimos (sem superusuário) e exija TLS na
+  conexão (`sslmode=require`).
 - Chaves de provedores configuradas pela tela admin ficam na tabela `ai_keys`;
   o app retorna apenas se estão configuradas, sem mostrar fragmentos. Antes de
   produção, mova esses valores para um secret manager e defina rotação.
@@ -94,7 +103,7 @@ workflow, sozinho, não bloqueia merges pelas configurações do repositório.
   downloader valida cada redirecionamento e interrompe downloads acima de 30 MB.
 
 O repositório não configura o proxy de produção, DNS, certificado TLS, firewall,
-rede privada para ML, gestão de segredos ou backup Supabase. Em produção, termine
+rede privada para ML, gestão de segredos ou backup do PostgreSQL. Em produção, termine
 TLS em um proxy confiável e restrinja o acesso de rede ao ML. Defina
 `TRUST_PROXY=true` somente quando a API aceitar tráfego por esse proxy.
 
@@ -103,10 +112,11 @@ TLS em um proxy confiável e restrinja o acesso de rede ao ML. Defina
 - Novos CPFs são transformados em HMAC-SHA256 com `CLIENT_CPF_PEPPER`. Gere o
   segredo com `openssl rand -hex 32` e mantenha-o estável. O sistema não guarda
   o CPF original para recalcular hashes antigos.
-- O app nativo armazena a sessão Supabase com `expo-secure-store`. O app web usa
-  armazenamento do navegador.
+- O app nativo armazena a sessão com `expo-secure-store`. O app web guarda o
+  token da API no armazenamento do navegador (`localStorage`, chave
+  `faroai.session`); esse token expira junto com o JWT.
 - Logs HTTP não incluem query strings. O logger redige cabeçalhos de autorização
-  e cookies. O plugin de auth não grava JWTs nem corpos de resposta do Supabase.
+  e cookies. O plugin de auth não grava JWTs nem hashes de senha.
 - O ML recebe atributos de compra e perfil, como idade, renda, score de crédito
   e modelo. O identificador da concessionária é pseudonimizado. Esses atributos
   continuam sendo dados pessoais; pseudonimização não é anonimização.
@@ -127,9 +137,10 @@ erros 5xx e falhas de gravação de auditoria aparecem no log. A API limita
 requisições e retorna erros sem stack trace.
 
 A tabela `audit_log` registra criação e alteração de clientes, ações de retenção,
-envio de e-mail, alterações no catálogo e mudanças de configuração de IA. Só o
-backend grava eventos. A gravação é best-effort: uma falha aparece no Pino e não
-interrompe a operação. O RLS limita a leitura a administradores.
+envio de e-mail, alterações no catálogo, mudanças de configuração de IA e logins
+(`auth.login` e `auth.login_failed`). Só o backend grava eventos. A gravação é
+best-effort: uma falha aparece no Pino e não interrompe a operação. Nenhuma rota
+lê a tabela; a leitura exige acesso direto ao banco.
 
 Este repositório não inclui um agregador de logs, alertas, painel de segurança,
 plantão ou automação de resposta. Para um incidente, a equipe precisa conter o
@@ -141,7 +152,7 @@ há obrigação de notificar a ANPD ou as pessoas afetadas.
 |---|---|---|
 | API | Taxa de 5xx, 401/403, 429 e latência por rota | 5xx acima de 2% por 5 min; aumento súbito de 401/429 |
 | Mobile/web | Falhas de login, erros de rede e crashes | Aumento sustentado após uma release |
-| Supabase | Falhas de consulta, conexões e alterações de perfis | Falha de banco ou mudança de role fora do fluxo aprovado |
+| PostgreSQL | Falhas de consulta, conexões e alterações de perfis | Falha de banco ou mudança de role fora do fluxo aprovado |
 | ML | 5xx, latência de `/predict`, rejeições HMAC e nonces repetidos | Rejeições repetidas ou indisponibilidade por 5 min |
 | IoT | Não aplicável: a solução não contém dispositivo, broker ou telemetria MQTT | Não aplicável |
 
@@ -157,8 +168,8 @@ remova a causa, restaure de backup validado e monitore a recuperação.
 
 | Ameaça | Evidência no projeto | Risco restante |
 |---|---|---|
-| Spoofing | JWT com assinatura/expiração e autenticação Supabase | Revogação de tokens próprios só ocorre na expiração |
-| Tampering | Zod, autorização por perfil, RLS e HMAC API→ML | Alterações via `service_role` dependem de verificações em cada rota |
+| Spoofing | JWT com assinatura/expiração; senha em bcrypt (custo 12) e login sem diferença de tempo entre e-mail inexistente e senha errada | Revogação de tokens próprios só ocorre na expiração |
+| Tampering | Zod, autorização por perfil, SQL parametrizado e HMAC API→ML | O escopo por loja depende de cada consulta aplicá-lo (sem RLS como segunda camada) |
 | Repudiation | `audit_log` para mudanças críticas e Pino para falhas | Auditoria é best-effort; falta retenção centralizada |
 | Information disclosure | Redação de tokens em logs, CPF em HMAC, escopo por loja | Dados pessoais ainda podem chegar a provedores de IA |
 | Denial of service | Rate limit e limites de payload/consulta | Sem proteção de borda nem alertas implantados |
@@ -169,8 +180,8 @@ de ameaças no ambiente implantado.
 
 O escopo de dados inclui identificadores de cliente, dados de compra,
 características demográficas e financeiras, notas de vendedores, previsões e
-ações de retenção. O cliente e seus dados ficam vinculados à concessionária por
-RLS e verificações da API.
+ações de retenção. O cliente e seus dados ficam vinculados à concessionária pelas
+verificações de escopo da API.
 
 Use os seguintes controles como referência para revisão:
 
@@ -186,6 +197,7 @@ adicionar um provedor, campo pessoal ou integração.
 ### Pendências antes de produção
 
 - Exigir os jobs de CI nas regras de proteção da branch `main`.
+- Usar um usuário de banco sem privilégios de superusuário e conexão com TLS.
 - Configurar TLS, proxy confiável, firewall e rede privada para o serviço ML.
 - Guardar segredos em um secret manager e definir a rotação de cada segredo.
 - Definir retenção, descarte, restauração de backup e responsáveis por incidentes.

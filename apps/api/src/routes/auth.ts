@@ -2,7 +2,7 @@
  * Autenticação — emissão do JWT da API.
  *
  * POST /auth/login (PÚBLICO)
- *   1. Supabase Auth confere e-mail/senha      (lib/identity.ts)
+ *   1. API confere e-mail/senha (bcrypt) em profiles  (lib/identity.ts)
  *   2. API busca role + concessionária          (lib/identity.ts)
  *   3. API assina o JWT com essas claims        (lib/jwt.ts)
  *   4. Cliente usa: Authorization: Bearer <access_token>

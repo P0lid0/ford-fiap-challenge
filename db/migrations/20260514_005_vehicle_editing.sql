@@ -9,14 +9,8 @@ alter table public.vehicles
 
 create index if not exists vehicles_verificado_idx on public.vehicles(verificado_manualmente);
 
--- Policy de UPDATE/INSERT/DELETE para admin (analista pode propor, admin/gestor edita)
-create policy vehicles_admin_write on public.vehicles
-  for all using (public.is_admin() or public.current_user_role() = 'gestor')
-  with check (public.is_admin() or public.current_user_role() = 'gestor');
-
--- Permite analista inserir (criar carro novo manualmente)
-create policy vehicles_authenticated_insert on public.vehicles
-  for insert with check (auth.role() = 'authenticated');
+-- Regra de escrita (analista pode propor/inserir, admin/gestor edita) é
+-- aplicada pela API (authorize nas rotas de admin-vehicles).
 
 -- Marca os seeds iniciais como verified (eles foram inseridos por nós, são autoritativos)
 update public.vehicles

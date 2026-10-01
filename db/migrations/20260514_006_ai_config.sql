@@ -1,5 +1,5 @@
 -- Tabelas de configuração de IA: chaves de API e modelo por função.
--- Strictly admin: RLS bloqueia tudo exceto admins, e routes usam service_role.
+-- Strictly admin: as rotas /admin/** exigem role admin (authorize na API).
 
 -- ============== api_keys ==============
 create table public.ai_keys (
@@ -8,12 +8,6 @@ create table public.ai_keys (
   updated_by uuid references public.profiles(id) on delete set null,
   updated_at timestamptz not null default now()
 );
-
-alter table public.ai_keys enable row level security;
-
--- Apenas admin LÊ; mas o backend usa service_role (bypassa RLS).
-create policy ai_keys_admin_read on public.ai_keys
-  for select using (public.is_admin());
 
 -- ============== ai_function_models ==============
 -- Configurações de qual modelo usa em cada função.
@@ -32,11 +26,3 @@ create table public.ai_function_models (
   updated_at timestamptz not null default now(),
   primary key (user_id, function_name)
 );
-
-alter table public.ai_function_models enable row level security;
-
-create policy ai_function_models_self on public.ai_function_models
-  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-
-create policy ai_function_models_admin on public.ai_function_models
-  for all using (public.is_admin()) with check (public.is_admin());

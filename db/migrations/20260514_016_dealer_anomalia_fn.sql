@@ -1,9 +1,9 @@
 -- =====================================================================
 -- RPC: agregação de perfil_real por dealer
 -- =====================================================================
--- Postgrest tem limite default de 1000 linhas, então uma agregação manual
--- via SELECT direto não funciona com 175k VINs. Esta função roda a agregação
+-- Agregar 175k VINs no Node seria caro; esta função roda a agregação
 -- INTEIRA dentro do Postgres e devolve só o sumário por dealer (412 linhas).
+-- A API chama: select * from public.dealer_perfil_stats($1).
 -- =====================================================================
 
 create or replace function public.dealer_perfil_stats(min_clientes integer default 50)
@@ -21,7 +21,6 @@ returns table (
 )
 language sql
 stable
-security invoker
 set search_path = public, pg_temp
 as $$
   select
@@ -45,8 +44,3 @@ $$;
 
 comment on function public.dealer_perfil_stats(integer) is
   'Agregação de perfil_real por dealer — usado em /metrics/anomalias-dealer pra calcular z-score de retenção.';
-
--- Permissões: authenticated pode chamar (read-only function)
-revoke all on function public.dealer_perfil_stats(integer) from public, anon;
-grant execute on function public.dealer_perfil_stats(integer) to authenticated;
-grant execute on function public.dealer_perfil_stats(integer) to service_role;

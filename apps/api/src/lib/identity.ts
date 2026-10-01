@@ -1,15 +1,16 @@
 /**
- * Adaptador do provedor de identidade (Supabase Auth).
+ * Adaptador de identidade local (usuários em `public.profiles`).
  *
- * Responsabilidade única: conversar com o Supabase para
- *   - conferir e-mail/senha (login),
- *   - validar tokens legados emitidos pelo próprio Supabase,
+ * Responsabilidade única: conferir quem é o usuário e buscar o perfil de acesso
+ *   - conferir e-mail/senha (login) contra o hash bcrypt de profiles.password_hash,
  *   - buscar o perfil de acesso (role + concessionária) do usuário.
  *
  * Quem EMITE o JWT da API é lib/jwt.ts — aqui só verificamos identidade.
+ * Usuários não se cadastram pela API: são criados por scripts/db-create-user.mjs
+ * (ou scripts/db-seed-admin.mjs).
  */
-import { env } from '../config.js';
-import { adminClient } from './supabase.js';
+import bcrypt from 'bcryptjs';
+import { sql } from './db.js';
 import { USER_ROLES, type UserRole } from './jwt.js';
 import { ApiError } from './api-error.js';
 
@@ -23,7 +24,7 @@ export type UserProfile = {
   dealershipId: string | null;
 };
 
-/** O provedor de identidade falhou ou está fora do ar → HTTP 502. */
+/** A base de identidade falhou ou está fora do ar → HTTP 502. */
 export class IdentityProviderError extends ApiError {
   constructor(message: string) {
     super(502, 'identity_provider_unavailable', message);
@@ -31,56 +32,38 @@ export class IdentityProviderError extends ApiError {
   }
 }
 
-function supabaseAuthHeaders(): Record<string, string> {
-  return {
-    apikey: env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_ROLE_KEY,
-    'Content-Type': 'application/json',
-  };
-}
+/** Custo do bcrypt — o mesmo dos scripts que gravam o hash (db-seed-admin / db-create-user). */
+export const BCRYPT_COST = 12;
+
+// Hash de uma senha qualquer, usado quando o e-mail não existe (ou o usuário
+// não tem senha): o login gasta o mesmo tempo de bcrypt.compare e não vaza,
+// por timing, quais e-mails estão cadastrados.
+const DUMMY_HASH = bcrypt.hashSync('faroai-dummy-password-never-matches', BCRYPT_COST);
+
+type CredentialRow = { id: string; email: string; password_hash: string | null };
 
 /**
- * Confere as credenciais no Supabase Auth (grant_type=password).
+ * Confere as credenciais contra `profiles.password_hash`.
  * @returns o usuário, ou `null` se e-mail/senha estiverem errados
- * @throws IdentityProviderError se o Supabase não responder corretamente
+ * @throws IdentityProviderError se o banco não responder
  */
 export async function authenticateWithPassword(email: string, password: string): Promise<IdentityUser | null> {
-  let response: Response;
+  let row: CredentialRow | undefined;
   try {
-    response = await fetch(`${env.SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: supabaseAuthHeaders(),
-      body: JSON.stringify({ email, password }),
-    });
+    [row] = await sql<CredentialRow[]>`
+      select id, email, password_hash
+      from public.profiles
+      where lower(email) = ${email.trim().toLowerCase()}
+      limit 1
+    `;
   } catch {
-    throw new IdentityProviderError('provedor de identidade indisponível');
+    throw new IdentityProviderError('base de identidade indisponível');
   }
 
-  // Supabase responde 400 (invalid_grant) para credenciais erradas.
-  if (response.status === 400 || response.status === 401) return null;
-  if (!response.ok) {
-    throw new IdentityProviderError(`provedor de identidade respondeu ${response.status}`);
-  }
-
-  const body = await response.json() as { user?: { id?: string; email?: string } };
-  if (!body.user?.id) {
-    throw new IdentityProviderError('resposta inesperada do provedor de identidade');
-  }
-  return { id: body.user.id, email: body.user.email ?? email };
-}
-
-/**
- * Valida um token emitido pelo Supabase (fluxo legado do web/mobile).
- * @returns o usuário, ou `null` se o token for rejeitado
- */
-export async function findUserBySupabaseToken(supabaseJwt: string): Promise<IdentityUser | null> {
-  const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-    headers: { ...supabaseAuthHeaders(), Authorization: `Bearer ${supabaseJwt}` },
-  });
-  if (!response.ok) return null;
-
-  const user = await response.json() as { id?: string; email?: string };
-  if (!user.id) return null;
-  return { id: user.id, email: user.email ?? '' };
+  // Sempre roda um compare (contra o hash dummy se não há usuário/senha).
+  const matches = await bcrypt.compare(password, row?.password_hash ?? DUMMY_HASH);
+  if (!row || !row.password_hash || !matches) return null;
+  return { id: row.id, email: row.email };
 }
 
 /**
@@ -88,12 +71,10 @@ export async function findUserBySupabaseToken(supabaseJwt: string): Promise<Iden
  * Sem perfil (ou com role desconhecida) → 'analista': o MENOR privilégio.
  */
 export async function findUserProfile(userId: string): Promise<UserProfile> {
-  const { data } = await adminClient()
-    .from('profiles')
-    .select('role, dealership_id')
-    .eq('id', userId)
-    .maybeSingle();
+  const [row] = await sql<{ role: string; dealership_id: string | null }[]>`
+    select role, dealership_id from public.profiles where id = ${userId}
+  `;
 
-  const role = USER_ROLES.includes(data?.role) ? (data!.role as UserRole) : 'analista';
-  return { role, dealershipId: data?.dealership_id ?? null };
+  const role = USER_ROLES.includes(row?.role as UserRole) ? (row!.role as UserRole) : 'analista';
+  return { role, dealershipId: row?.dealership_id ?? null };
 }

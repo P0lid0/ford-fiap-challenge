@@ -1,31 +1,14 @@
 #!/usr/bin/env node
 /**
  * Popula vehicles com seed inicial: Ranger Raptor (validação Ford) + concorrentes.
- * Usa Supabase REST API com service_role (bypassa RLS).
+ * Conecta direto no PostgreSQL (DATABASE_URL) e faz upsert por hash_dedupe.
+ *
+ * Uso: pnpm db:seed   (depois de pnpm db:migrate)
  */
-import { readFileSync, existsSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createClient } from '@supabase/supabase-js';
+import postgres from 'postgres';
+import { databaseUrl } from './lib/env.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, '..');
-
-const envPath = join(repoRoot, '.env.local');
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-  }
-}
-
-const url = process.env.SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!url || !key) {
-  console.error('❌ SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY ausente em .env.local');
-  process.exit(1);
-}
-const sb = createClient(url, key);
+const sql = postgres(databaseUrl(), { max: 1, onnotice: () => {} });
 
 const VEHICLES = [
   {
@@ -85,9 +68,29 @@ const VEHICLES = [
   },
 ];
 
-const { error } = await sb.from('vehicles').upsert(VEHICLES, { onConflict: 'hash_dedupe', ignoreDuplicates: false });
-if (error) {
-  console.error('❌ erro no seed', error);
-  process.exit(1);
+// Colunas enviadas; hash_dedupe é gerada (marca|modelo|versao|ano) e serve
+// de alvo do ON CONFLICT (índice único vehicles_dedupe_uidx).
+const COLS = ['marca', 'modelo', 'versao', 'ano', 'categoria', 'motor', 'dimensoes',
+              'transmissao', 'desempenho', 'equipamentos', 'preco_brl', 'pais_origem', 'fontes'];
+
+try {
+  await sql`
+    insert into public.vehicles ${sql(VEHICLES, ...COLS)}
+    on conflict (hash_dedupe) do update set
+      categoria    = excluded.categoria,
+      motor        = excluded.motor,
+      dimensoes    = excluded.dimensoes,
+      transmissao  = excluded.transmissao,
+      desempenho   = excluded.desempenho,
+      equipamentos = excluded.equipamentos,
+      preco_brl    = excluded.preco_brl,
+      pais_origem  = excluded.pais_origem,
+      fontes       = excluded.fontes
+  `;
+  console.log(`✅ ${VEHICLES.length} veículos inseridos/atualizados`);
+} catch (err) {
+  console.error('❌ erro no seed', err.message);
+  process.exitCode = 1;
+} finally {
+  await sql.end();
 }
-console.log(`✅ ${VEHICLES.length} veículos inseridos/atualizados`);

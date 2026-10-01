@@ -1,33 +1,37 @@
 /**
- * Autenticação — POST /auth/login e uso do token nas rotas protegidas.
+ * Autenticação — POST /auth/login (identidade local em public.profiles, bcrypt)
+ * e uso do token nas rotas protegidas. Roda contra o PostgreSQL de teste.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
 import { env } from '../src/config.js';
-import { auditEvents, fakeDb, mockSupabaseAuth } from './helpers/fakes.js';
-import { createTestApp, DEALERSHIP_A, type TestApp } from './helpers/test-app.js';
+import {
+  auditRows, comTabelaIndisponivel, DEALERSHIP_A, insertUser, TEST_PASSWORD, useTestDatabase,
+} from './helpers/db.js';
+import { createTestApp, nextClientIp, type TestApp } from './helpers/test-app.js';
 
-const GESTOR = { id: 'user-gestor', email: 'gestor@faroai.test', password: 'Senha#123' };
-const SEM_PERFIL = { id: 'user-sem-perfil', email: 'novo@faroai.test', password: 'Senha#123' };
+// Usuários do cenário (gravados de verdade em public.profiles a cada teste).
+const GESTOR = { id: '22222222-2222-4222-8222-000000000001', email: 'gestor@faroai.test', password: TEST_PASSWORD };
+const NOVO = { id: '22222222-2222-4222-8222-000000000002', email: 'novo@faroai.test', password: TEST_PASSWORD };
+const SEM_SENHA = { id: '22222222-2222-4222-8222-000000000003', email: 'semsenha@faroai.test' };
 
 let app: TestApp;
-let clientIp = 0;
 
 /** Cada login sai de um IP diferente, para o limite de 10/min do login não interferir. */
 function login(body: unknown) {
-  clientIp += 1;
-  return app.inject({ method: 'POST', url: '/auth/login', payload: body as object, remoteAddress: `10.0.0.${clientIp}` });
+  return app.inject({ method: 'POST', url: '/auth/login', payload: body as object, remoteAddress: nextClientIp() });
 }
 
+useTestDatabase();
 beforeAll(async () => { app = await createTestApp(); });
 afterAll(async () => { await app.close(); });
 
-beforeEach(() => {
-  mockSupabaseAuth({
-    users: [GESTOR, SEM_PERFIL],
-    legacyTokens: { 'token-legado-supabase': { id: GESTOR.id, email: GESTOR.email } },
-  });
-  fakeDb.seed('profiles', [{ id: GESTOR.id, role: 'gestor', dealership_id: DEALERSHIP_A }]);
+beforeEach(async () => {
+  await insertUser({ id: GESTOR.id, email: GESTOR.email, role: 'gestor', dealership_id: DEALERSHIP_A });
+  // Só e-mail e senha: perfil e concessionária ficam nos valores padrão do cadastro.
+  await insertUser({ id: NOVO.id, email: NOVO.email });
+  // Cadastro sem senha definida (password_hash nulo): não consegue entrar.
+  await insertUser({ id: SEM_SENHA.id, email: SEM_SENHA.email, role: 'admin', password_hash: null });
 });
 
 describe('POST /auth/login', () => {
@@ -53,14 +57,16 @@ describe('POST /auth/login', () => {
   });
 
   it('usuário sem perfil cadastrado recebe o menor privilégio (analista)', async () => {
-    const { access_token } = (await login({ email: SEM_PERFIL.email, password: SEM_PERFIL.password })).json();
+    const { access_token } = (await login({ email: NOVO.email, password: NOVO.password })).json();
     const me = await app.inject({ method: 'GET', url: '/me', headers: { authorization: `Bearer ${access_token}` } });
     expect(me.json()).toMatchObject({ role: 'analista', dealership_id: null });
   });
 
   it('registra o login no audit_log', async () => {
     await login({ email: GESTOR.email, password: GESTOR.password });
-    expect(auditEvents).toContainEqual(expect.objectContaining({ action: 'auth.login', actor_id: GESTOR.id }));
+    expect(await auditRows('auth.login')).toEqual([
+      expect.objectContaining({ action: 'auth.login', actor_id: GESTOR.id, entity_id: GESTOR.id }),
+    ]);
   });
 
   it('401 — senha errada, com mensagem genérica e WWW-Authenticate', async () => {
@@ -69,7 +75,7 @@ describe('POST /auth/login', () => {
     expect(res.statusCode).toBe(401);
     expect(res.headers['www-authenticate']).toBe('Bearer');
     expect(res.json()).toMatchObject({ code: 'invalid_credentials', detail: 'e-mail ou senha inválidos' });
-    expect(auditEvents).toContainEqual(expect.objectContaining({ action: 'auth.login_failed' }));
+    expect(await auditRows('auth.login_failed')).toHaveLength(1);
   });
 
   it('401 — e-mail inexistente recebe a MESMA resposta (não revela quem existe)', async () => {
@@ -77,6 +83,46 @@ describe('POST /auth/login', () => {
     const unknownUser = (await login({ email: 'ninguem@faroai.test', password: 'qualquer' })).json();
     expect(unknownUser.detail).toBe(wrongPassword.detail);
     expect(unknownUser.code).toBe(wrongPassword.code);
+  });
+
+  it('401 — e-mail inexistente leva tempo semelhante ao de senha errada (sem vazar por timing)', async () => {
+    const elapsed = async (email: string) => {
+      const start = performance.now();
+      const res = await login({ email, password: 'senha-errada-1' });
+      expect(res.statusCode).toBe(401);
+      return performance.now() - start;
+    };
+    const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]!;
+
+    await elapsed(GESTOR.email); // aquecimento (JIT, conexões do pool)
+    const existing: number[] = [];
+    const unknown: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      existing.push(await elapsed(GESTOR.email));
+      unknown.push(await elapsed(`fantasma${i}@faroai.test`));
+    }
+
+    // Ambos pagam um bcrypt.compare de custo 12 (o do e-mail inexistente é contra um hash fixo).
+    expect(median(existing)).toBeGreaterThan(50);
+    expect(median(unknown)).toBeGreaterThan(50);
+    expect(median(unknown) / median(existing)).toBeGreaterThan(0.5);
+    expect(median(unknown) / median(existing)).toBeLessThan(2);
+  });
+
+  it('401 — usuário sem password_hash não entra, com a mesma resposta genérica', async () => {
+    const res = await login({ email: SEM_SENHA.email, password: TEST_PASSWORD });
+    const wrongPassword = (await login({ email: GESTOR.email, password: 'errada' })).json();
+
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['www-authenticate']).toBe('Bearer');
+    expect(res.json()).toMatchObject({ code: wrongPassword.code, detail: wrongPassword.detail });
+    expect(await auditRows('auth.login')).toHaveLength(0);
+  });
+
+  it('401 — senha vazia ou só de espaços não substitui a senha cadastrada', async () => {
+    const res = await login({ email: GESTOR.email, password: '   ' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe('invalid_credentials');
   });
 
   it('400 — corpo inválido lista os campos com problema', async () => {
@@ -87,12 +133,12 @@ describe('POST /auth/login', () => {
     expect(res.json().errors.map((e: { field: string }) => e.field)).toEqual(['body.email', 'body.password']);
   });
 
-  it('502 — Supabase Auth fora do ar', async () => {
-    mockSupabaseAuth({ down: true });
-    const res = await login({ email: GESTOR.email, password: GESTOR.password });
+  it('502 — base de identidade fora do ar', async () => {
+    const res = await comTabelaIndisponivel('profiles', () => login({ email: GESTOR.email, password: GESTOR.password }));
 
     expect(res.statusCode).toBe(502);
     expect(res.json().code).toBe('identity_provider_unavailable');
+    expect(res.body).not.toMatch(/relation|42P01|profiles/);
   });
 
   it('429 — bloqueia força bruta após 10 tentativas por minuto do mesmo IP', async () => {
@@ -142,19 +188,35 @@ describe('Uso do token nas rotas protegidas', () => {
     expect(res.json().code).toBe('invalid_token');
   });
 
+  it('401 — token com o perfil adulterado (analista → admin) não é aceito', async () => {
+    const { access_token } = (await login({ email: NOVO.email, password: NOVO.password })).json();
+    const [header, payload, signature] = access_token.split('.');
+    const forged = { ...JSON.parse(Buffer.from(payload, 'base64url').toString()), role: 'admin' };
+    const tampered = `${header}.${Buffer.from(JSON.stringify(forged)).toString('base64url')}.${signature}`;
+
+    const res = await app.inject({ method: 'GET', url: '/admin/ai-keys', headers: { authorization: `Bearer ${tampered}` } });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe('invalid_token');
+  });
+
   it('401 — esquema diferente de Bearer é ignorado', async () => {
     const res = await app.inject({ method: 'GET', url: '/me', headers: { authorization: 'Basic dXNlcjpzZW5oYQ==' } });
     expect(res.statusCode).toBe(401);
   });
 
-  it('200 — token legado do Supabase (web/mobile) continua aceito', async () => {
-    const res = await app.inject({ method: 'GET', url: '/me', headers: { authorization: 'Bearer token-legado-supabase' } });
+  it('401 — token de outro emissor (como o de um provedor externo) não é aceito', async () => {
+    const foreign = await new SignJWT({ email: GESTOR.email, role: 'admin', dealership_id: null })
+      .setProtectedHeader({ alg: 'HS256' }).setSubject(GESTOR.id)
+      .setIssuer('https://outro-provedor.test/auth/v1').setAudience(env.JWT_AUDIENCE)
+      .setIssuedAt().setExpirationTime('1h')
+      .sign(secret);
+    const res = await app.inject({ method: 'GET', url: '/me', headers: { authorization: `Bearer ${foreign}` } });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ id: GESTOR.id, role: 'gestor' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe('invalid_token');
   });
 
-  it('401 — token legado rejeitado pelo Supabase', async () => {
+  it('401 — token desconhecido (texto que não é JWT)', async () => {
     const res = await app.inject({ method: 'GET', url: '/me', headers: { authorization: 'Bearer token-desconhecido' } });
 
     expect(res.statusCode).toBe(401);

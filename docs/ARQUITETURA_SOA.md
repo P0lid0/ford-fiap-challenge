@@ -47,8 +47,8 @@ flowchart LR
     end
 
     subgraph EXT["Serviços externos"]
-        SBAUTH["Supabase Auth<br/>identidade (e-mail/senha)"]
-        PG[("Supabase Postgres<br/>dados + RLS")]
+        IDDB[("PostgreSQL · profiles<br/>identidade (e-mail + bcrypt)")]
+        PG[("PostgreSQL<br/>dados do negócio")]
         ML["ML Service<br/>FastAPI + XGBoost"]
         SRC["FIPE · NHTSA · fabricantes"]
         LLM["Provedores de IA<br/>Anthropic · OpenAI · Gemini"]
@@ -58,8 +58,8 @@ flowchart LR
     WEB -- "HTTPS + JSON<br/>Bearer JWT" --> EDGE
     MOB -- "HTTPS + JSON<br/>Bearer JWT" --> EDGE
     DOC -- "HTTPS + JSON<br/>Bearer JWT" --> EDGE
-    AUTH -- "confere senha /<br/>token legado" --> SBAUTH
-    DATA -- "PostgREST" --> PG
+    AUTH -- "confere senha<br/>(bcrypt)" --> IDDB
+    DATA -- "SQL parametrizado" --> PG
     DOMAIN -- "HTTP + HMAC" --> ML
     DOMAIN -- "HTTPS" --> SRC
     DOMAIN -- "HTTPS (SDK)" --> LLM
@@ -75,8 +75,8 @@ flowchart LR
 | **Regras de domínio** | `modules/competitive`, `modules/retention` | Comparação de veículos, classificação de clientes (ML + IA) | Não conhece HTTP |
 | **Acesso a dados com escopo** | `lib/data-access.ts` | Aplicar a regra de visibilidade por concessionária (leitura × alteração) | Não valida token |
 | **Transversais** | `plugins/error-handler.ts`, `plugins/openapi.ts`, `lib/audit.ts` | Formato único de erro, documentação OpenAPI, trilha de auditoria | — |
-| **Supabase Auth** | serviço gerenciado | Guardar credenciais e conferir e-mail/senha | Não emite o token usado pela API (quem emite é a própria API) |
-| **Supabase Postgres** | serviço gerenciado + `supabase/migrations` | Persistência; RLS como **segunda** camada de defesa | — |
+| **PostgreSQL · `profiles`** | PostgreSQL padrão + `db/migrations` | Guardar o hash bcrypt da senha, o perfil (`role`) e a concessionária de cada usuário | Não emite o token (quem emite é a própria API); usuários são criados por script, não por rota |
+| **PostgreSQL** | PostgreSQL padrão + `db/migrations` | Persistência dos dados de negócio; o escopo por concessionária é aplicado **na API** (`lib/data-access.ts`) em cada consulta | Não aplica regras de visibilidade por conta própria (sem RLS) |
 | **ML Service** | `services/ml` (FastAPI) | Predição de perfil de cliente (XGBoost) | Não recebe dados pessoais (nome, CPF, e-mail) |
 | **FIPE / NHTSA / IA / Resend** | serviços externos | Preço de referência, especificações, enriquecimento por IA, envio de e-mail | — |
 
@@ -91,7 +91,7 @@ flowchart TB
     L1["<b>1 · Borda e transversais</b> — plugins/<br/>auth.ts: identifica o usuário, segura por padrão, authorize(perfis)<br/>error-handler.ts: todo erro vira Problem Details (RFC 7807)<br/>openapi.ts: documenta acesso e erros de cada rota"]
     L2["<b>2 · Apresentação REST</b> — routes/<br/>auth · competitive · clients · acoes · insights · metrics · admin<br/>validação de entrada (Zod) e escolha do status HTTP"]
     L3["<b>3 · Domínio</b> — modules/<br/>competitive/compare.ts · retention/ml-client · hybrid-classifier · ai-classifier"]
-    L4["<b>4 · Infraestrutura</b> — lib/<br/>jwt.ts · identity.ts · data-access.ts · supabase.ts<br/>api-error.ts · problem-details.ts · audit.ts · data-sources/ · ai.ts · email.ts"]
+    L4["<b>4 · Infraestrutura</b> — lib/<br/>jwt.ts · identity.ts · data-access.ts · db.ts<br/>api-error.ts · problem-details.ts · audit.ts · data-sources/ · ai.ts · email.ts"]
     L1 --> L2 --> L3 --> L4
     L2 -- "acesso a dados com escopo" --> L4
 ```
@@ -117,7 +117,8 @@ apps/api/src/
 ├── modules/                # regras de domínio, independentes de HTTP
 └── lib/                    # infraestrutura e utilitários
     ├── jwt.ts              #   gerar e validar o JWT da API
-    ├── identity.ts         #   adaptador do Supabase Auth
+    ├── identity.ts         #   identidade local: confere a senha (bcrypt) em profiles
+    ├── db.ts               #   cliente PostgreSQL (postgres.js) — sempre parametrizado
     ├── data-access.ts      #   escopo de concessionária (leitura × alteração)
     ├── api-error.ts        #   erros HTTP tipados (notFound, forbidden…)
     └── problem-details.ts  #   schema do erro padrão
@@ -157,7 +158,7 @@ Observações:
 |---|---|
 | **Segura por padrão** | Toda rota exige token; só `/health` e `/auth/login` são marcadas com `config: { public: true }`. Uma rota nova já nasce protegida — há um teste que percorre todas as rotas e garante isso. |
 | **Menor privilégio** | Usuário sem perfil cadastrado recebe `analista`; analista sem concessionária recebe `403 no_dealership`. |
-| **Defesa em profundidade** | A API aplica o escopo de concessionária **e** o Postgres mantém as políticas RLS. |
+| **Escopo explícito** | Toda consulta de dados de negócio aplica o escopo de concessionária na própria query (`scopeFilter`) — não há RLS; a regra vive num único módulo (`data-access.ts`) e é coberta por testes. |
 | **Não revelar existência** | Registro de outra concessionária responde `404`, não `403`. |
 | **Responsabilidade única** | Emissão do token (`jwt.ts`) ≠ verificação de senha (`identity.ts`) ≠ escopo de dados (`data-access.ts`). |
 | **Testabilidade** | `buildApp()` monta a API sem abrir porta; dependências externas são substituídas por dublês nos testes. |
@@ -169,8 +170,7 @@ Observações:
 | Origem → destino | Protocolo | Autenticação | Formato | Observações |
 |---|---|---|---|---|
 | Web / Mobile / Swagger → **API** | HTTPS · REST | `Authorization: Bearer <JWT>` | JSON; erros em `application/problem+json` | CORS restrito a `ALLOWED_ORIGINS`; rate limit por usuário/IP |
-| API → **Supabase Auth** | HTTPS | chave `apikey` do projeto | JSON | Só no login (`grant_type=password`) e para validar tokens legados |
-| API → **Supabase Postgres** | HTTPS (PostgREST) | chave de serviço — ou o token legado do usuário (RLS) | JSON | Com token da API, o escopo é aplicado pela própria API |
+| API → **PostgreSQL** | TCP (protocolo nativo do PostgreSQL) | usuário e senha em `DATABASE_URL` | SQL parametrizado (`postgres.js`) | Login (hash bcrypt em `profiles`) e dados de negócio; o escopo é aplicado pela própria API |
 | API → **ML Service** | HTTP interno | `Bearer` com segredo compartilhado + assinatura HMAC-SHA256 do corpo (`X-Payload-Signature`) | JSON | `dealership_id` pseudonimizado; nenhum dado pessoal sai da API |
 | API → **FIPE / NHTSA / fabricantes** | HTTPS | token da FIPE (quando configurado) | JSON / HTML | Falha vira `502 fipe_unavailable` — detalhes só no log |
 | API → **Provedores de IA** | HTTPS (SDK) | chave de API do provedor | JSON | Chaves ficam no servidor; o cliente só escolhe o modelo |
@@ -189,24 +189,25 @@ sequenceDiagram
     participant C as Cliente (Web / Mobile / Swagger)
     participant API as API — POST /auth/login
     participant ID as lib/identity.ts
-    participant SA as Supabase Auth
-    participant DB as Postgres (profiles)
+    participant DB as PostgreSQL (profiles)
     participant JWT as lib/jwt.ts
 
     U->>C: e-mail e senha
     C->>API: POST /auth/login { email, password }
     Note over API: público · validação Zod · limite de 10 tentativas/min por IP
     API->>ID: authenticateWithPassword()
-    ID->>SA: POST /auth/v1/token?grant_type=password
+    ID->>DB: busca id e password_hash pelo e-mail
     alt credenciais inválidas
-        SA-->>ID: 400 invalid_grant
+        DB-->>ID: nada (e-mail inexistente) ou hash que não confere
+        Note over ID: bcrypt.compare roda sempre — contra um hash fictício se o e-mail não existe (sem vazar por tempo)
         ID-->>API: null
         API-->>C: 401 invalid_credentials (mensagem genérica) + audit_log
-    else Supabase indisponível
-        SA--xID: sem resposta (fora do ar)
+    else banco indisponível
+        ID--xDB: sem resposta (fora do ar)
         API-->>C: 502 identity_provider_unavailable
     else credenciais válidas
-        SA-->>ID: usuário { id, email }
+        DB-->>ID: { id, email, password_hash } — bcrypt.compare confere
+        ID-->>API: usuário { id, email }
         API->>DB: perfil do usuário (role, dealership_id)
         DB-->>API: gestor, concessionária A
         API->>JWT: signAccessToken()
@@ -247,9 +248,9 @@ sequenceDiagram
     end
 ```
 
-**Tokens legados:** o web e o mobile ainda fazem login direto no Supabase. O plugin reconhece esses tokens
-pelo emissor (`iss`) e os valida no Supabase Auth (`GET /auth/v1/user`), buscando o perfil no banco.
-A partir daí o fluxo de autorização é **o mesmo** — a diferença é que o banco também aplica o RLS.
+**Um único tipo de token:** o plugin aceita apenas o JWT emitido pela própria API em `POST /auth/login`
+(web, mobile e Swagger usam o mesmo fluxo). Não há mais token de provedor externo nem consulta ao banco
+para autenticar cada requisição — o escopo de dados é aplicado pela API a partir das claims.
 
 ### 4.3 O token JWT
 
@@ -345,7 +346,7 @@ A lista completa, com parâmetros e respostas, está no Swagger (`/docs`).
 | `422 Unprocessable Entity` | dados válidos que não podem ser processados (ex.: cliente sem e-mail, ids inexistentes na comparação) |
 | `429 Too Many Requests` | limite de requisições (login: 10/min por IP) |
 | `500 Internal Server Error` | falha inesperada — detalhes só no log |
-| `502 Bad Gateway` | falha de serviço externo (FIPE, IA, Supabase Auth) |
+| `502 Bad Gateway` | falha de serviço externo (FIPE, IA, base de identidade) |
 | `503 Service Unavailable` | dependência ou dados ainda não disponíveis |
 
 ---
@@ -380,8 +381,8 @@ Todos os erros seguem **Problem Details (RFC 7807)** com `Content-Type: applicat
 
 ## 7. Testes automatizados
 
-95 testes (Vitest) sobem a API em memória com as dependências externas simuladas —
-não precisam de Supabase, internet nem chaves. Detalhes e resultado em
+Os testes (Vitest) sobem a API em memória sobre um PostgreSQL de teste (`DATABASE_URL`, banco criado
+com `pnpm db:migrate`) e com as dependências externas simuladas — não precisam de internet nem de chaves. Detalhes e resultado em
 [`docs/evidencias/TESTES.md`](evidencias/TESTES.md).
 
 ```bash
@@ -395,9 +396,10 @@ pnpm --filter @ford/api test:coverage   # + relatório de cobertura em apps/api/
 
 | Tema | Situação |
 |---|---|
-| Tokens legados do Supabase | Continuam aceitos para não quebrar web/mobile. Próximo passo: migrar os clientes para `POST /auth/login`. |
+| Banco | PostgreSQL padrão (sem Supabase): a API conversa por `postgres.js`, sem RLS — o escopo é responsabilidade de `data-access.ts`. Decisão registrada na ADR "Migração Supabase → PostgreSQL padrão" em `DECISIONS.md`. |
+| Cadastro de usuários | Não há rota de cadastro: usuários são criados por `pnpm db:user` (ou `pnpm db:seed:admin` / `pnpm db:seed:demo`). |
 | Refresh token | Não implementado; ao expirar (1 h), o cliente faz login novamente. |
 | Segredo simétrico (HS256) | Adequado para um único emissor/validador (a própria API). Com vários serviços validando o token, o ideal seria RS256/ES256 com chave pública. |
-| Leads (`/clients/leads`, `/clients/leads/stats`) | A função SQL `leads_ranqueados` ainda não filtra por concessionária — exige uma nova migration. |
+| Leads (`/clients/leads`, `/clients/leads/stats`) | Rotas restritas a `gestor`/`admin`, cujo escopo de leitura é a rede inteira; por isso a função SQL `leads_ranqueados` não recebe filtro de concessionária. Se um dia o analista puder ver leads, a função precisará de um parâmetro de concessionária (nova migration). |
 | Cabeçalho `Location` nos `201` | Não adotado nesta sprint (decisão da equipe). |
 | Rate limit | Contador em memória — suficiente para uma instância; com várias instâncias, usar um store compartilhado (ex.: Redis). |

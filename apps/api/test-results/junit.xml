@@ -1,215 +1,237 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<testsuites name="vitest tests" tests="99" failures="0" errors="0" time="1.943">
-    <testsuite name="test/auth.test.ts" timestamp="2026-09-28T00:50:44.688Z" hostname="teptpc" tests="16" failures="0" errors="0" skipped="0" time="1.17884801">
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 200 — devolve JWT Bearer com validade" time="0.037950989">
+<testsuites name="vitest tests" tests="110" failures="0" errors="0" time="56.509">
+    <testsuite name="test/auth.test.ts" timestamp="2026-10-01T18:23:55.511Z" hostname="NT000617" tests="20" failures="0" errors="0" skipped="0" time="24.3215655">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 200 — devolve JWT Bearer com validade" time="1.2698844">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; o token emitido dá acesso a /me com o perfil e a concessionária do usuário" time="0.010946321">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; o token emitido dá acesso a /me com o perfil e a concessionária do usuário" time="0.5273155">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; normaliza o e-mail (maiúsculas e espaços)" time="0.003652624">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; normaliza o e-mail (maiúsculas e espaços)" time="0.5698981">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; usuário sem perfil cadastrado recebe o menor privilégio (analista)" time="0.004564578">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; usuário sem perfil cadastrado recebe o menor privilégio (analista)" time="0.5401062">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; registra o login no audit_log" time="0.0033524">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; registra o login no audit_log" time="0.5384801">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 401 — senha errada, com mensagem genérica e WWW-Authenticate" time="0.004223337">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 401 — senha errada, com mensagem genérica e WWW-Authenticate" time="0.5933025">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 401 — e-mail inexistente recebe a MESMA resposta (não revela quem existe)" time="0.005636442">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 401 — e-mail inexistente recebe a MESMA resposta (não revela quem existe)" time="0.9581803">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 400 — corpo inválido lista os campos com problema" time="0.005441226">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 401 — e-mail inexistente leva tempo semelhante ao de senha errada (sem vazar por timing)" time="3.6488367">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 502 — Supabase Auth fora do ar" time="0.005384349">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 401 — usuário sem password_hash não entra, com a mesma resposta genérica" time="1.3369394">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 429 — bloqueia força bruta após 10 tentativas por minuto do mesmo IP" time="0.025367011">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 401 — senha vazia ou só de espaços não substitui a senha cadastrada" time="0.7496971">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — requisição sem token" time="0.001895452">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 400 — corpo inválido lista os campos com problema" time="0.0223432">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token expirado, com código específico" time="0.002879281">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 502 — base de identidade fora do ar" time="0.3005857">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token com assinatura inválida" time="0.004489347">
+        <testcase classname="test/auth.test.ts" name="POST /auth/login &gt; 429 — bloqueia força bruta após 10 tentativas por minuto do mesmo IP" time="10.8888463">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — esquema diferente de Bearer é ignorado" time="0.000993708">
+        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — requisição sem token" time="0.0108066">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 200 — token legado do Supabase (web/mobile) continua aceito" time="0.002834377">
+        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token expirado, com código específico" time="0.0081492">
         </testcase>
-        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token legado rejeitado pelo Supabase" time="0.002943421">
+        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token com assinatura inválida" time="0.3594086">
         </testcase>
-    </testsuite>
-    <testsuite name="test/authorization.test.ts" timestamp="2026-09-28T00:50:44.703Z" hostname="teptpc" tests="25" failures="0" errors="0" skipped="0" time="1.339977458">
-        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; apenas /health e /auth/login são públicas" time="0.116688183">
+        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token com o perfil adulterado (analista → admin) não é aceito" time="0.3942844">
         </testcase>
-        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; /health e a documentação abrem sem token" time="0.006472563">
+        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — esquema diferente de Bearer é ignorado" time="0.0051308">
         </testcase>
-        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; TODA rota protegida responde 401 sem token (segura por padrão)" time="0.047815596">
+        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token de outro emissor (como o de um provedor externo) não é aceito" time="0.0073899">
         </testcase>
-        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; 401 acontece ANTES da validação do corpo (payload não é processado)" time="0.001853964">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-keys como undefined → NaN" time="0.007121793">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-keys como undefined → NaN" time="0.001927021">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-keys como undefined → NaN" time="0.003081301">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; DELETE /competitive/vehicles/00000000-0000-4000-8000-00000000000a como undefined → NaN" time="0.001791156">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; DELETE /competitive/vehicles/00000000-0000-4000-8000-00000000000a como undefined → NaN" time="0.00261277">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; POST /acoes/campanha como { perfil: &apos;fiel&apos;, tipo: &apos;email&apos;, titulo: &apos;Campanha&apos; } → NaN" time="0.00280959">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; POST /acoes/campanha como { perfil: &apos;fiel&apos;, tipo: &apos;email&apos;, titulo: &apos;Campanha&apos; } → NaN" time="0.012126879">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /competitive/vehicles como undefined → NaN" time="0.003177661">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-function-models como undefined → NaN" time="0.002688483">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /clients/leads como undefined → NaN" time="0.001630534">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /clients/leads/stats como undefined → NaN" time="0.001210435">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /metrics/anomalias-dealer como undefined → NaN" time="0.002094366">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; analista lista apenas os clientes da própria concessionária" time="0.002216996">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; gestor lista os clientes da rede inteira" time="0.001140683">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; analista recebe 404 ao abrir cliente de outra loja (não revela que existe)" time="0.002085459">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; gestor abre cliente de outra loja" time="0.002845988">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: analista da loja A em cliente aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa → 0" time="0.004686817">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: gestor da loja A em cliente aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa → 0" time="0.003275715">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: gestor da loja A em cliente aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa → 0" time="0.003483075">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: admin da loja A em cliente aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa → 0" time="0.002772129">
-        </testcase>
-        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; analista sem concessionária vinculada recebe 403 no_dealership" time="0.003006409">
+        <testcase classname="test/auth.test.ts" name="Uso do token nas rotas protegidas &gt; 401 — token desconhecido (texto que não é JWT)" time="0.0050388">
         </testcase>
     </testsuite>
-    <testsuite name="test/clients-acoes.test.ts" timestamp="2026-09-28T00:50:44.717Z" hostname="teptpc" tests="14" failures="0" errors="0" skipped="0" time="1.226386736">
-        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; 201 — cria o cliente na concessionária do usuário" time="0.034663901">
+    <testsuite name="test/authorization.test.ts" timestamp="2026-10-01T18:23:55.538Z" hostname="NT000617" tests="32" failures="0" errors="0" skipped="0" time="6.2652663">
+        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; apenas /health e /auth/login são públicas" time="0.9635003">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; não grava o CPF em texto puro — apenas o hash" time="0.005837741">
+        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; /health e a documentação abrem sem token" time="0.0237812">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; 409 — VIN já cadastrado" time="0.005203157">
+        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; TODA rota protegida responde 401 sem token (segura por padrão)" time="0.0809947">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; 403 — usuário sem concessionária não pode cadastrar" time="0.003186758">
+        <testcase classname="test/authorization.test.ts" name="Rotas públicas × protegidas &gt; 401 acontece ANTES da validação do corpo (payload não é processado)" time="0.0156581">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="GET /clients/:id &gt; 200 — devolve cliente, predições e histórico" time="0.004350746">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-keys (corpo: undefined) como analista → 403" time="0.6096909">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="GET /clients/:id &gt; 400 — id que não é UUID" time="0.005515305">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-keys (corpo: undefined) como gestor → 403" time="0.5532097">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes 201 — registra a ação na loja do usuário" time="0.004202558">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-keys (corpo: undefined) como admin → 200" time="0.5042031">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes 404 — cliente inexistente" time="0.003482274">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; DELETE /competitive/vehicles/00000000-0000-4000-8000-00000000000a (corpo: undefined) como analista → 403" time="0.0069334">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes 403 — gestor não registra ação para cliente de outra loja" time="0.003511959">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; DELETE /competitive/vehicles/00000000-0000-4000-8000-00000000000a (corpo: undefined) como gestor → 200" time="0.0085071">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; PATCH /acoes/:id 200 — concluir a ação registra completed_at" time="0.005468847">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; POST /acoes/campanha (corpo: {&quot;perfil&quot;:&quot;fiel&quot;,&quot;tipo&quot;:&quot;email&quot;,&quot;titulo&quot;:&quot;Campanha&quot;}) como analista → 403" time="0.0064076">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; PATCH /acoes/:id 404 — analista não enxerga ação de outra loja" time="0.004515025">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; POST /acoes/campanha (corpo: {&quot;perfil&quot;:&quot;fiel&quot;,&quot;tipo&quot;:&quot;email&quot;,&quot;titulo&quot;:&quot;Campanha&quot;}) como gestor → 200" time="0.0066024">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; GET /acoes/kpis — analista só contabiliza a própria loja" time="0.005520024">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /competitive/vehicles (corpo: undefined) como analista → 200" time="0.0077229">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes/email-send 422 — cliente sem e-mail cadastrado" time="0.003950875">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /admin/ai-function-models (corpo: undefined) como analista → 200" time="0.0074991">
         </testcase>
-        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes/campanha 201 — gestor cria uma ação para cada cliente do perfil" time="0.005439984">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /clients/leads (corpo: undefined) como analista → 403" time="0.006613">
         </testcase>
-    </testsuite>
-    <testsuite name="test/errors.test.ts" timestamp="2026-09-28T00:50:44.720Z" hostname="teptpc" tests="8" failures="0" errors="0" skipped="0" time="1.168575025">
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 400 — validação lista cada campo inválido" time="0.033010163">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /clients/leads/stats (corpo: undefined) como analista → 403" time="0.0081931">
         </testcase>
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 400 — JSON malformado" time="0.003005628">
+        <testcase classname="test/authorization.test.ts" name="Matriz de perfis &gt; GET /metrics/anomalias-dealer (corpo: undefined) como analista → 403" time="0.0063848">
         </testcase>
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 401 — traz WWW-Authenticate" time="0.002538791">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; analista lista apenas os clientes da própria concessionária" time="0.0533525">
         </testcase>
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 403 — perfil sem permissão" time="0.003313968">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; gestor lista os clientes da rede inteira" time="0.0146341">
         </testcase>
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 404 — recurso inexistente" time="0.004631434">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; analista recebe 404 ao abrir cliente de outra loja (não revela que existe)" time="0.0068729">
         </testcase>
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 404 — rota inexistente" time="0.002824357">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; gestor abre cliente de outra loja" time="0.0080027">
         </testcase>
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; instance não ecoa a query string (evita vazar parâmetros)" time="0.002333275">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: &apos;analista&apos; da loja A em cliente da &apos;loja B&apos; → 404" time="0.0073791">
         </testcase>
-        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 500 — falha do banco não vaza mensagem, código nem hint do Postgres" time="0.003051906">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: &apos;gestor&apos; da loja A em cliente da &apos;loja B&apos; → 403" time="0.0255063">
         </testcase>
-    </testsuite>
-    <testsuite name="test/jwt.test.ts" timestamp="2026-09-28T00:50:44.722Z" hostname="teptpc" tests="13" failures="0" errors="0" skipped="0" time="0.03347118">
-        <testcase classname="test/jwt.test.ts" name="JWT — geração &gt; gera token HS256 com as claims registradas e as de autorização" time="0.013006482">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: &apos;gestor&apos; da loja A em cliente da &apos;loja A&apos; → 200" time="0.0079682">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — geração &gt; gera um jti diferente a cada emissão" time="0.002066814">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; PATCH notas: &apos;admin&apos; da loja A em cliente da &apos;loja B&apos; → 200" time="0.0072924">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; aceita token válido e devolve os dados do usuário" time="0.003361196">
+        <testcase classname="test/authorization.test.ts" name="Escopo de concessionária &gt; analista sem concessionária vinculada recebe 403 no_dealership" time="0.492084">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token expirado com token_expired" time="0.001325861">
+        <testcase classname="test/authorization.test.ts" name="Escopo do analista em ações, métricas e e-mail &gt; GET /acoes — analista vê só as ações da própria loja; gestor vê a rede" time="0.0313216">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token com payload adulterado (analista → admin)" time="0.001840308">
+        <testcase classname="test/authorization.test.ts" name="Escopo do analista em ações, métricas e e-mail &gt; GET /acoes?client_id — analista não alcança as ações de cliente de outra loja" time="0.0473691">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token assinado com outro segredo" time="0.001179026">
+        <testcase classname="test/authorization.test.ts" name="Escopo do analista em ações, métricas e e-mail &gt; PATCH /acoes/:id — gestor enxerga a ação de outra loja mas não altera (403)" time="0.0319448">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token de outro emissor (iss)" time="0.000945206">
+        <testcase classname="test/authorization.test.ts" name="Escopo do analista em ações, métricas e e-mail &gt; GET /metrics/dealership — analista conta só a própria loja; gestor, a rede" time="0.0256469">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token para outra audiência (aud)" time="0.000793651">
+        <testcase classname="test/authorization.test.ts" name="Escopo do analista em ações, métricas e e-mail &gt; GET /metrics/proximas-revisoes e /metrics/garantia-status — analista não vê clientes de outra loja" time="0.024149">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token sem assinatura (alg: none)" time="0.001121789">
+        <testcase classname="test/authorization.test.ts" name="Escopo do analista em ações, métricas e e-mail &gt; POST /acoes/email-send — analista recebe 404 para cliente de outra loja; gestor, 403" time="0.0163618">
         </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token bem assinado mas com perfil desconhecido" time="0.002377919">
-        </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita texto que não é JWT" time="0.001362541">
-        </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — identificação do emissor &gt; reconhece tokens emitidos por esta API" time="0.000922704">
-        </testcase>
-        <testcase classname="test/jwt.test.ts" name="JWT — identificação do emissor &gt; não reconhece tokens de outro emissor nem texto inválido" time="0.000824209">
+        <testcase classname="test/authorization.test.ts" name="Escopo do analista em ações, métricas e e-mail &gt; POST /clients/:id/reclassify — analista recebe 404 para cliente de outra loja" time="0.0154886">
         </testcase>
     </testsuite>
-    <testsuite name="test/openapi.test.ts" timestamp="2026-09-28T00:50:44.728Z" hostname="teptpc" tests="5" failures="0" errors="0" skipped="0" time="1.025695802">
-        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; publica OpenAPI 3 com esquema Bearer JWT e o schema ProblemDetails" time="0.004451976">
+    <testsuite name="test/clients-acoes.test.ts" timestamp="2026-10-01T18:23:55.557Z" hostname="NT000617" tests="14" failures="0" errors="0" skipped="0" time="4.3511251">
+        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; 201 — cria o cliente na concessionária do usuário" time="1.0741175">
         </testcase>
-        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; toda rota protegida documenta 401 e informa o acesso na descrição" time="0.006352427">
+        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; não grava o CPF em texto puro — apenas o hash" time="0.0156466">
         </testcase>
-        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; rotas restritas por perfil documentam 403 e os perfis permitidos" time="0.001197551">
+        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; 409 — VIN já cadastrado" time="0.0242877">
         </testcase>
-        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; toda resposta de erro usa application/problem+json com o schema ProblemDetails" time="0.01357468">
+        <testcase classname="test/clients-acoes.test.ts" name="POST /clients &gt; 403 — usuário sem concessionária não pode cadastrar" time="0.4460835">
         </testcase>
-        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; cada entrada de ROUTE_ERRORS corresponde a uma rota real e aparece documentada" time="0.004383537">
+        <testcase classname="test/clients-acoes.test.ts" name="GET /clients/:id &gt; 200 — devolve cliente, predições e histórico" time="0.0114364">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="GET /clients/:id &gt; 400 — id que não é UUID" time="0.0082736">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes 201 — registra a ação na loja do usuário" time="0.0204448">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes 404 — cliente inexistente" time="0.0179247">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes 403 — gestor não registra ação para cliente de outra loja" time="0.6044666">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; PATCH /acoes/:id 200 — concluir a ação registra completed_at" time="0.652982">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; PATCH /acoes/:id 404 — analista não enxerga ação de outra loja" time="0.0270504">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; GET /acoes/kpis — analista só contabiliza a própria loja" time="0.0596443">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes/email-send 422 — cliente sem e-mail cadastrado" time="0.0385951">
+        </testcase>
+        <testcase classname="test/clients-acoes.test.ts" name="Ações de retenção &gt; POST /acoes/campanha 201 — gestor cria uma ação para cada cliente do perfil" time="0.0312584">
         </testcase>
     </testsuite>
-    <testsuite name="test/vehicles.test.ts" timestamp="2026-09-28T00:50:44.730Z" hostname="teptpc" tests="18" failures="0" errors="0" skipped="0" time="1.261858866">
-        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/vehicles 200 — lista o catálogo" time="0.026600197">
+    <testsuite name="test/errors.test.ts" timestamp="2026-10-01T18:23:55.568Z" hostname="NT000617" tests="8" failures="0" errors="0" skipped="0" time="4.962301">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 400 — validação lista cada campo inválido" time="1.9304479">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/lookup 200 — devolve só os campos pedidos (null explícito se ausente)" time="0.006745937">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 400 — JSON malformado" time="0.028279">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/lookup 404 — nenhum veículo combina" time="0.004740308">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 401 — traz WWW-Authenticate" time="0.0248732">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/lookup ignora caminhos que tentam alterar protótipos" time="0.003815039">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 403 — perfil sem permissão" time="0.0238624">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; POST /competitive/compare 200 — indica o vencedor de cada critério" time="0.010219124">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 404 — recurso inexistente" time="0.6842937">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; POST /competitive/compare 400 — menos de 2 ids" time="0.005349342">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 404 — rota inexistente" time="0.0535331">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; POST /competitive/compare 422 — ids válidos que não existem no catálogo" time="0.004839404">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; instance não ecoa a query string (evita vazar parâmetros)" time="0.0154382">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; DELETE 200 → GET 404: o veículo é removido" time="0.011873202">
+        <testcase classname="test/errors.test.ts" name="Formato Problem Details &gt; 500 — falha do banco não vaza mensagem, código nem hint do Postgres" time="0.1958334">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; DELETE 404 — veículo que já não existe" time="0.00320357">
+    </testsuite>
+    <testsuite name="test/jwt.test.ts" timestamp="2026-10-01T18:23:55.574Z" hostname="NT000617" tests="13" failures="0" errors="0" skipped="0" time="0.0369627">
+        <testcase classname="test/jwt.test.ts" name="JWT — geração &gt; gera token HS256 com as claims registradas e as de autorização" time="0.0131967">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; DELETE 500 — falha do banco sem vazar detalhes" time="0.004644038">
+        <testcase classname="test/jwt.test.ts" name="JWT — geração &gt; gera um jti diferente a cada emissão" time="0.0023925">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/vehicles/import 200 — importa lista JSON" time="0.006278208">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; aceita token válido e devolve os dados do usuário" time="0.0038836">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/vehicles/import 400 — JSON malformado" time="0.003197329">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token expirado com token_expired" time="0.001664">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/vehicles/import 422 — nenhum item válido" time="0.002187381">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token com payload adulterado (analista → admin)" time="0.0030294">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/import/file 415 — tipo de arquivo não suportado" time="0.011284826">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token assinado com outro segredo" time="0.0016963">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; refresh-price 502 — FIPE fora do ar, sem vazar detalhes da falha" time="0.003398737">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token de outro emissor (iss)" time="0.0011541">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; refresh-price 404 — combinação inexistente na FIPE" time="0.002057446">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token para outra audiência (aud)" time="0.0011004">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; refresh-price 200 — atualiza o preço com o valor da FIPE" time="0.002537589">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token sem assinatura (alg: none)" time="0.0009948">
         </testcase>
-        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; auto-fill 503 — catálogo canônico ainda não carregado" time="0.00384232">
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita token bem assinado mas com perfil desconhecido" time="0.0019103">
+        </testcase>
+        <testcase classname="test/jwt.test.ts" name="JWT — validação &gt; rejeita texto que não é JWT" time="0.0008202">
+        </testcase>
+        <testcase classname="test/jwt.test.ts" name="JWT — identificação do emissor &gt; reconhece tokens emitidos por esta API" time="0.0009482">
+        </testcase>
+        <testcase classname="test/jwt.test.ts" name="JWT — identificação do emissor &gt; não reconhece tokens de outro emissor nem texto inválido" time="0.0009616">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/openapi.test.ts" timestamp="2026-10-01T18:23:55.582Z" hostname="NT000617" tests="5" failures="0" errors="0" skipped="0" time="2.9016593">
+        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; publica OpenAPI 3 com esquema Bearer JWT e o schema ProblemDetails" time="0.0034734">
+        </testcase>
+        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; toda rota protegida documenta 401 e informa o acesso na descrição" time="0.004871">
+        </testcase>
+        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; rotas restritas por perfil documentam 403 e os perfis permitidos" time="0.0008875">
+        </testcase>
+        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; toda resposta de erro usa application/problem+json com o schema ProblemDetails" time="0.0107514">
+        </testcase>
+        <testcase classname="test/openapi.test.ts" name="Swagger / OpenAPI &gt; cada entrada de ROUTE_ERRORS corresponde a uma rota real e aparece documentada" time="0.0035929">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/vehicles.test.ts" timestamp="2026-10-01T18:23:55.586Z" hostname="NT000617" tests="18" failures="0" errors="0" skipped="0" time="4.4449568">
+        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/vehicles 200 — lista o catálogo" time="1.0898987">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/lookup 200 — devolve só os campos pedidos (null explícito se ausente)" time="0.0159409">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/lookup 404 — nenhum veículo combina" time="0.0084305">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; GET /competitive/lookup ignora caminhos que tentam alterar protótipos" time="0.0082189">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; POST /competitive/compare 200 — indica o vencedor de cada critério" time="0.0133024">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; POST /competitive/compare 400 — menos de 2 ids" time="0.0160943">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Consulta e comparação &gt; POST /competitive/compare 422 — ids válidos que não existem no catálogo" time="0.0087987">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; DELETE 200 → GET 404: o veículo é removido" time="0.5048472">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; DELETE 404 — veículo que já não existe" time="0.5262123">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; DELETE 500 — falha do banco sem vazar detalhes" time="0.1324061">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/vehicles/import 200 — importa lista JSON" time="0.0276587">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/vehicles/import 400 — JSON malformado" time="0.0669986">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/vehicles/import 422 — nenhum item válido" time="0.009916">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Manutenção do catálogo (gestor/admin) &gt; POST /competitive/import/file 415 — tipo de arquivo não suportado" time="0.0201965">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; refresh-price 502 — FIPE fora do ar, sem vazar detalhes da falha" time="0.0165229">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; refresh-price 404 — combinação inexistente na FIPE" time="0.0098506">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; refresh-price 200 — atualiza o preço com o valor da FIPE" time="0.0156494">
+        </testcase>
+        <testcase classname="test/vehicles.test.ts" name="Integrações externas &gt; auto-fill 503 — catálogo canônico ainda não carregado" time="0.0129382">
         </testcase>
     </testsuite>
 </testsuites>

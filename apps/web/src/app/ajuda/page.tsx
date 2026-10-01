@@ -21,7 +21,7 @@ const GLOSSARY: { term: string; def: string }[] = [
   { term: 'FIPE', def: 'Tabela de preço médio de veículos no Brasil, mantida pela Fundação Instituto de Pesquisas Econômicas. Atualizada mensalmente.' },
   { term: '411 Vehicle Data', def: 'API comercial (RapidAPI) com specs detalhadas de veículos USA — bom pra Ford, Chevrolet, RAM, Jeep. Cobertura BR limitada.' },
   { term: 'NHTSA vPIC', def: 'Vehicle Product Information Catalog do governo americano. Free, global, ótimo pra decodificar VIN.' },
-  { term: 'RLS', def: 'Row Level Security — recurso nativo do Postgres. Garante que analistas de uma loja só veem dados da loja deles, mesmo se tentarem queries diretas.' },
+  { term: 'Escopo por concessionária', def: 'Regra aplicada na API (lib/data-access.ts): cada query filtra por dealership_id conforme o papel do token. Analista só lê a própria loja; gestor lê a rede toda e escreve só na própria loja; admin lê e escreve tudo.' },
   { term: 'HMAC', def: 'Hash-based Message Authentication Code. A API assina o corpo de /predict com HMAC-SHA256, timestamp e nonce; o serviço ML valida a assinatura e rejeita replays dentro da janela configurada.' },
   { term: 'Pseudonimização', def: 'Substituir um identificador direto, como o UUID da concessionária, por um código derivado antes de enviar. Isso reduz a exposição do identificador, mas não torna os dados anônimos nem comprova conformidade.' },
   { term: 'Tier rápido / smart', def: 'Convenção interna: tier "fast" usa modelos baratos (gpt-4o-mini, claude-haiku) pra extração e gap-fill. Tier "smart" usa modelos topo (gpt-4o, claude-sonnet) pra análises complexas.' },
@@ -43,7 +43,7 @@ const FAQ: { q: string; a: string }[] = [
   },
   {
     q: 'Quanto custa rodar o sistema por mês?',
-    a: 'MVP: ~US$ 50-100/mês. Supabase Pro $25 + hosting $20 + LLMs (gpt-4o-mini sob demanda) $30-100 + RapidAPI 411 free/$19. Custo escalável conforme uso de IA — fácil baixar removendo modelos premium se necessário.',
+    a: 'MVP: ~US$ 50-100/mês. PostgreSQL gerenciado ~$25 + hosting $20 + LLMs (gpt-4o-mini sob demanda) $30-100 + RapidAPI 411 free/$19. Custo escalável conforme uso de IA — fácil baixar removendo modelos premium se necessário.',
   },
   {
     q: 'Posso usar o sistema sem chave OpenAI?',
@@ -687,7 +687,7 @@ const SECTIONS: Section[] = [
           <li>sent_by_user_id (quem disparou) + timestamps</li>
         </ul>
         <p className="text-xs text-slate">
-          RLS: usuário comum vê só os e-mails que ele mesmo mandou. Admin/gestor vê tudo.
+          Escopo na API: usuário comum vê só os e-mails que ele mesmo mandou. Admin/gestor vê tudo.
         </p>
       </>
     ),
@@ -981,8 +981,8 @@ const SECTIONS: Section[] = [
         </ul>
 
         <Callout type="success">
-          Chaves são armazenadas <b>criptografadas</b> no Supabase com RLS admin-only.
-          Apenas o service_role do backend lê pra fazer as chamadas.
+          Chaves são armazenadas <b>criptografadas</b> no PostgreSQL e só as rotas de admin as expõem.
+          Apenas o backend lê os valores pra fazer as chamadas.
         </Callout>
 
         <H3>Aba &quot;Modelo por função&quot;</H3>
@@ -1008,18 +1008,18 @@ const SECTIONS: Section[] = [
         <H3>Em uma frase</H3>
         <Lead>
           Schemas Zod nas entradas, JWT + RBAC, remoção de identificadores diretos comuns
-          no contexto de ML, HMAC entre a API e o ML, RLS por concessionária e registro
+          no contexto de ML, HMAC entre a API e o ML, escopo por concessionária aplicado na API e registro
           de eventos críticos.
         </Lead>
 
         <Grid cols={2}>
           <SecCard icon={Eye} title="Validação de entrada">
-            As entradas das rotas são validadas com schemas Zod. Consultas usam o cliente
-            Supabase/PostgREST, sem SQL montado a partir da entrada. React escapa texto
+            As entradas das rotas são validadas com schemas Zod. Consultas usam o driver
+            PostgreSQL com parâmetros, sem SQL montado a partir da entrada. React escapa texto
             por padrão; qualquer HTML explícito ainda exige validação própria.
           </SecCard>
           <SecCard icon={Lock} title="Autenticação">
-            JWT Supabase validado contra <Code>/auth/v1/user</Code>. RBAC com 3 papéis
+            JWT próprio (HS256) emitido por <Code>/auth/login</Code>, com senha em bcrypt. RBAC com 3 papéis
             (analista/gestor/admin). Rotas sensíveis exigem admin.
           </SecCard>
           <SecCard icon={Shield} title="Pseudonimização">

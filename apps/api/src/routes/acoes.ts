@@ -11,14 +11,15 @@
  *   - Campanha em lote → gestor ou admin.
  *   - Demais rotas → qualquer usuário autenticado, limitado ao escopo de
  *     concessionária (lib/data-access.ts): leitura via readScopeOf,
- *     alteração/envio via writeScopeOf.
+ *     alteração/envio via writeScopeOf. Não há RLS: o escopo é aplicado
+ *     explicitamente em cada query (scopeFilter / canAccessDealership).
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { authorize, requireUser } from '../plugins/auth.js';
-import { adminClient } from '../lib/supabase.js';
-import { assertCanModify, canAccessDealership, dbFor, readScopeOf, requireDealership } from '../lib/data-access.js';
+import { sql } from '../lib/db.js';
+import { assertCanModify, canAccessDealership, readScopeOf, requireDealership, scopeFilter } from '../lib/data-access.js';
 import { forbidden, notFound, unprocessable } from '../lib/api-error.js';
 import { logAudit } from '../lib/audit.js';
 import { sendEmail, templateFor } from '../lib/email.js';
@@ -56,6 +57,29 @@ const CampaignBody = z.object({
   limit: z.number().int().min(1).max(500).default(100),
 });
 
+/**
+ * Remove chaves com valor undefined (campos opcionais do Zod). O supabase-js
+ * omitia essas chaves do JSON; o driver `postgres` rejeita undefined em
+ * `sql(obj)`, então filtramos antes de montar o insert/update.
+ */
+function semUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) if (v !== undefined) out[k] = v;
+  return out as Partial<T>;
+}
+
+/** Colunas do cliente usadas pelo e-mail de retenção (envio e preview). */
+type ClienteEmail = {
+  id: string;
+  nome_cliente: string | null;
+  email_cliente: string | null;
+  model_name: string | null;
+  modelo_comprado: string | null;
+  dealer_code_venda: string | null;
+  perfil_real: string | null;
+  dealership_id: string | null;
+};
+
 export async function acoesRoutes(app: FastifyInstance) {
 
   // ===== CRIAR ação individual =====
@@ -69,12 +93,11 @@ export async function acoesRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const dealershipId = requireDealership(u); // 403 no_dealership
     const body = req.body as z.infer<typeof CreateAcaoBody>;
-    const sb = dbFor(u);
 
-    // Confirma que o client pertence à mesma dealership (defense in depth além da RLS)
-    const { data: client, error: findErr } = await sb.from('clients')
-      .select('id, dealership_id').eq('id', body.client_id).maybeSingle();
-    if (findErr) throw findErr;
+    // Confirma que o client pertence à mesma dealership (o escopo é checado aqui, sem RLS)
+    const [client] = await sql<{ id: string; dealership_id: string | null }[]>`
+      select id, dealership_id from public.clients where id = ${body.client_id}
+    `;
     if (!client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
       throw notFound('cliente não encontrado', 'client_not_found');
     }
@@ -82,13 +105,17 @@ export async function acoesRoutes(app: FastifyInstance) {
       throw forbidden('ações só podem ser registradas para clientes da própria concessionária');
     }
 
-    const { data, error } = await adminClient().from('acoes_retencao').insert({
+    // Falha de banco lança → 500 (detalhe só no log)
+    const row = semUndefined({
       ...body,
       dealership_id: dealershipId,
       actor_id: u.id,
       completed_at: body.status?.startsWith('concluida_') ? new Date().toISOString() : null,
-    }).select().single();
-    if (error) throw error; // falha de banco → 500 (detalhe só no log)
+    });
+    const [data] = await sql<{ id: string }[]>`
+      insert into public.acoes_retencao ${sql(row)} returning *
+    `;
+    if (!data) throw new Error('falha ao registrar a ação');
 
     await logAudit({
       actor_id: u.id, action: 'acao.created', entity: 'acoes_retencao',
@@ -117,23 +144,43 @@ export async function acoesRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const scope = readScopeOf(u);
     const q = req.query as any;
-    const sb = dbFor(u);
 
-    let query = sb.from('acoes_retencao')
-      .select('*, clients!inner(id, modelo_comprado, versao_comprada, nome_cliente)',
-              { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(q.offset, q.offset + q.limit - 1);
+    // Escopo explícito (analista: só a própria concessionária); filtros opcionais
+    // viram fragmentos (vazios quando ausentes).
+    const where = sql`
+      where true
+        ${scopeFilter(scope, 'a.dealership_id')}
+        ${q.client_id ? sql`and a.client_id = ${q.client_id}` : sql``}
+        ${q.status ? sql`and a.status = ${q.status}` : sql``}
+        ${q.tipo ? sql`and a.tipo = ${q.tipo}` : sql``}
+        ${q.perfil_alvo ? sql`and a.perfil_alvo = ${q.perfil_alvo}` : sql``}
+    `;
 
-    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
-    if (q.client_id) query = query.eq('client_id', q.client_id);
-    if (q.status) query = query.eq('status', q.status);
-    if (q.tipo) query = query.eq('tipo', q.tipo);
-    if (q.perfil_alvo) query = query.eq('perfil_alvo', q.perfil_alvo);
-
-    const { data, error, count } = await query;
-    if (error) throw error;
-    return { total: count ?? 0, results: data ?? [] };
+    // Embed N:1 `clients!inner(...)` → inner join + objeto único via json_build_object.
+    // `count: 'exact'` → total à parte (independente da página).
+    const [data, [countRow]] = await Promise.all([
+      sql`
+        select a.*,
+          json_build_object(
+            'id', c.id,
+            'modelo_comprado', c.modelo_comprado,
+            'versao_comprada', c.versao_comprada,
+            'nome_cliente', c.nome_cliente
+          ) as clients
+        from public.acoes_retencao a
+        join public.clients c on c.id = a.client_id
+        ${where}
+        order by a.created_at desc
+        limit ${q.limit} offset ${q.offset}
+      `,
+      sql<{ count: number }[]>`
+        select count(*)::int as count
+        from public.acoes_retencao a
+        join public.clients c on c.id = a.client_id
+        ${where}
+      `,
+    ]);
+    return { total: countRow?.count ?? 0, results: data };
   });
 
   // ===== ATUALIZAR ação (status, desfecho, etc) =====
@@ -148,22 +195,23 @@ export async function acoesRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const body = req.body as z.infer<typeof UpdateAcaoBody>;
-    const sb = dbFor(u);
 
-    const { data: current, error: findErr } = await sb.from('acoes_retencao')
-      .select('id, dealership_id').eq('id', id).maybeSingle();
-    if (findErr) throw findErr;
+    const [current] = await sql<{ id: string; dealership_id: string }[]>`
+      select id, dealership_id from public.acoes_retencao where id = ${id}
+    `;
     assertCanModify(u, current?.dealership_id, 'ação não encontrada'); // 404 ou 403
     if (!current) throw notFound('ação não encontrada');
 
-    const updates: any = { ...body };
+    const updates: any = semUndefined({ ...body });
     if (body.status?.startsWith('concluida_')) {
       updates.completed_at = new Date().toISOString();
     }
 
-    const { data, error } = await sb.from('acoes_retencao')
-      .update(updates).eq('id', id).select().single();
-    if (error) throw error;
+    // `.single()`: 0 linhas (ex.: removida entre a leitura e o update) era erro → 500.
+    const [data] = await sql`
+      update public.acoes_retencao set ${sql(updates)} where id = ${id} returning *
+    `;
+    if (!data) throw new Error('falha ao atualizar a ação');
 
     await logAudit({
       actor_id: u.id, action: 'acao.updated', entity: 'acoes_retencao',
@@ -185,20 +233,32 @@ export async function acoesRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const dealershipId = requireDealership(u); // 403 no_dealership
     const b = req.body as z.infer<typeof CampaignBody>;
-    const sb = dbFor(u);
 
-    // Busca clientes alvo
-    let q = sb.from('clients')
-      .select('id, predictions(perfil_predito, risco_evasao)')
-      .eq('dealership_id', dealershipId)
-      .limit(b.limit);
-    const { data: clients, error: cerr } = await q;
-    if (cerr) throw cerr;
+    // Busca clientes alvo da concessionária (o limit vale para os clientes lidos, como
+    // antes), cada um com a predição mais recente (embed 1:N `predictions(...)`).
+    const clients = await sql<{
+      id: string;
+      perfil_predito: string | null;
+      risco_evasao: number | null;
+    }[]>`
+      select c.id, p.perfil_predito, p.risco_evasao
+      from public.clients c
+      left join lateral (
+        select perfil_predito, risco_evasao
+        from public.predictions
+        where client_id = c.id
+        order by created_at desc
+        limit 1
+      ) p on true
+      where c.dealership_id = ${dealershipId}
+      order by c.id
+      limit ${b.limit}
+    `;
 
-    const targets = (clients ?? []).filter((c: any) => {
-      const p = c.predictions?.[0];
-      if (!p || p.perfil_predito !== b.perfil) return false;
-      if (typeof b.risco_min === 'number' && p.risco_evasao < b.risco_min) return false;
+    const targets = clients.filter((c) => {
+      if (c.perfil_predito == null || c.risco_evasao == null) return false; // sem predição
+      if (c.perfil_predito !== b.perfil) return false;
+      if (typeof b.risco_min === 'number' && c.risco_evasao < b.risco_min) return false;
       return true;
     });
 
@@ -207,30 +267,30 @@ export async function acoesRoutes(app: FastifyInstance) {
     }
 
     const campaign_id = randomUUID();
-    const rows = targets.map((c: any) => ({
+    const rows = targets.map((c) => ({
       client_id: c.id,
       dealership_id: dealershipId,
       actor_id: u.id,
       tipo: b.tipo,
       titulo: b.titulo,
-      descricao: b.descricao,
+      descricao: b.descricao ?? null,
       perfil_alvo: b.perfil,
-      risco_no_disparo: c.predictions[0].risco_evasao,
+      risco_no_disparo: c.risco_evasao,
       status: 'planejada' as const,
       campaign_id,
     }));
 
-    const { data, error } = await sb.from('acoes_retencao').insert(rows).select();
-    if (error) throw error; // falha de banco → 500 (detalhe só no log)
+    // Falha de banco lança → 500 (detalhe só no log)
+    const data = await sql`insert into public.acoes_retencao ${sql(rows)} returning id`;
 
     await logAudit({
       actor_id: u.id, action: 'campaign.created', entity: 'acoes_retencao',
       entity_id: campaign_id,
-      metadata: { perfil: b.perfil, tipo: b.tipo, count: data?.length ?? 0 },
+      metadata: { perfil: b.perfil, tipo: b.tipo, count: data.length },
       ip: req.ip, user_agent: req.headers['user-agent'] ?? null,
     }, req.log);
     reply.code(201);
-    return { ok: true, campaign_id, created: data?.length ?? 0 };
+    return { ok: true, campaign_id, created: data.length };
   });
 
   // ===== KPIs de ações (pra dashboard) =====
@@ -242,10 +302,17 @@ export async function acoesRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const scope = readScopeOf(u);
-    let query = dbFor(u).from('acoes_retencao').select('status, tipo, perfil_alvo, created_at, completed_at');
-    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
-    const { data } = await query;
-    const rows = data ?? [];
+    const rows = await sql<{
+      status: string;
+      tipo: string;
+      perfil_alvo: string | null;
+      created_at: Date | null;
+      completed_at: Date | null;
+    }[]>`
+      select status, tipo, perfil_alvo, created_at, completed_at
+      from public.acoes_retencao
+      where true ${scopeFilter(scope)}
+    `;
 
     const total = rows.length;
     const byStatus: Record<string, number> = {};
@@ -254,7 +321,7 @@ export async function acoesRoutes(app: FastifyInstance) {
     let concluidas = 0, sucessos = 0;
     let leadTimeMs = 0, leadTimeN = 0;
 
-    for (const r of rows as any[]) {
+    for (const r of rows) {
       byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
       byTipo[r.tipo] = (byTipo[r.tipo] ?? 0) + 1;
       if (r.perfil_alvo) byPerfil[r.perfil_alvo] = (byPerfil[r.perfil_alvo] ?? 0) + 1;
@@ -298,13 +365,13 @@ export async function acoesRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { client_id, subject } = req.body as any;
-    const sb = adminClient();
 
     // 1. Busca cliente
-    const { data: client, error: cErr } = await sb.from('clients')
-      .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real, dealership_id')
-      .eq('id', client_id).maybeSingle();
-    if (cErr) throw cErr;
+    const [client] = await sql<ClienteEmail[]>`
+      select id, nome_cliente, email_cliente, model_name, modelo_comprado,
+             dealer_code_venda, perfil_real, dealership_id
+      from public.clients where id = ${client_id}
+    `;
     assertCanModify(u, client?.dealership_id, 'cliente não encontrado'); // 404 ou 403
     if (!client) throw notFound('cliente não encontrado', 'client_not_found');
 
@@ -326,19 +393,21 @@ export async function acoesRoutes(app: FastifyInstance) {
     const finalHtml = tpl.html;
 
     // 3. Cria a ação primeiro (vincular o email_log)
-    const { data: acao, error: aErr } = await sb.from('acoes_retencao').insert({
-      id: randomUUID(),
-      client_id,
-      dealership_id: client.dealership_id,
-      tipo: 'email',
-      titulo: finalSubject,
-      descricao: 'E-mail de retenção enviado',
-      perfil_alvo: client.perfil_real,
-      status: 'em_andamento',  // vai pra concluida_sucesso quando o envio confirmar
-      actor_id: u.id,          // coluna correta no schema (não é created_by)
-      created_at: new Date().toISOString(),
-    }).select().single();
-    if (aErr || !acao) throw aErr ?? new Error('falha ao registrar a ação de e-mail');
+    const [acao] = await sql<{ id: string }[]>`
+      insert into public.acoes_retencao ${sql({
+        id: randomUUID(),
+        client_id,
+        dealership_id: client.dealership_id,
+        tipo: 'email',
+        titulo: finalSubject,
+        descricao: 'E-mail de retenção enviado',
+        perfil_alvo: client.perfil_real,
+        status: 'em_andamento',  // vai pra concluida_sucesso quando o envio confirmar
+        actor_id: u.id,          // coluna correta no schema (não é created_by)
+        created_at: new Date().toISOString(),
+      })} returning *
+    `;
+    if (!acao) throw new Error('falha ao registrar a ação de e-mail');
 
     // 4. Envia o e-mail (Resend ou mock)
     const result = await sendEmail({
@@ -367,11 +436,19 @@ export async function acoesRoutes(app: FastifyInstance) {
         ? `⚠️ SIMULAÇÃO — e-mail NÃO foi enviado (Resend não configurado em /configuracoes). Configure a chave pra envio real.`
         : `Falha ao enviar: ${result.error}`;
 
-    await sb.from('acoes_retencao').update({
-      status: novoStatus,
-      completed_at: isReallySent ? new Date().toISOString() : null,
-      desfecho: novoDesfecho,
-    }).eq('id', acao.id);
+    // O e-mail já saiu (ou foi simulado): falha ao atualizar a ação não derruba a
+    // resposta, só vai pro log — como antes (o supabase-js devolvia { error } sem lançar).
+    try {
+      await sql`
+        update public.acoes_retencao set ${sql({
+          status: novoStatus,
+          completed_at: isReallySent ? new Date().toISOString() : null,
+          desfecho: novoDesfecho,
+        })} where id = ${acao.id}
+      `;
+    } catch (err) {
+      req.log.error({ err, acao_id: acao.id }, '[acoes] falha ao atualizar o status da ação de e-mail');
+    }
 
     // 6. Audit
     await logAudit({
@@ -408,10 +485,10 @@ export async function acoesRoutes(app: FastifyInstance) {
     },
   }, async (req) => {
     requireUser(req);
-    const sb = adminClient();
-    const { data: rows } = await sb.from('ai_keys')
-      .select('provider').in('provider', ['resend', 'email_from']);
-    const has = new Set((rows ?? []).map((r: any) => r.provider));
+    const rows = await sql<{ provider: string }[]>`
+      select provider from public.ai_keys where provider = any(${['resend', 'email_from']})
+    `;
+    const has = new Set(rows.map((r) => r.provider));
     return {
       resend_configured: has.has('resend'),
       from_configured: has.has('email_from'),
@@ -437,10 +514,11 @@ export async function acoesRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { client_id } = req.params as any;
-    const sb = dbFor(u);
-    const { data: client } = await sb.from('clients')
-      .select('id, nome_cliente, email_cliente, model_name, modelo_comprado, dealer_code_venda, perfil_real, dealership_id')
-      .eq('id', client_id).maybeSingle();
+    const [client] = await sql<ClienteEmail[]>`
+      select id, nome_cliente, email_cliente, model_name, modelo_comprado,
+             dealer_code_venda, perfil_real, dealership_id
+      from public.clients where id = ${client_id}
+    `;
     if (!client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
       throw notFound('cliente não encontrado', 'client_not_found');
     }

@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { authorize, requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { createHash, createHmac } from 'node:crypto';
-import { adminClient } from '../lib/supabase.js';
-import { assertCanModify, canAccessDealership, dbFor, readScopeOf, requireDealership } from '../lib/data-access.js';
+import { sql, pgErrorCode, PG_UNIQUE_VIOLATION } from '../lib/db.js';
+import { assertCanModify, canAccessDealership, readScopeOf, requireDealership, scopeFilter } from '../lib/data-access.js';
 import { conflict, notFound } from '../lib/api-error.js';
 import { logAudit } from '../lib/audit.js';
 import { env } from '../config.js';
@@ -82,9 +82,10 @@ function hashCpf(cpf: string): string {
 
 /**
  * Autorização: todas as rotas exigem usuário autenticado (plugin de auth).
- * Escopo de concessionária (lib/data-access.ts):
- *   - leitura (lista/detalhe) → readScopeOf: analista só a própria loja; gestor/admin a rede
- *   - alteração (notas/reclassificar) → writeScopeOf: admin a rede; demais só a própria loja
+ * Escopo de concessionária (lib/data-access.ts), aplicado EXPLICITAMENTE nas queries
+ * (não há RLS: a API usa um único papel no PostgreSQL):
+ *   - leitura (lista/detalhe) → readScopeOf + scopeFilter: analista só a própria loja; gestor/admin a rede
+ *   - alteração (notas/reclassificar) → assertCanModify (writeScopeOf): admin a rede; demais só a própria loja
  */
 export async function clientRoutes(app: FastifyInstance) {
   // Cadastrar venda + disparar predição automática
@@ -100,7 +101,6 @@ export async function clientRoutes(app: FastifyInstance) {
 
     const body = req.body as z.infer<typeof CreateClientBody>;
     const { cpf, vin_hash, ...rest } = body;
-    const sb = adminClient(); // service_role pra criar mesmo sem RLS-friendly profile
 
     // Gera VIN_Hash determinístico se não veio
     const vinFinal = vin_hash
@@ -136,14 +136,20 @@ export async function clientRoutes(app: FastifyInstance) {
       financiamento: rest.financiamento ?? null,
       parcelas: rest.parcelas ?? null,
       canal_aquisicao: rest.canal_aquisicao ?? null,
-      primeiro_carro: rest.primeiro_carro ?? null,
-      test_drive_realizado: rest.test_drive_realizado ?? null,
+      primeiro_carro: rest.primeiro_carro,
+      test_drive_realizado: rest.test_drive_realizado,
     };
+    // As colunas são NOT NULL default false: omitidas, valem o default do banco
+    // (um null explícito violaria a constraint).
+    if (insertRow.primeiro_carro === undefined) delete insertRow.primeiro_carro;
+    if (insertRow.test_drive_realizado === undefined) delete insertRow.test_drive_realizado;
 
-    const { data: client, error } = await sb.from('clients').insert(insertRow).select().single();
-    if (error) {
+    let client: any;
+    try {
+      [client] = await sql`insert into public.clients ${sql(insertRow)} returning *`;
+    } catch (error) {
       // 23505 = unique_violation no Postgres (vin_hash é único).
-      if (error.code === '23505') throw conflict('já existe um cliente com este VIN', 'vin_already_exists');
+      if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw conflict('já existe um cliente com este VIN', 'vin_already_exists');
       throw error; // demais falhas de banco → 500 (detalhe só no log)
     }
 
@@ -167,24 +173,27 @@ export async function clientRoutes(app: FastifyInstance) {
       });
     }
 
-    // predictions é insert-only pelo service_role (RLS bloqueia user).
+    // Falha ao gravar a predição não derruba o cadastro (só loga).
     let predRow: any = null;
     if (prediction) {
-      const r = await adminClient().from('predictions').insert({
-        client_id: client.id,
-        model_version: prediction.model_version,
-        perfil_predito: prediction.perfil_predito,
-        prob_fiel: prediction.probabilidades.fiel,
-        prob_abandono: prediction.probabilidades.abandono,
-        prob_esquecido: prediction.probabilidades.esquecido,
-        prob_economico: prediction.probabilidades.economico,
-        risco_evasao: prediction.risco_evasao,
-        confianca: prediction.confianca,
-        recomendacoes_acao: prediction.recomendacoes_acao,
-        source: 'ml_only',
-      }).select().single();
-      if (r.error) req.log.error({ err: r.error }, 'failed to insert prediction');
-      else predRow = r.data;
+      try {
+        [predRow] = await sql`insert into public.predictions ${sql({
+          client_id: client.id,
+          model_version: prediction.model_version,
+          perfil_predito: prediction.perfil_predito,
+          prob_fiel: prediction.probabilidades.fiel,
+          prob_abandono: prediction.probabilidades.abandono,
+          prob_esquecido: prediction.probabilidades.esquecido,
+          prob_economico: prediction.probabilidades.economico,
+          risco_evasao: prediction.risco_evasao,
+          confianca: prediction.confianca,
+          recomendacoes_acao: prediction.recomendacoes_acao ?? [],
+          source: 'ml_only',
+        })} returning *`;
+      } catch (err) {
+        req.log.error({ err }, 'failed to insert prediction');
+        predRow = null;
+      }
     }
 
     await logAudit({
@@ -218,31 +227,50 @@ export async function clientRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const scope = readScopeOf(u);
     const { perfil, perfil_real, model_name, is_ford_real, risco_min, search, limit, offset } = req.query as any;
-    const sb = dbFor(u);
+    // Escopo explícito (antes vinha do RLS via dbFor): analista só a própria loja;
+    // gestor/admin a rede. O mesmo `where` serve à query de contagem.
+    const where = sql`
+      where true
+      ${scopeFilter(scope, 'c.dealership_id')}
+      ${typeof is_ford_real === 'boolean' ? sql`and c.is_ford_real = ${is_ford_real}` : sql``}
+      ${perfil_real ? sql`and c.perfil_real = ${perfil_real}` : sql``}
+      ${model_name ? sql`and c.model_name = ${model_name}` : sql``}
+      ${search
+        // OR sobre vin_hash (prefixo) ou nome_cliente (qualquer posição)
+        ? sql`and (c.vin_hash ilike ${search + '%'} or c.nome_cliente ilike ${'%' + search + '%'})`
+        : sql``}
+    `;
 
-    let q = sb
-      .from('clients')
-      .select('id, vin_hash, model_name, model_year, dealer_code_venda, sales_date, ' +
-              'num_revisoes, dias_desde_ultima_revisao, dealer_loyalty, perfil_real, ' +
-              'is_ford_real, nome_cliente, modelo_comprado, versao_comprada, preco_pago_brl, ' +
-              'financiamento, parcelas, created_at, ' +
-              'predictions(perfil_predito, risco_evasao, confianca, created_at, source)',
-              { count: 'exact' });
+    // Embed 1:N `predictions(...)` do PostgREST → array via json_agg (mais recente
+    // primeiro). `count: 'exact'` → contagem separada, sem a paginação.
+    const [data, countRows] = await Promise.all([
+      sql<any[]>`
+        select c.id, c.vin_hash, c.model_name, c.model_year, c.dealer_code_venda, c.sales_date,
+               c.num_revisoes, c.dias_desde_ultima_revisao, c.dealer_loyalty, c.perfil_real,
+               c.is_ford_real, c.nome_cliente, c.modelo_comprado, c.versao_comprada, c.preco_pago_brl,
+               c.financiamento, c.parcelas, c.created_at,
+               coalesce((
+                 select json_agg(json_build_object(
+                   'perfil_predito', p.perfil_predito,
+                   'risco_evasao', p.risco_evasao,
+                   'confianca', p.confianca,
+                   -- UTC fixo, no formato que o PostgREST entregava (independe do fuso da sessão)
+                   'created_at', to_char(p.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'),
+                   'source', p.source
+                 ) order by p.created_at desc)
+                 from public.predictions p
+                 where p.client_id = c.id
+               ), '[]'::json) as predictions
+        from public.clients c
+        ${where}
+        order by c.created_at desc
+        limit ${limit} offset ${offset}
+      `,
+      sql<{ count: number }[]>`select count(*)::int as count from public.clients c ${where}`,
+    ]);
+    const count = countRows[0]?.count ?? 0;
 
-    if (scope.kind === 'dealership') q = q.eq('dealership_id', scope.dealershipId);
-    if (typeof is_ford_real === 'boolean') q = q.eq('is_ford_real', is_ford_real);
-    if (perfil_real) q = q.eq('perfil_real', perfil_real);
-    if (model_name) q = q.eq('model_name', model_name);
-    if (search) {
-      // OR sobre vin_hash ou nome_cliente
-      q = q.or(`vin_hash.ilike.${search}%,nome_cliente.ilike.%${search}%`);
-    }
-
-    q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-    const { data, error, count } = await q;
-    if (error) throw error;
-
-    let filtered = data ?? [];
+    let filtered: any[] = data ?? [];
     if (perfil) {
       filtered = filtered.filter((c: any) =>
         c.predictions?.some((p: any) => p.perfil_predito === perfil));
@@ -251,7 +279,7 @@ export async function clientRoutes(app: FastifyInstance) {
       filtered = filtered.filter((c: any) =>
         c.predictions?.some((p: any) => p.risco_evasao >= risco_min));
     }
-    return { total: count ?? 0, results: filtered };
+    return { total: count, results: filtered };
   });
 
   // Detalhe + histórico de predições
@@ -264,20 +292,30 @@ export async function clientRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const sb = dbFor(u);
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).maybeSingle();
+    const scope = readScopeOf(u);
     // Cliente de outra concessionária → 404 (não revela que o registro existe).
-    if (error) throw error;
-    if (!client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
+    // O escopo entra na query (antes, o RLS) e é conferido de novo no código.
+    const [client] = await sql<any[]>`
+      select * from public.clients
+      where id = ${id} ${scopeFilter(scope)}
+    `;
+    if (!client || !canAccessDealership(scope, client.dealership_id)) {
       throw notFound('cliente não encontrado');
     }
 
-    const { data: predictions } = await sb
-      .from('predictions').select('*').eq('client_id', id).order('created_at', { ascending: false });
-    const { data: history } = await sb
-      .from('client_history').select('*').eq('client_id', id).order('observado_em', { ascending: false });
+    // Escopo já garantido pelo cliente acima (predictions/history seguem o client).
+    const predictions = await sql`
+      select * from public.predictions
+      where client_id = ${id}
+      order by created_at desc
+    `;
+    const history = await sql`
+      select * from public.client_history
+      where client_id = ${id}
+      order by observado_em desc
+    `;
 
-    return { client, predictions: predictions ?? [], history: history ?? [] };
+    return { client, predictions, history };
   });
 
   // ====================================================================
@@ -317,21 +355,23 @@ export async function clientRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { risco_min, perfil, modelo, dealer_code, sinal, limit } = req.query as any;
-    const sb = dbFor(u);
 
-    // RPC roda agregação dentro do Postgres (Postgrest tem limite de 1000 linhas)
-    const { data, error } = await sb.rpc('leads_ranqueados', {
-      risco_min,
-      filtro_perfil: perfil ?? null,
-      filtro_modelo: modelo ?? null,
-      filtro_dealer: dealer_code ?? null,
-      filtro_sinal: sinal ?? null,
-      limite: limit,
-    });
-    if (error) throw error;
+    // Agregação dentro do Postgres. A rota é só gestor/admin (leitura = rede inteira),
+    // então não há filtro de concessionária. Parâmetros nomeados com cast explícito:
+    // o driver manda os valores sem tipo e o cast resolve a assinatura da função.
+    const data = await sql<any[]>`
+      select * from public.leads_ranqueados(
+        risco_min     => ${risco_min}::numeric,
+        filtro_perfil => ${perfil ?? null}::text,
+        filtro_modelo => ${modelo ?? null}::text,
+        filtro_dealer => ${dealer_code ?? null}::integer,
+        filtro_sinal  => ${sinal ?? null}::text,
+        limite        => ${limit}::integer
+      )
+    `;
 
     // Mapeia pro formato que a UI espera
-    return (data ?? []).map((r: any) => ({
+    return data.map((r: any) => ({
       id: r.id,
       nome_cliente: r.nome_cliente,
       vin_hash: r.vin_hash,
@@ -356,10 +396,8 @@ export async function clientRoutes(app: FastifyInstance) {
       summary: 'Estatísticas agregadas de leads (volume por urgência + sinais mais comuns)',
     },
   }, async (req) => {
-    const u = requireUser(req);
-    const { data, error } = await dbFor(u).rpc('leads_ranqueados_stats');
-    if (error) throw error;
-    const stats = data?.[0];
+    requireUser(req);
+    const [stats] = await sql<any[]>`select * from public.leads_ranqueados_stats()`;
     return {
       total: Number(stats?.total ?? 0),
       breakdown_urgencia: {
@@ -386,19 +424,21 @@ export async function clientRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const { notas } = req.body as any;
-    const sb = adminClient();
 
-    const { data: current, error: findErr } = await sb.from('clients')
-      .select('id, dealership_id').eq('id', id).maybeSingle();
-    if (findErr) throw findErr;
+    const [current] = await sql<{ id: string; dealership_id: string | null }[]>`
+      select id, dealership_id from public.clients where id = ${id}
+    `;
     assertCanModify(u, current?.dealership_id, 'cliente não encontrado'); // 404 ou 403
     if (!current) throw notFound('cliente não encontrado');
 
-    const { data, error } = await sb.from('clients')
-      .update({ notas }).eq('id', id)
-      .select('id, notas')
-      .single();
-    if (error) throw error;
+    const [data] = await sql<{ id: string; notas: string | null }[]>`
+      update public.clients set notas = ${notas}
+      where id = ${id}
+      returning id, notas
+    `;
+    // O .single() original tratava 0 linhas como erro (PGRST116 → 500): registro
+    // removido entre a leitura e a gravação.
+    if (!data) throw new Error('cliente removido durante a atualização das notas');
     await logAudit({
       actor_id: u.id, action: 'client.notas_updated', entity: 'clients',
       entity_id: id, metadata: { len: notas.length },
@@ -424,19 +464,19 @@ export async function clientRoutes(app: FastifyInstance) {
     const u = requireUser(req);
     const { id } = req.params as any;
     const body = (req.body ?? {}) as any;
-    const sb = adminClient();
 
     // Carrega cliente + notas + histórico recente de ações
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).maybeSingle();
-    if (error) throw error;
+    const [client] = await sql<any[]>`select * from public.clients where id = ${id}`;
     assertCanModify(u, client?.dealership_id, 'cliente não encontrado'); // 404 ou 403
     if (!client) throw notFound('cliente não encontrado');
 
-    const { data: acoes } = await sb.from('acoes_retencao')
-      .select('tipo, titulo, descricao, status, desfecho, created_at')
-      .eq('client_id', id)
-      .order('created_at', { ascending: false })
-      .limit(20);
+    const acoes = await sql<any[]>`
+      select tipo, titulo, descricao, status, desfecho, created_at
+      from public.acoes_retencao
+      where client_id = ${id}
+      order by created_at desc
+      limit 20
+    `;
 
     const hybrid = await classifyHybrid({
       features: {
@@ -451,14 +491,16 @@ export async function clientRoutes(app: FastifyInstance) {
       },
       dealership_id: client.dealership_id,
       notas: client.notas,
-      acoes: acoes ?? [],
+      acoes,
       forceAI: body.force_ai !== false,
       aiModel: body.ai_model,
       acoesPorPerfil: ACOES_POR_PERFIL,
     });
 
-    // Salva como nova predição
-    const { data: predRow, error: predErr } = await sb.from('predictions').insert({
+    // Salva como nova predição (falha só loga, a resposta segue com prediction null)
+    let predRow: any = null;
+    try {
+      [predRow] = await sql`insert into public.predictions ${sql({
       client_id: id,
       model_version: hybrid.ai ? `hybrid:${hybrid.ml.model_version}+${hybrid.ai.model_label}` : hybrid.ml.model_version,
       perfil_predito: hybrid.perfil,
@@ -468,17 +510,18 @@ export async function clientRoutes(app: FastifyInstance) {
       prob_economico: hybrid.probabilidades.economico,
       risco_evasao: hybrid.risco_evasao,
       confianca: hybrid.confianca,
-      recomendacoes_acao: hybrid.recomendacoes_acao,
+      recomendacoes_acao: hybrid.recomendacoes_acao ?? [],
       source: hybrid.source,
-      raciocinio: hybrid.raciocinio,
-      signals_detected: hybrid.signals_detected,
+      raciocinio: hybrid.raciocinio ?? null,
+      signals_detected: hybrid.signals_detected ?? [],
       ml_perfil: hybrid.ml.perfil,
       ai_perfil: hybrid.ai?.perfil ?? null,
-      concordancia: hybrid.concordancia,
+      concordancia: hybrid.concordancia ?? null,
       ai_model: hybrid.ai?.model_label ?? null,
-    }).select().single();
-    if (predErr) {
+      })} returning *`;
+    } catch (predErr) {
       req.log.error({ predErr }, '[reclassify] insert failed');
+      predRow = null;
     }
 
     await logAudit({

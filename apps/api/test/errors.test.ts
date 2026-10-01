@@ -2,10 +2,11 @@
  * Padronização de erros — toda falha sai como Problem Details (RFC 7807).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { fakeDb } from './helpers/fakes.js';
+import { comTabelaIndisponivel, useTestDatabase } from './helpers/db.js';
 import { authAs, createTestApp, uuid, type TestApp } from './helpers/test-app.js';
 
 let app: TestApp;
+useTestDatabase();
 beforeAll(async () => { app = await createTestApp(); });
 afterAll(async () => { await app.close(); });
 
@@ -55,7 +56,6 @@ describe('Formato Problem Details', () => {
   });
 
   it('404 — recurso inexistente', async () => {
-    fakeDb.seed('clients', []);
     const res = await app.inject({ method: 'GET', url: `/clients/${uuid(99)}`, headers: await authAs('gestor') });
     const body = expectProblem(res, 404, 'not_found');
     expect(body.instance).toBe(`/clients/${uuid(99)}`);
@@ -73,13 +73,13 @@ describe('Formato Problem Details', () => {
   });
 
   it('500 — falha do banco não vaza mensagem, código nem hint do Postgres', async () => {
-    fakeDb.failNext('clients', 'select', {
-      code: '42P01', message: 'relation "public.clients" does not exist', hint: 'Perhaps you meant "client"',
-    });
-    const res = await app.inject({ method: 'GET', url: '/clients', headers: await authAs('gestor') });
+    // Falha REAL do Postgres: a tabela some por instantes e a query estoura com 42P01
+    // ("relation public.clients does not exist"). O token é obtido antes da quebra.
+    const headers = await authAs('gestor');
+    const res = await comTabelaIndisponivel('clients', () => app.inject({ method: 'GET', url: '/clients', headers }));
     const body = expectProblem(res, 500, 'internal_error');
 
     expect(body.detail).toBe('erro interno do servidor');
-    expect(res.body).not.toMatch(/relation|42P01|Perhaps/);
+    expect(res.body).not.toMatch(/relation|42P01|does not exist|public\./);
   });
 });
