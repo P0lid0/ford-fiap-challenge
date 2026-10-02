@@ -34,7 +34,6 @@ e o Desafio 2 (Retenção / VIN Share).
 
 O token é um **JWT HS256** emitido pela própria API, válido por \`expires_in\` segundos (padrão: 1 hora).
 Claims: \`sub\`, \`email\`, \`role\`, \`dealership_id\`, \`iss\`, \`aud\`, \`iat\`, \`exp\`, \`jti\`.
-Tokens do Supabase (usados pelo web/mobile) continuam aceitos.
 
 ## Perfis de acesso
 | Perfil | Leitura | Alteração |
@@ -54,7 +53,7 @@ veja o schema \`ProblemDetails\`. O campo \`code\` é estável e pode ser usado 
 /** Erros específicos de cada rota, além dos automáticos. Chave: "MÉTODO /url". */
 export const ROUTE_ERRORS: Record<string, number[]> = {
   // ----- Autenticação -----
-  'POST /auth/login': [502], // Supabase Auth indisponível
+  'POST /auth/login': [502], // banco de identidade indisponível
   // ----- Desafio 2: clientes (escopo de concessionária → 403 no_dealership) -----
   'POST /clients': [403, 409],
   'GET /clients': [403],

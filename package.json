@@ -14,14 +14,19 @@
     "test": "pnpm -r --filter './apps/*' test",
     "ml:train": "cd services/ml && python -m src.scripts.train_models",
     "ml:test": "cd services/ml && python -m pytest",
-    "db:migrate": "node scripts/run-migrations.mjs",
-    "db:seed": "node scripts/seed-vehicles.mjs"
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:migrate:status": "node scripts/db-migrate.mjs --status",
+    "db:seed": "node scripts/seed-vehicles.mjs",
+    "db:seed:admin": "node scripts/db-seed-admin.mjs",
+    "db:seed:demo": "node scripts/db-seed-demo.mjs",
+    "db:user": "node scripts/db-create-user.mjs",
+    "db:create-user": "node scripts/db-create-user.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.47.10",
     "postgres": "3.4.5"
   },
   "devDependencies": {
+    "bcryptjs": "^2.4.3",
     "@types/node": "22.10.2",
     "pptxgenjs": "^4.0.1",
     "tsx": "4.19.2",

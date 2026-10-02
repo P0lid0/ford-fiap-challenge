@@ -1,0 +1,19 @@
+# Upload da CLI da Vercel (deploy a partir da raiz do monorepo)
+.env
+.env.local
+.env.*.local
+**/.env.local
+.vercel
+**/node_modules
+**/.next
+**/.next-*
+**/dist
+services/ml/.venv
+services/ml/.pytest_cache
+apps/api/test-results
+apps/mobile/android
+apps/mobile/ios
+docs/deliverables
+docs/sprint3
+*.apk
+*.dump

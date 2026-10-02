@@ -20,17 +20,19 @@ A API REST (`apps/api`) foi evoluída para atender os critérios da Sprint 3:
 | Autenticação e autorização | 20% | API segura por padrão (só `/health` e `/auth/login` são públicas) · perfis `analista`, `gestor`, `admin` · escopo por concessionária | `apps/api/src/plugins/auth.ts` · `apps/api/src/lib/data-access.ts` |
 | JWT | 15% | Token HS256 **emitido pela própria API** em `POST /auth/login`, validado localmente (assinatura, emissor, audiência, expiração de 1 h) | `apps/api/src/lib/jwt.ts` · `apps/api/src/routes/auth.ts` |
 | Maturidade REST nível 2 | 20% | Recursos por URI, verbos HTTP e status codes coerentes (200/201/204/400/401/403/404/409/415/422/429/5xx) | [Arquitetura §5](docs/ARQUITETURA_SOA.md#5-api-rest--maturidade-nível-2) · Swagger |
-| Testes automatizados | 15% | 95 testes: sucesso, erro e acesso não autorizado — com relatório JUnit e cobertura | `apps/api/test/` · [`docs/evidencias/TESTES.md`](docs/evidencias/TESTES.md) |
+| Testes automatizados | 15% | Testes de sucesso, erro e acesso não autorizado — com relatório JUnit e cobertura | `apps/api/test/` · [`docs/evidencias/TESTES.md`](docs/evidencias/TESTES.md) |
 | Documentação e erros | 10% | Swagger com acesso e erros de cada rota · erros no padrão Problem Details (RFC 7807) | `http://localhost:3333/docs` · `apps/api/src/plugins/error-handler.ts` |
 
 ### Rodando a API e testando a autenticação
 
 ```bash
 pnpm install                     # na raiz do repositório
+pnpm db:migrate                  # aplica as migrations no PostgreSQL (DATABASE_URL do .env.local)
+pnpm db:seed:admin               # cria o usuário admin de demonstração (admin@faroai.com.br)
 pnpm dev:api                     # API em http://localhost:3333 · Swagger em http://localhost:3333/docs
 ```
 
-1. No Swagger, abra `POST /auth/login` → **Try it out** → informe as credenciais de um usuário criado no seu projeto Supabase.
+1. No Swagger, abra `POST /auth/login` → **Try it out** → informe as credenciais de um usuário do banco (o admin de demonstração, ou outro criado com `pnpm db:user`).
 2. Copie o `access_token` da resposta e clique em **Authorize** (cadeado no topo).
 3. As rotas protegidas passam a responder; sem o token elas devolvem `401`.
 
@@ -46,10 +48,10 @@ curl http://localhost:3333/me -H "Authorization: Bearer <access_token>"
 
 ### Rodando os testes
 
-Não precisam de Supabase, chaves nem internet — as dependências externas são simuladas.
+Usam um PostgreSQL de teste (banco `faroai_test`, apontado por `DATABASE_URL`) e dispensam chaves e internet — as dependências externas são simuladas.
 
 ```bash
-pnpm --filter @ford/api test             # 95 testes
+pnpm --filter @ford/api test             # roda os testes
 pnpm --filter @ford/api test:coverage    # + relatórios em apps/api/test-results/ (junit.xml e coverage/index.html)
 ```
 
@@ -82,7 +84,7 @@ O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK
 | Disciplina | Entregável | Caminho |
 |---|---|---|
 | 1. SOA / Web Services | API REST Fastify + Swagger | `apps/api/` |
-| 1. SOA / Web Services | Migrations versionadas | `supabase/migrations/` (**19 migrations**) |
+| 1. SOA / Web Services | Migrations versionadas (PostgreSQL padrão) | `db/migrations/` (**20 migrations**) |
 | 2. Mobile Development | App React Native + Expo Router | `apps/mobile/` |
 | 3. Testing / QA | Frontend web Next.js 15 | `apps/web/` |
 | 4. Cybersecurity | Pipeline e controles do Sprint 3 | `docs/SECURITY.md` |
@@ -136,8 +138,8 @@ O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK
        │              └──────────────────────────┘
        │
 ┌──────▼───────────────────────────────────────────┐
-│  Supabase Postgres (managed)                     │
-│  19 migrations · RLS por dealership × role       │
+│  PostgreSQL padrão (postgres.js)                 │
+│  20 migrations · escopo por dealership na API    │
 │  profiles · dealerships · clients · vehicles     │
 │  catalog_items · vehicle_catalog_values          │
 │  acoes_retencao · email_logs · audit_log         │
@@ -150,7 +152,7 @@ O app mobile (`apps/mobile`) foi finalizado como produto: **versão 1.0.0 em APK
 ```
 ford-fiap-challenge/
 ├── apps/
-│   ├── api/                     # Fastify + Zod + Swagger + Supabase (30+ rotas)
+│   ├── api/                     # Fastify + Zod + Swagger + PostgreSQL (30+ rotas)
 │   ├── mobile/                  # Expo + Expo Router + SecureStore nativo (9 telas)
 │   └── web/                     # Next.js 15 (painel operacional)
 ├── services/ml/                 # FastAPI + scikit-learn + XGBoost
@@ -161,11 +163,13 @@ ford-fiap-challenge/
 ├── packages/
 │   ├── types/                   # tipos compartilhados TS
 │   └── ui/                      # design tokens Ford (cores, tipografia, spacing)
-├── supabase/
-│   └── migrations/              # 19 migrations versionadas + RLS + seeds
+├── db/
+│   └── migrations/              # 20 migrations versionadas (PostgreSQL padrão) + seeds
 ├── scripts/
-│   ├── run-migrations.mjs       # aplica SQL no Postgres
-│   ├── apply-migrations-via-api.mjs # alternativa via Management API
+│   ├── db-migrate.mjs           # aplica as migrations pendentes (--status só lista)
+│   ├── db-seed-admin.mjs        # cria o admin de demonstração
+│   ├── db-seed-demo.mjs         # dados de demonstração (usuários, ~700 clientes, ações)
+│   ├── db-create-user.mjs       # cria/atualiza um usuário (não há rota de cadastro)
 │   ├── seed-vehicles.mjs        # popula vehicles
 │   ├── import-ford-real-clients.mjs # importa 175k VINs Ford BR
 │   ├── populate-catalog-canonico.mjs # popula schema 262 atributos
@@ -191,12 +195,9 @@ ford-fiap-challenge/
 cp .env.example .env.local
 ```
 Preencha `.env.local` com:
-- `SUPABASE_URL` — URL do projeto Supabase
-- `SUPABASE_ANON_KEY` — anon JWT
-- `SUPABASE_SERVICE_ROLE_KEY` — service_role JWT
-- `SUPABASE_JWT_SECRET` — (legado) segredo JWT do projeto Supabase
+- `DATABASE_URL` — conexão com o PostgreSQL (ex.: `postgres://postgres:postgres@127.0.0.1:5432/faroai`)
 - `JWT_SECRET` — segredo (32+ caracteres) para a API assinar os próprios tokens. **Obrigatório em produção**; em desenvolvimento há um valor padrão
-- `SUPABASE_DB_PASSWORD` (opcional) — para `pnpm db:migrate`
+- `CLIENT_CPF_PEPPER` e `ML_SERVICE_TOKEN` — segredos aleatórios de 32+ caracteres (`openssl rand -hex 32`)
 - `ANTHROPIC_API_KEY` (opcional) — sem ela os insights caem em fallback rule-based
 
 ### 3. Instalar dependências
@@ -204,16 +205,15 @@ Preencha `.env.local` com:
 pnpm install
 ```
 
-### 4. Banco de dados — aplicar as 19 migrations
-**Opção A — Script automatizado (recomendado):**
+### 4. Banco de dados — PostgreSQL padrão
+Qualquer PostgreSQL 14+ (local, container ou gerenciado). Crie o banco e aplique as 20 migrations:
 ```bash
-SUPABASE_ACCESS_TOKEN=<seu_PAT> node scripts/apply-migrations-via-api.mjs
+createdb faroai          # ou: docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=faroai postgres:16
+pnpm db:migrate          # aplica só as pendentes (pnpm db:migrate:status para conferir)
+pnpm db:seed:admin       # usuário admin de demonstração
+pnpm db:seed             # veículos do Desafio 1
 ```
-
-**Opção B — Manual via SQL Editor:**
-1. Supabase Dashboard → SQL Editor → New Query
-2. Cole o conteúdo de cada arquivo em `supabase/migrations/` (em ordem)
-3. Click em Run
+Para uma demonstração completa (usuários gestor/analista, ~700 clientes com predições e ações), rode também `pnpm db:seed:demo`.
 
 ### 5. Gerar o modelo usado pelo serviço ML
 ```bash
@@ -242,7 +242,7 @@ cd services/ml && python -m uvicorn src.main:app --reload --port 8001
 pnpm dev:api          # http://localhost:3333
 
 # Terminal 3 — Web (painel operacional)
-pnpm dev:web          # http://localhost:3000
+pnpm --filter @ford/web dev   # http://localhost:3000
 
 # Terminal 4 — Mobile (Expo)
 pnpm dev:mobile       # QR code para Expo Go (modo API; veja apps/mobile/README.md para o modo demonstração)
@@ -257,8 +257,10 @@ URLs:
 
 ### 7. Usuário de demonstração
 
-Crie um usuário no Supabase Auth e atribua o perfil desejado em `profiles`.
-Não use credenciais compartilhadas no repositório.
+Os usuários vivem em `public.profiles` (senha em hash bcrypt) — não há rota de cadastro.
+Crie o seu com `pnpm db:user --email voce@exemplo.com --password '<senha>' --role analista --dealership FD001`
+(ou use `pnpm db:seed:admin` / `pnpm db:seed:demo`). As senhas de demonstração são só para ambiente local;
+não use credenciais compartilhadas em produção.
 
 ---
 
@@ -280,7 +282,7 @@ A solução atual não tem dispositivo IoT nem broker MQTT; o documento registra
 | Atividade | Estado |
 |---|---|
 | Pipeline DevSecOps | CI com testes, Semgrep, auditoria de dependências e Gitleaks; achados de dependências ainda abertos |
-| Código e infraestrutura | JWT, RBAC, RLS, limites HTTP, HMAC API→ML e proteção de dados implementados; controles de deploy pendentes |
+| Código e infraestrutura | JWT, RBAC, escopo por concessionária na API, limites HTTP, HMAC API→ML e proteção de dados implementados; controles de deploy pendentes |
 | Monitoramento e resposta | Logs e auditoria implementados; alertas e dashboard pendentes de implantação |
 | Compliance contínuo | STRIDE e mapeamento OWASP/LGPD documentados; retenção e backup ainda pendentes |
 
@@ -319,7 +321,7 @@ Swagger UI completo: **http://localhost:3333/docs** — cada rota mostra quem po
 
 Os números abaixo reproduzem o status documentado na entrega anterior e não foram revalidados neste checkout. A planilha e os Parquets da base Ford não estão incluídos no repositório.
 
-- **18 migrations** versionadas em `supabase/migrations/`
+- **20 migrations** versionadas em `db/migrations/` (as 18 originais, a de hardening do Sprint 3 e a de autenticação local)
 - **175.554 VINs reais Ford BR** reportados como importados na entrega anterior; a base não está disponível neste checkout
 - **786 valores canônicos** populados (262 atributos × 3 Ranger 26MY)
 - **135.839 leads** detectados via risco composto

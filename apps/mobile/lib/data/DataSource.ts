@@ -2,7 +2,7 @@
  * Contrato da camada de dados do app (padrão Repository).
  *
  * Duas implementações:
- *  - ApiDataSource   → API REST (apps/api) + Supabase Auth — desenvolvimento
+ *  - ApiDataSource   → API REST (apps/api) com login em POST /auth/login (JWT da API) — desenvolvimento
  *  - LocalDataSource → dados de demonstração embutidos       — APK de entrega
  *
  * As telas dependem só desta interface; a escolha é feita em lib/data/index.ts.

@@ -5,10 +5,11 @@ paths = [
   ".env.example",
   "README.md",
   "DECISIONS.md",
+  "docs/SETUP.md",
 ]
 
 [[rules]]
-id = "supabase-service-role"
-description = "Supabase service_role JWT"
+id = "jwt-embutido"
+description = "JWT embutido no código (token de serviço ou de sessão commitado)"
 regex = '''eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'''
-tags = ["jwt", "supabase"]
+tags = ["jwt"]

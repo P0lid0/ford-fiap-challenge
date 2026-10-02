@@ -108,7 +108,7 @@ export async function verifyAccessToken(token: string): Promise<TokenSubject> {
 
 /**
  * Lê o `iss` SEM validar a assinatura — serve só para decidir QUAL validador usar
- * (token desta API vs. token legado do Supabase). A validação real vem depois.
+ * (token desta API vs. token de outro emissor). A validação real vem depois.
  */
 export function isIssuedByThisApi(token: string): boolean {
   try {

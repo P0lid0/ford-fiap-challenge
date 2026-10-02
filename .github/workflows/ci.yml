@@ -12,6 +12,25 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    # PostgreSQL real para os testes da API (sem Supabase): o schema vem das
+    # migrations de db/migrations, aplicadas por `pnpm db:migrate`.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: faroai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Credenciais descartáveis, só deste job (service container efêmero).
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/faroai_test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -24,6 +43,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm --filter @ford/api typecheck:test
+      - name: Aplica as migrations no PostgreSQL de teste
+        run: pnpm db:migrate
       - run: pnpm --filter @ford/api test:coverage
       - name: Publica evidências dos testes (JUnit + cobertura)
         if: always()

@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { getToken, expireSession } from './auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3333';
 
@@ -17,9 +17,13 @@ export type AiFunction =
   | 'portfolio_insight'
   | 'catalog_autofill';
 
+/** 401 = token ausente/expirado/inválido: limpa a sessão e leva ao login. */
+function guard(r: Response): void {
+  if (r.status === 401) expireSession();
+}
+
 async function authedHeaders(fn?: AiFunction): Promise<HeadersInit> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = getToken();
   const aiModel = getPreferredAiModel();
   return {
     'Content-Type': 'application/json',
@@ -31,13 +35,13 @@ async function authedHeaders(fn?: AiFunction): Promise<HeadersInit> {
 
 // Pra multipart uploads: NÃO setar Content-Type (browser põe boundary).
 async function authedHeadersNoJson(): Promise<HeadersInit> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = getToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function get<T>(path: string, fn?: AiFunction): Promise<T> {
   const r = await fetch(`${API_URL}${path}`, { headers: await authedHeaders(fn), cache: 'no-store' });
+  guard(r);
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
@@ -45,18 +49,21 @@ async function post<T>(path: string, body: unknown, fn?: AiFunction): Promise<T>
   const r = await fetch(`${API_URL}${path}`, {
     method: 'POST', headers: await authedHeaders(fn), body: JSON.stringify(body), cache: 'no-store',
   });
+  guard(r);
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
 async function jdelete(path: string): Promise<void> {
   // DELETE não tem body — Fastify rejeita Content-Type: application/json sem body.
   const r = await fetch(`${API_URL}${path}`, { method: 'DELETE', headers: await authedHeadersNoJson() });
+  guard(r);
   if (!r.ok && r.status !== 204) throw new Error(`${r.status} ${await r.text()}`);
 }
 async function jpatch<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(`${API_URL}${path}`, {
     method: 'PATCH', headers: await authedHeaders(), body: JSON.stringify(body), cache: 'no-store',
   });
+  guard(r);
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
@@ -105,6 +112,7 @@ export const api = {
     const r = await fetch(`${API_URL}/competitive/vehicles/${id}`, {
       method: 'DELETE', headers: await authedHeadersNoJson(), // sem Content-Type — Fastify recusa JSON sem body
     });
+    guard(r);
     if (!r.ok) {
       let detail = '';
       try {
@@ -137,6 +145,7 @@ export const api = {
       headers: await authedHeadersNoJson(),
       body: fd,
     });
+    guard(r);
     if (!r.ok) throw new Error(await r.text());
     return r.json() as Promise<{
       filename: string; mime: string; size_bytes: number;
@@ -158,6 +167,7 @@ export const api = {
     const r = await fetch(`${API_URL}/admin/ai-keys/${provider}`, {
       method: 'PUT', headers: await authedHeaders(), body: JSON.stringify({ api_key }),
     });
+    guard(r);
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },
@@ -168,6 +178,7 @@ export const api = {
     const r = await fetch(`${API_URL}/admin/ai-function-models/${fn}`, {
       method: 'PUT', headers: await authedHeaders(), body: JSON.stringify({ model_id }),
     });
+    guard(r);
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   },

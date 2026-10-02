@@ -36,7 +36,7 @@ function defaultLogger(): FastifyServerOptions['logger'] {
     serializers: {
       req: (req) => ({ method: req.method, url: req.url.split('?')[0], ip: req.ip }),
     },
-    redact: ['req.headers.authorization', 'req.headers.cookie', '*.SUPABASE_SERVICE_ROLE_KEY', '*.ANTHROPIC_API_KEY'],
+    redact: ['req.headers.authorization', 'req.headers.cookie', '*.DATABASE_URL', '*.JWT_SECRET', '*.ANTHROPIC_API_KEY'],
   };
 }
 
@@ -72,7 +72,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'https:'],
-        connectSrc: ["'self'", env.SUPABASE_URL],
+        connectSrc: ["'self'"],
         frameAncestors: ["'none'"],
       },
     } : false, // dev: false (não atrapalha Swagger UI inline)

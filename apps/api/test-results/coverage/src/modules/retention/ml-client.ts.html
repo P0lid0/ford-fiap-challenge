@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">4.16% </span>
+                <span class="strong">3.63% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>2/48</span>
+                <span class='fraction'>2/55</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">4.16% </span>
+                <span class="strong">3.63% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>2/48</span>
+                <span class='fraction'>2/55</span>
             </div>
         
             
@@ -150,7 +150,14 @@
 <a name='L85'></a><a href='#L85'>85</a>
 <a name='L86'></a><a href='#L86'>86</a>
 <a name='L87'></a><a href='#L87'>87</a>
-<a name='L88'></a><a href='#L88'>88</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<a name='L88'></a><a href='#L88'>88</a>
+<a name='L89'></a><a href='#L89'>89</a>
+<a name='L90'></a><a href='#L90'>90</a>
+<a name='L91'></a><a href='#L91'>91</a>
+<a name='L92'></a><a href='#L92'>92</a>
+<a name='L93'></a><a href='#L93'>93</a>
+<a name='L94'></a><a href='#L94'>94</a>
+<a name='L95'></a><a href='#L95'>95</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -184,12 +191,6 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -198,8 +199,21 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -241,12 +255,12 @@
 // Cybersec:
 //  - dealership_id é PSEUDONIMIZADO via HMAC-SHA256 antes de sair da API gateway
 //    (ML service nunca vê o UUID original).
-//  - Body assinado com HMAC-SHA256 no header X-Payload-Signature (integridade
-//    em trânsito + previne replay manipulado).
+//  - HMAC-SHA256 assina timestamp, nonce e body; o ML valida frescor e rejeita
+//    nonces já usados durante a janela aceita.
 //  - Sem PII direta no payload (nome, cpf, email, telefone NUNCA sobem).
 // Falha silenciosamente para resposta mock se o serviço estiver fora — MVP-friendly.
 &nbsp;
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fetch } from 'undici';
 import { env } from '../../config.js';
 &nbsp;
@@ -269,12 +283,15 @@ export type PredictOutput = {
 &nbsp;
 /** HMAC-SHA256(secret, value) → hex de 16 chars (suficiente pra colisão prática zero a essa escala). */
 <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >function pseudonymize(value: string): string {</span></span>
-<span class="cstat-no" title="statement not covered" >  return createHmac('sha256', env.ML_SERVICE_TOKEN).update(value).digest('hex').slice(0, 16);</span>
+<span class="cstat-no" title="statement not covered" >  return createHmac('sha256', env.ML_SERVICE_TOKEN)</span>
+<span class="cstat-no" title="statement not covered" >    .update('dealership-pseudonym:v1\0').update(value).digest('hex').slice(0, 16);</span>
 <span class="cstat-no" title="statement not covered" >}</span>
 &nbsp;
 /** Assina body para garantir integridade — ML service verifica antes de processar. */
-<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >function signPayload(body: string): string {</span></span>
-<span class="cstat-no" title="statement not covered" >  return createHmac('sha256', env.ML_SERVICE_TOKEN).update(body).digest('hex');</span>
+<span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >function signPayload(body: string, timestamp?: string, nonce?: string): string {</span></span>
+<span class="cstat-no" title="statement not covered" >  const message = timestamp &amp;&amp; nonce ? `${timestamp}.${nonce}.${body}` : body;</span>
+<span class="cstat-no" title="statement not covered" >  return createHmac('sha256', env.ML_SERVICE_TOKEN)</span>
+<span class="cstat-no" title="statement not covered" >    .update('ml-payload-signature:v1\0').update(message).digest('hex');</span>
 <span class="cstat-no" title="statement not covered" >}</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" ><span class="fstat-no" title="function not covered" >export async function predict(input: PredictInput): Promise&lt;PredictOutput&gt; {</span></span>
@@ -285,7 +302,9 @@ export type PredictOutput = {
 <span class="cstat-no" title="statement not covered" >    dealership_id: pseudonymize(input.dealership_id),</span>
 <span class="cstat-no" title="statement not covered" >  };</span>
 <span class="cstat-no" title="statement not covered" >  const body = JSON.stringify(safeInput);</span>
-<span class="cstat-no" title="statement not covered" >  const signature = signPayload(body);</span>
+<span class="cstat-no" title="statement not covered" >  const timestamp = String(Math.floor(Date.now() / 1000));</span>
+<span class="cstat-no" title="statement not covered" >  const nonce = randomBytes(16).toString('hex');</span>
+<span class="cstat-no" title="statement not covered" >  const signature = signPayload(body, timestamp, nonce);</span>
 &nbsp;
 <span class="cstat-no" title="statement not covered" >  try {</span>
 <span class="cstat-no" title="statement not covered" >    const res = await fetch(`${env.ML_SERVICE_URL}/predict`, {</span>
@@ -294,6 +313,8 @@ export type PredictOutput = {
 <span class="cstat-no" title="statement not covered" >        'content-type': 'application/json',</span>
 <span class="cstat-no" title="statement not covered" >        'authorization': `Bearer ${env.ML_SERVICE_TOKEN}`,</span>
 <span class="cstat-no" title="statement not covered" >        'x-payload-signature': signature,</span>
+<span class="cstat-no" title="statement not covered" >        'x-payload-timestamp': timestamp,</span>
+<span class="cstat-no" title="statement not covered" >        'x-payload-nonce': nonce,</span>
 <span class="cstat-no" title="statement not covered" >      },</span>
 <span class="cstat-no" title="statement not covered" >      body,</span>
 <span class="cstat-no" title="statement not covered" >    });</span>
@@ -331,7 +352,7 @@ export <span class="fstat-no" title="function not covered" >function _verifySign
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-09-28T00:20:29.107Z
+                at 2026-10-01T17:47:46.339Z
             </div>
         <script src="../../../prettify.js"></script>
         <script>

@@ -1,18 +1,18 @@
--- Security hardening for the Sprint 3 review.
--- Existing installations apply this migration; fresh installations also get
--- the same policy/function definitions from migrations 002, 016, and 018.
-
-drop policy if exists profiles_self_update on public.profiles;
-revoke update on table public.profiles from anon, authenticated, public;
-
-drop policy if exists ai_insights_authenticated_read on public.ai_insights;
-drop policy if exists ai_insights_admin_read on public.ai_insights;
-create policy ai_insights_admin_read on public.ai_insights
-  for select using (public.is_admin());
-
-alter function public.dealer_perfil_stats(integer) security invoker;
-revoke all on function public.dealer_perfil_stats(integer) from public, anon;
-grant execute on function public.dealer_perfil_stats(integer) to authenticated, service_role;
+-- =====================================================================
+-- Sprint 3 — endurecimento de segurança (versão PostgreSQL padrão)
+-- =====================================================================
+-- Na versão original (Supabase) esta migration também trocava policies de RLS,
+-- revogava grants de anon/authenticated e passava as funções para
+-- `security invoker`. Em PostgreSQL padrão não há RLS nem esses papéis: o
+-- isolamento por papel/concessionária é feito pela API (lib/data-access.ts) e
+-- as funções já rodam com os direitos de quem chama.
+--
+-- O que resta aqui é o que não depende do Supabase:
+--   - leads_ranqueados: `limite` limitado a 1..500 (mesma definição da 018,
+--     recriada para instalações que já tinham a versão sem o limite);
+--   - leads_ranqueados_stats(): agregação de leads em uma única chamada
+--     (total, urgência, sinais, perfis) usada em /clients/leads/stats.
+-- =====================================================================
 
 create or replace function public.leads_ranqueados(
   risco_min numeric default 0.4,
@@ -39,7 +39,6 @@ returns table (
 )
 language sql
 stable
-security invoker
 set search_path = public, pg_temp
 as $$
   with base as (
@@ -107,9 +106,6 @@ as $$
   limit least(greatest(coalesce(limite, 50), 1), 500);
 $$;
 
-revoke all on function public.leads_ranqueados(numeric, text, text, integer, text, integer) from public, anon;
-grant execute on function public.leads_ranqueados(numeric, text, text, integer, text, integer) to authenticated, service_role;
-
 create or replace function public.leads_ranqueados_stats()
 returns table (
   total bigint,
@@ -121,7 +117,6 @@ returns table (
 )
 language sql
 stable
-security invoker
 set search_path = public, pg_temp
 as $$
   with base as (
@@ -188,7 +183,3 @@ as $$
     coalesce((select jsonb_object_agg(perfil_real, quantidade) from profile_counts), '{}'::jsonb)
   from eligible;
 $$;
-
-revoke all on function public.leads_ranqueados_stats() from public, anon;
-grant execute on function public.leads_ranqueados_stats() to authenticated;
-grant execute on function public.leads_ranqueados_stats() to service_role;

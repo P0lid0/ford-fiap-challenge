@@ -2,10 +2,12 @@
  * Desafio 1 — catálogo competitivo de veículos (sucesso e erro).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { fakeDb, fakeFipe } from './helpers/fakes.js';
+import { fakeFipe } from './helpers/fakes.js';
+import { failOn, insertVehicle, rows, sql, useTestDatabase } from './helpers/db.js';
 import { authAs, createTestApp, uuid, type TestApp } from './helpers/test-app.js';
 
 let app: TestApp;
+useTestDatabase();
 beforeAll(async () => { app = await createTestApp(); });
 afterAll(async () => { await app.close(); });
 
@@ -19,7 +21,10 @@ const HILUX = {
   motor: { potencia_cv: 204, torque_nm: 500 }, preco_brl: 280000, pais_origem: 'AR',
 };
 
-beforeEach(() => fakeDb.seed('vehicles', [RANGER, HILUX]));
+beforeEach(async () => {
+  await insertVehicle(RANGER);
+  await insertVehicle(HILUX);
+});
 
 describe('Consulta e comparação', () => {
   it('GET /competitive/vehicles 200 — lista o catálogo', async () => {
@@ -100,11 +105,18 @@ describe('Manutenção do catálogo (gestor/admin)', () => {
   });
 
   it('DELETE 500 — falha do banco sem vazar detalhes', async () => {
-    fakeDb.failNext('vehicles', 'delete', { code: '23503', message: 'violates foreign key constraint', hint: 'x' });
-    const res = await app.inject({ method: 'DELETE', url: `/competitive/vehicles/${RANGER.id}`, headers: await authAs('admin') });
+    // Falha REAL do Postgres: um gatilho faz o DELETE estourar com o erro de chave estrangeira (23503).
+    const headers = await authAs('admin');
+    const restore = await failOn('vehicles', 'delete', { code: '23503', message: 'violates foreign key constraint', hint: 'x' });
+    try {
+      const res = await app.inject({ method: 'DELETE', url: `/competitive/vehicles/${RANGER.id}`, headers });
 
-    expect(res.statusCode).toBe(500);
-    expect(res.body).not.toMatch(/foreign key|23503/);
+      expect(res.statusCode).toBe(500);
+      expect(res.body).not.toMatch(/foreign key|23503/);
+    } finally {
+      await restore();
+    }
+    expect(await rows('vehicles')).toHaveLength(2); // nada foi removido
   });
 
   it('POST /competitive/vehicles/import 200 — importa lista JSON', async () => {
@@ -115,7 +127,7 @@ describe('Manutenção do catálogo (gestor/admin)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json().inserted).toBe(1);
-    expect(fakeDb.rows('vehicles').some((v) => v.modelo === 'S10')).toBe(true);
+    expect((await rows('vehicles')).some((v) => v.modelo === 'S10')).toBe(true);
   });
 
   it('POST /competitive/vehicles/import 400 — JSON malformado', async () => {
@@ -183,10 +195,12 @@ describe('Integrações externas', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ preco_antigo: 250000, preco_novo: 260000, diff: 10000 });
+    const [stored] = await sql<{ preco_brl: number }[]>`select preco_brl from public.vehicles where id = ${RANGER.id}`;
+    expect(stored!.preco_brl).toBe(260000);
   });
 
   it('auto-fill 503 — catálogo canônico ainda não carregado', async () => {
-    fakeDb.seed('catalog_items', []);
+    // catalog_items já está vazio (o banco é zerado antes de cada teste).
     const res = await app.inject({
       method: 'POST', url: `/competitive/vehicles/${RANGER.id}/catalog-values/auto-fill`,
       headers: await authAs('gestor'), payload: {},

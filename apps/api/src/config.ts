@@ -18,9 +18,8 @@ if (existsSync(rootEnv)) {
 const DEV_ONLY_JWT_SECRET = 'dev-only-insecure-jwt-secret-change-me-0000';
 
 const Env = z.object({
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_ANON_KEY: z.string().min(20),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  // PostgreSQL padrão (ex.: postgres://usuario:senha@127.0.0.1:5432/faroai)
+  DATABASE_URL: z.string().url(),
   CLIENT_CPF_PEPPER: z.string().min(32),
 
   ANTHROPIC_API_KEY: z.string().optional().default(''),

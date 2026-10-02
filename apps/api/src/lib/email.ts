@@ -10,7 +10,7 @@
  * Auditoria: cada envio cria 1 linha em public.email_logs com remetente,
  * destinatário, status e ID do provider (rastreabilidade LGPD).
  */
-import { adminClient } from './supabase.js';
+import { sql } from './db.js';
 
 export type SendEmailInput = {
   to: string;
@@ -33,10 +33,27 @@ export type SendEmailResult = {
 };
 
 async function getEmailKey(name: 'resend' | 'email_from'): Promise<string | null> {
-  // Tabela ai_keys já é usada pra outras chaves — reaproveitamos
-  const { data } = await adminClient()
-    .from('ai_keys').select('api_key').eq('provider', name).maybeSingle();
-  return data?.api_key ?? null;
+  // Tabela ai_keys já é usada pra outras chaves — reaproveitamos.
+  // Falha de leitura = "sem chave" (cai pro modo mock), como antes.
+  try {
+    const [row] = await sql<{ api_key: string | null }[]>`
+      select api_key from public.ai_keys where provider = ${name} limit 1`;
+    return row?.api_key ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Atualiza a linha de email_logs. Falha ao atualizar o log nunca derruba o envio
+ * (o e-mail já saiu ou já falhou) — só registra no console.
+ */
+async function updateLog(id: string, patch: Record<string, unknown>): Promise<void> {
+  try {
+    await sql`update public.email_logs set ${sql(patch)} where id = ${id}`;
+  } catch (e: any) {
+    console.warn(`[email] falha ao atualizar email_logs ${id}: ${e?.message ?? e}`);
+  }
 }
 
 /**
@@ -45,7 +62,6 @@ async function getEmailKey(name: 'resend' | 'email_from'): Promise<string | null
  * Modo mock é útil pra demos sem precisar de chave paga.
  */
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
-  const sb = adminClient();
   const resendKey = await getEmailKey('resend');
   const configuredFrom = await getEmailKey('email_from');
   const from = input.from
@@ -64,20 +80,24 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     provider: (resendKey ? 'resend' : 'mock') as 'resend' | 'mock',
     status: 'pending' as const,
   };
-  const { data: log, error: logErr } = await sb
-    .from('email_logs').insert(logPayload).select().single();
-  if (logErr || !log) {
-    throw new Error(`Falha ao criar log de email: ${logErr?.message ?? 'unknown'}`);
+  let log: { id: string };
+  try {
+    const [row] = await sql<{ id: string }[]>`
+      insert into public.email_logs ${sql(logPayload)} returning *`;
+    if (!row) throw new Error('unknown');
+    log = row;
+  } catch (e: any) {
+    throw new Error(`Falha ao criar log de email: ${e?.message ?? 'unknown'}`);
   }
 
   // 2. Modo mock — sem chave configurada
   if (!resendKey) {
     console.log(`[email:mock] ${from} → ${input.to} :: ${input.subject}`);
-    await sb.from('email_logs').update({
+    await updateLog(log.id, {
       status: 'sent',
       sent_at: new Date().toISOString(),
       error_message: 'Modo mock — Resend API key não configurada em /configuracoes',
-    }).eq('id', log.id);
+    });
     return {
       ok: true,
       log_id: log.id,
@@ -106,10 +126,10 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     const body = await r.json() as { id?: string; message?: string; name?: string };
     if (!r.ok) {
       const err = body.message ?? body.name ?? `HTTP ${r.status}`;
-      await sb.from('email_logs').update({
+      await updateLog(log.id, {
         status: 'failed',
         error_message: String(err).slice(0, 500),
-      }).eq('id', log.id);
+      });
       return {
         ok: false,
         log_id: log.id,
@@ -120,11 +140,11 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       };
     }
 
-    await sb.from('email_logs').update({
+    await updateLog(log.id, {
       status: 'sent',
       sent_at: new Date().toISOString(),
       provider_message_id: body.id ?? null,
-    }).eq('id', log.id);
+    });
 
     return {
       ok: true,
@@ -134,10 +154,10 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       status: 'sent',
     };
   } catch (e: any) {
-    await sb.from('email_logs').update({
+    await updateLog(log.id, {
       status: 'failed',
       error_message: String(e.message ?? e).slice(0, 500),
-    }).eq('id', log.id);
+    });
     return {
       ok: false,
       log_id: log.id,

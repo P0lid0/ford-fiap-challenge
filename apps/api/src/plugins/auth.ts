@@ -1,23 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
-import { isIssuedByThisApi, verifyAccessToken, TokenError, type TokenErrorCode, type UserRole } from '../lib/jwt.js';
-import { findUserBySupabaseToken, findUserProfile } from '../lib/identity.js';
+import { verifyAccessToken, TokenError, type TokenErrorCode, type UserRole } from '../lib/jwt.js';
 import { forbidden, unauthorized } from '../lib/api-error.js';
-
-/**
- * De onde veio o token que autenticou a requisição:
- *  - 'api'      → JWT emitido por POST /auth/login (validado localmente)
- *  - 'supabase' → token legado do Supabase (web/mobile), validado no Supabase
- */
-export type AuthSource = 'api' | 'supabase';
 
 export type AuthUser = {
   id: string;
   email: string;
   role: UserRole;
   dealership_id: string | null;
-  jwt: string;
-  authSource: AuthSource;
 };
 
 declare module 'fastify' {
@@ -48,8 +38,6 @@ async function authenticateApiToken(req: FastifyRequest, token: string): Promise
       email: subject.email,
       role: subject.role,               // vem da claim — sem consulta ao banco
       dealership_id: subject.dealershipId,
-      jwt: token,
-      authSource: 'api',
     };
   } catch (err) {
     if (err instanceof TokenError) {
@@ -58,29 +46,6 @@ async function authenticateApiToken(req: FastifyRequest, token: string): Promise
       return;
     }
     throw err;
-  }
-}
-
-/** Token legado do Supabase: mantido para não quebrar web/mobile. */
-async function authenticateSupabaseToken(req: FastifyRequest, token: string): Promise<void> {
-  try {
-    const identity = await findUserBySupabaseToken(token);
-    if (!identity) {
-      req.authError = 'invalid_token';
-      req.log.info('[auth] supabase token rejected');
-      return;
-    }
-    const profile = await findUserProfile(identity.id);
-    req.user = {
-      id: identity.id,
-      email: identity.email,
-      role: profile.role,
-      dealership_id: profile.dealershipId,
-      jwt: token,
-      authSource: 'supabase',
-    };
-  } catch (err) {
-    req.log.warn({ err: String(err) }, '[auth] failed to validate supabase token');
   }
 }
 
@@ -106,13 +71,7 @@ function isPublicRequest(req: FastifyRequest): boolean {
 export const authPlugin = fp(async function authPluginImpl(app: FastifyInstance) {
   app.addHook('onRequest', async (req) => {
     const token = extractBearerToken(req);
-    if (token) {
-      if (isIssuedByThisApi(token)) {
-        await authenticateApiToken(req, token);
-      } else {
-        await authenticateSupabaseToken(req, token);
-      }
-    }
+    if (token) await authenticateApiToken(req, token);
 
     if (!isPublicRequest(req)) requireUser(req);
   });

@@ -1,10 +1,10 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { requireUser } from '../plugins/auth.js';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { aiAvailable, chat } from '../lib/ai.js';
-import { adminClient } from '../lib/supabase.js';
-import { canAccessDealership, dbFor, readScopeOf } from '../lib/data-access.js';
+import { sql } from '../lib/db.js';
+import { readScopeOf, scopeFilter } from '../lib/data-access.js';
 import { notFound } from '../lib/api-error.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -15,21 +15,66 @@ function hashPayload(obj: unknown): string {
   return createHash('sha256').update(JSON.stringify(obj)).digest('hex').slice(0, 24);
 }
 
-async function cachedInsight(scope: string, resourceId: string, payloadHash: string) {
-  const { data } = await adminClient()
-    .from('ai_insights').select('output, model_used, created_at, expires_at')
-    .eq('scope', scope).eq('resource_id', resourceId).eq('payload_hash', payloadHash)
-    .maybeSingle();
+type CachedInsight = { output: string; model_used: string; created_at: Date; expires_at: Date | null };
+
+// O cache de insights é global (não depende do escopo do usuário): o hash do
+// payload já garante que só reaproveitamos a mesma pergunta sobre os mesmos dados.
+// Falha de leitura do cache não derruba a rota: vira "miss" e a resposta é regerada.
+async function cachedInsight(scope: string, resourceId: string, payloadHash: string, log: FastifyBaseLogger) {
+  let data: CachedInsight | undefined;
+  try {
+    [data] = await sql<CachedInsight[]>`
+      select output, model_used, created_at, expires_at
+      from public.ai_insights
+      where scope = ${scope} and resource_id = ${resourceId} and payload_hash = ${payloadHash}
+    `;
+  } catch (err) {
+    log.warn({ err, scope }, 'falha ao ler o cache de insights');
+    return null;
+  }
   if (!data) return null;
   if (data.expires_at && new Date(data.expires_at) < new Date()) return null;
   return data;
 }
 
-async function storeInsight(scope: string, resourceId: string, payloadHash: string, model: string, output: string, ttlMs: number) {
-  await adminClient().from('ai_insights').upsert({
+// Gravar o cache é "melhor esforço": se falhar, a resposta já gerada ainda é entregue.
+async function storeInsight(
+  scope: string, resourceId: string, payloadHash: string, model: string, output: string, ttlMs: number,
+  log: FastifyBaseLogger,
+) {
+  const row = {
     scope, resource_id: resourceId, payload_hash: payloadHash,
     model_used: model, output, expires_at: new Date(Date.now() + ttlMs).toISOString(),
-  }, { onConflict: 'scope,resource_id,payload_hash' });
+  };
+  try {
+    // upsert em (scope, resource_id, payload_hash) — índice único ai_insights_hash_uidx.
+    // Atualiza as colunas do payload, exceto as do conflito.
+    await sql`
+      insert into public.ai_insights ${sql(row)}
+      on conflict (scope, resource_id, payload_hash) do update set
+        model_used = excluded.model_used,
+        output = excluded.output,
+        expires_at = excluded.expires_at
+    `;
+  } catch (err) {
+    log.warn({ err, scope }, 'falha ao gravar o cache de insights');
+  }
+}
+
+/** Modelo preferido do usuário para uma função de IA (ai_function_models), ou undefined. */
+async function preferredModel(userId: string, functionName: string, log: FastifyBaseLogger): Promise<string | undefined> {
+  try {
+    // (user_id, function_name) é a PK → no máximo 1 linha.
+    const [pref] = await sql<{ model_id: string }[]>`
+      select model_id from public.ai_function_models
+      where user_id = ${userId} and function_name = ${functionName}
+    `;
+    return pref?.model_id;
+  } catch (err) {
+    // Preferência é opcional: sem ela, o `chat` usa o modelo padrão.
+    log.warn({ err, functionName }, 'falha ao ler o modelo preferido do usuário');
+    return undefined;
+  }
 }
 
 export async function insightRoutes(app: FastifyInstance) {
@@ -42,20 +87,27 @@ export async function insightRoutes(app: FastifyInstance) {
   }, async (req) => {
     const u = requireUser(req);
     const { id } = req.params as any;
-    const sb = dbFor(u);
+    const scope = readScopeOf(u);
 
-    const { data: client, error } = await sb.from('clients').select('*').eq('id', id).maybeSingle();
-    // Cliente de outra concessionária → 404 (não revela que o registro existe).
-    if (error || !client || !canAccessDealership(readScopeOf(u), client.dealership_id)) {
-      throw notFound('cliente não encontrado');
-    }
-    const { data: pred } = await sb.from('predictions').select('*')
-      .eq('client_id', id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    // Escopo aplicado na própria query: cliente de outra concessionária → 404
+    // (não revela que o registro existe).
+    const [client] = await sql<Record<string, any>[]>`
+      select * from public.clients
+      where id = ${id} ${scopeFilter(scope)}
+    `;
+    if (!client) throw notFound('cliente não encontrado');
+    // A predição pertence ao cliente acima, cujo escopo já foi conferido.
+    const [pred] = await sql<Record<string, any>[]>`
+      select * from public.predictions
+      where client_id = ${id}
+      order by created_at desc
+      limit 1
+    `;
     if (!pred) throw notFound('cliente ainda não possui predição', 'prediction_not_found');
 
     const payload = { client_id: id, perfil: pred.perfil_predito };
     const hash = hashPayload(payload);
-    const cached = await cachedInsight('client', id, hash);
+    const cached = await cachedInsight('client', id, hash, req.log);
     if (cached) return { source: 'cache', model: cached.model_used, output: cached.output };
 
     if (!aiAvailable()) {
@@ -63,18 +115,13 @@ export async function insightRoutes(app: FastifyInstance) {
     }
 
     let aiModel = req.headers['x-ai-model'] as string | undefined;
-    if (!aiModel) {
-      const { adminClient } = await import('../lib/supabase.js');
-      const { data: pref } = await adminClient().from('ai_function_models')
-        .select('model_id').eq('user_id', u.id).eq('function_name', 'client_insight').maybeSingle();
-      aiModel = pref?.model_id;
-    }
+    if (!aiModel) aiModel = await preferredModel(u.id, 'client_insight', req.log);
     const r = await chat(buildClientPrompt(client, pred), 'fast', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', model: 'rule-based-fallback', output: fallbackClientText(client, pred) };
     }
     const modelLabel = `${r.provider}:${r.model}`;
-    await storeInsight('client', id, hash, modelLabel, r.output, TTL_CLIENT);
+    await storeInsight('client', id, hash, modelLabel, r.output, TTL_CLIENT, req.log);
     return { source: 'fresh', model: modelLabel, output: r.output };
   });
 
@@ -88,17 +135,31 @@ export async function insightRoutes(app: FastifyInstance) {
     const scope = readScopeOf(u);
     // Chave do escopo: a loja do analista ou a rede inteira (gestor/admin).
     const scopeKey = scope.kind === 'dealership' ? scope.dealershipId : 'network';
-    let query = dbFor(u).from('clients')
-      .select('id, modelo_comprado, renda_mensal_brl, predictions(perfil_predito, risco_evasao)')
-      .limit(500);
-    if (scope.kind === 'dealership') query = query.eq('dealership_id', scope.dealershipId);
-    const { data: clients } = await query;
+    // Embed 1:N `predictions(...)` → array via json_agg (mais recente primeiro).
+    // O escopo (loja do analista ou rede inteira) é aplicado explicitamente.
+    const clients = await sql<{
+      id: string;
+      modelo_comprado: string;
+      renda_mensal_brl: number;
+      predictions: { perfil_predito: string; risco_evasao: number }[];
+    }[]>`
+      select c.id, c.modelo_comprado, c.renda_mensal_brl,
+        coalesce((
+          select json_agg(
+            json_build_object('perfil_predito', p.perfil_predito, 'risco_evasao', p.risco_evasao)
+            order by p.created_at desc)
+          from public.predictions p
+          where p.client_id = c.id
+        ), '[]'::json) as predictions
+      from public.clients c
+      where true ${scopeFilter(scope, 'c.dealership_id')}
+      limit 500
+    `;
 
-    const safe = clients ?? [];
-    const totalClients = safe.length;
+    const totalClients = clients.length;
     const perfilCounts: Record<string, number> = { fiel: 0, abandono: 0, esquecido: 0, economico: 0 };
     let avgRisco = 0;
-    for (const c of safe as any[]) {
+    for (const c of clients) {
       const p = c.predictions?.[0];
       if (!p) continue;
       perfilCounts[p.perfil_predito] = (perfilCounts[p.perfil_predito] ?? 0) + 1;
@@ -107,25 +168,20 @@ export async function insightRoutes(app: FastifyInstance) {
     avgRisco = totalClients > 0 ? avgRisco / totalClients : 0;
     const metrics = { scope: scopeKey, totalClients, perfilCounts, avgRisco };
     const hash = hashPayload(metrics);
-    const cached = await cachedInsight('portfolio', scopeKey, hash);
+    const cached = await cachedInsight('portfolio', scopeKey, hash, req.log);
     if (cached) return { source: 'cache', metrics, model: cached.model_used, output: cached.output };
 
     if (!aiAvailable()) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };
     }
     let aiModel = req.headers['x-ai-model'] as string | undefined;
-    if (!aiModel) {
-      const { adminClient } = await import('../lib/supabase.js');
-      const { data: pref } = await adminClient().from('ai_function_models')
-        .select('model_id').eq('user_id', u.id).eq('function_name', 'portfolio_insight').maybeSingle();
-      aiModel = pref?.model_id;
-    }
+    if (!aiModel) aiModel = await preferredModel(u.id, 'portfolio_insight', req.log);
     const r = await chat(buildPortfolioPrompt(totalClients, perfilCounts, avgRisco), 'smart', { modelOverride: aiModel });
     if (!r.output) {
       return { source: 'fresh', metrics, model: 'rule-based-fallback', output: fallbackPortfolioText(totalClients, perfilCounts, avgRisco) };
     }
     const modelLabel = `${r.provider}:${r.model}`;
-    await storeInsight('portfolio', scopeKey, hash, modelLabel, r.output, TTL_PORTFOLIO);
+    await storeInsight('portfolio', scopeKey, hash, modelLabel, r.output, TTL_PORTFOLIO, req.log);
     return { source: 'fresh', metrics, model: modelLabel, output: r.output };
   });
 }

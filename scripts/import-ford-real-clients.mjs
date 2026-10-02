@@ -1,47 +1,27 @@
 #!/usr/bin/env node
 /**
- * Importa os 175k VINs Ford reais como clients via PostgREST (sem Management API).
+ * Importa os 175k VINs Ford reais como clients direto no PostgreSQL.
  *
- * Lê o parquet em services/ml/data/ford_real_base1_full.parquet e faz upsert
- * em batches via supabase-js com SERVICE_ROLE — bypassa RLS, rápido.
+ * Lê o parquet em services/ml/data/ford_real_base1_full.parquet (convertido
+ * pra JSON via Python na 1ª vez) e faz upsert em batches de 500 com
+ * INSERT ... ON CONFLICT (vin_hash) DO UPDATE.
  *
- * Variáveis de ambiente lidas de .env.local:
- *   - SUPABASE_URL
- *   - SUPABASE_SERVICE_ROLE_KEY
+ * Conexão: DATABASE_URL (ambiente ou .env.local na raiz).
  *
  * Uso:
  *   node scripts/import-ford-real-clients.mjs                # importa tudo
  *   MAX_VINS=100 node scripts/import-ford-real-clients.mjs   # primeiros 100
  */
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createClient } from '@supabase/supabase-js';
+import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import postgres from 'postgres';
+import { repoRoot, databaseUrl } from './lib/env.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, '..');
+const sql = postgres(databaseUrl(), { max: 1, onnotice: () => {} });
 
-// Lê .env.local
-const envPath = resolve(root, '.env.local');
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-    const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-  }
-}
-
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!SUPABASE_URL || !SERVICE_ROLE) {
-  console.error('❌ SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios');
-  process.exit(1);
-}
-
-const sb = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
-
-const PARQUET = resolve(root, 'services/ml/data/ford_real_base1_full.parquet');
-const JSON_CACHE = resolve(root, 'services/ml/data/ford_real_base1_full.json');
+const PARQUET = resolve(repoRoot, 'services/ml/data/ford_real_base1_full.parquet');
+const JSON_CACHE = resolve(repoRoot, 'services/ml/data/ford_real_base1_full.json');
 const BATCH = 500;
 const MAX = parseInt(process.env.MAX_VINS || '0', 10) || null;
 
@@ -85,17 +65,19 @@ print(f'  {len(clean):,} linhas salvas')
 
 // ===== Garante dealership virtual Ford BR =====
 async function ensureFordDealership() {
-  const { data: existing } = await sb.from('dealerships').select('id').eq('nome', 'Ford BR (Real Data)').maybeSingle();
+  const [existing] = await sql`select id from public.dealerships where nome = 'Ford BR (Real Data)'`;
   if (existing) return existing.id;
-  const { data, error } = await sb.from('dealerships').insert({
-    codigo: 'FORD-BR-AGG',
-    nome: 'Ford BR (Real Data)',
-    cidade: 'Brasil',
-    uf: 'BR',
-    regiao: 'sudeste',
-  }).select('id').single();
-  if (error) throw error;
-  return data.id;
+  const [created] = await sql`
+    insert into public.dealerships ${sql({
+      codigo: 'FORD-BR-AGG',
+      nome: 'Ford BR (Real Data)',
+      cidade: 'Brasil',
+      uf: 'BR',
+      regiao: 'sudeste',
+    })}
+    returning id
+  `;
+  return created.id;
 }
 
 // ===== Monta row no formato da tabela clients =====
@@ -136,6 +118,16 @@ function buildRow(record, dealershipId) {
   };
 }
 
+// Colunas enviadas em cada batch; no conflito de vin_hash, todas (menos a
+// própria chave) são sobrescritas — mesmo comportamento do upsert anterior.
+const COLS = [
+  'dealership_id', 'vin_hash', 'model_name', 'model_year', 'dealer_code_venda', 'dealer_codes_revisao',
+  'sales_date', 'delivery_date', 'warranty_start_date', 'primeiro_servico', 'ultimo_servico',
+  'km_max', 'num_revisoes', 'num_servicos_total', 'dias_ate_1a_revisao', 'dias_desde_ultima_revisao',
+  'dealer_loyalty', 'taxa_aderencia_km', 'revisoes_por_ano', 'perfil_real',
+  'is_ford_real', 'data_source', 'data_compra',
+];
+
 async function main() {
   ensureJson();
   console.log('📂 Lendo JSON cache…');
@@ -152,15 +144,42 @@ async function main() {
   const nBatches = Math.ceil(total / BATCH);
 
   for (let i = 0; i < total; i += BATCH) {
-    const batchRecs = records.slice(i, i + BATCH);
+    const batchRecs = records.slice(i, Math.min(i + BATCH, total));
     const rows = batchRecs.map(r => buildRow(r, dealershipId));
-    const { data, error } = await sb.from('clients').upsert(rows, { onConflict: 'vin_hash', defaultToNull: false }).select('id');
-    if (error) {
+    try {
+      const result = await sql`
+        insert into public.clients ${sql(rows, ...COLS)}
+        on conflict (vin_hash) do update set
+          dealership_id             = excluded.dealership_id,
+          model_name                = excluded.model_name,
+          model_year                = excluded.model_year,
+          dealer_code_venda         = excluded.dealer_code_venda,
+          dealer_codes_revisao      = excluded.dealer_codes_revisao,
+          sales_date                = excluded.sales_date,
+          delivery_date             = excluded.delivery_date,
+          warranty_start_date       = excluded.warranty_start_date,
+          primeiro_servico          = excluded.primeiro_servico,
+          ultimo_servico            = excluded.ultimo_servico,
+          km_max                    = excluded.km_max,
+          num_revisoes              = excluded.num_revisoes,
+          num_servicos_total        = excluded.num_servicos_total,
+          dias_ate_1a_revisao       = excluded.dias_ate_1a_revisao,
+          dias_desde_ultima_revisao = excluded.dias_desde_ultima_revisao,
+          dealer_loyalty            = excluded.dealer_loyalty,
+          taxa_aderencia_km         = excluded.taxa_aderencia_km,
+          revisoes_por_ano          = excluded.revisoes_por_ano,
+          perfil_real               = excluded.perfil_real,
+          is_ford_real              = excluded.is_ford_real,
+          data_source               = excluded.data_source,
+          data_compra               = excluded.data_compra
+        returning id
+      `;
+      inserted += result.length;
+    } catch (err) {
       errors++;
-      console.error(`   ✗ batch ${Math.floor(i / BATCH) + 1}/${nBatches}: ${error.message}`);
+      console.error(`   ✗ batch ${Math.floor(i / BATCH) + 1}/${nBatches}: ${err.message}`);
       continue;
     }
-    inserted += data?.length ?? batchRecs.length;
     const elapsed = (Date.now() - t0) / 1000;
     const rate = inserted / elapsed;
     const eta = (total - inserted) / rate;
@@ -176,4 +195,11 @@ async function main() {
               `(${(inserted/elapsed).toFixed(0)}/s · ${errors} erros)`);
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+try {
+  await main();
+} catch (e) {
+  console.error('❌', e.message);
+  process.exitCode = 1;
+} finally {
+  await sql.end();
+}

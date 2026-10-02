@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">19.42% </span>
+                <span class="strong">19.31% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>34/175</span>
+                <span class='fraction'>34/176</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">19.42% </span>
+                <span class="strong">19.31% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>34/175</span>
+                <span class='fraction'>34/176</span>
             </div>
         
             
@@ -294,7 +294,8 @@
 <a name='L229'></a><a href='#L229'>229</a>
 <a name='L230'></a><a href='#L230'>230</a>
 <a name='L231'></a><a href='#L231'>231</a>
-<a name='L232'></a><a href='#L232'>232</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<a name='L232'></a><a href='#L232'>232</a>
+<a name='L233'></a><a href='#L233'>233</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -350,6 +351,7 @@
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -528,14 +530,14 @@
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
  * Camada de IA multi-provedor (OpenAI, Anthropic, Google Gemini).
  *
- * Chave por provedor: env var &gt; tabela ai_keys do Supabase &gt; não-disponível.
+ * Chave por provedor: env var &gt; tabela ai_keys do banco &gt; não-disponível.
  * Modelo: vem em formato "provider:model" (ex: "openai:gpt-4o-mini").
  */
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config.js';
-import { adminClient } from './supabase.js';
+import { sql } from './db.js';
 &nbsp;
 export type Provider = 'openai' | 'anthropic' | 'gemini';
 export type AiTier = 'fast' | 'smart';
@@ -577,7 +579,7 @@ const DEFAULT_MODEL_SMART: Record&lt;Provider, string&gt; = {
   gemini: 'gemini-1.5-pro',
 };
 &nbsp;
-// === Resolve API key: env &gt; Supabase ai_keys ===
+// === Resolve API key: env &gt; tabela ai_keys ===
 const _keyCache = new Map&lt;Provider, { key: string; expires: number }&gt;();
 const KEY_CACHE_TTL = 30_000;
 &nbsp;
@@ -589,8 +591,9 @@ const KEY_CACHE_TTL = 30_000;
 <span class="cstat-no" title="statement not covered" >  const cached = _keyCache.get(provider);</span>
 <span class="cstat-no" title="statement not covered" >  if (cached &amp;&amp; cached.expires &gt; Date.now()) return cached.key;</span>
 <span class="cstat-no" title="statement not covered" >  try {</span>
-<span class="cstat-no" title="statement not covered" >    const { data } = await adminClient().from('ai_keys').select('api_key').eq('provider', provider).maybeSingle();</span>
-<span class="cstat-no" title="statement not covered" >    const dbKey = data?.api_key ?? '';</span>
+<span class="cstat-no" title="statement not covered" >    const [row] = await sql&lt;{ api_key: string | null }[]&gt;`</span>
+<span class="cstat-no" title="statement not covered" >      select api_key from public.ai_keys where provider = ${provider} limit 1`;</span>
+<span class="cstat-no" title="statement not covered" >    const dbKey = row?.api_key ?? '';</span>
 <span class="cstat-no" title="statement not covered" >    _keyCache.set(provider, { key: dbKey, expires: Date.now() + KEY_CACHE_TTL });</span>
 <span class="cstat-no" title="statement not covered" >    return dbKey;</span>
 <span class="cstat-no" title="statement not covered" >  } catch {</span>
@@ -746,7 +749,7 @@ type OpenAiCallResult = { text: string; citations?: AiCitation[]; usedModel: str
 <span class="cstat-no" title="statement not covered" >        if (output) return { output, model, provider };</span>
 <span class="cstat-no" title="statement not covered" >      }</span>
 <span class="cstat-no" title="statement not covered" >    } catch (err: any) {</span>
-<span class="cstat-no" title="statement not covered" >      console.warn(`[ai] ${provider}:${model} failed:`, err?.message);</span>
+<span class="cstat-no" title="statement not covered" >      console.warn('[ai] provider call failed:', { provider, model, error: err?.message });</span>
 <span class="cstat-no" title="statement not covered" >    }</span>
 <span class="cstat-no" title="statement not covered" >  }</span>
 <span class="cstat-no" title="statement not covered" >  return { output: '', model: 'none', provider: 'fallback' };</span>
@@ -763,7 +766,7 @@ export <span class="fstat-no" title="function not covered" >function modelFromHe
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-09-28T00:20:29.107Z
+                at 2026-10-01T17:47:46.339Z
             </div>
         <script src="../../prettify.js"></script>
         <script>
