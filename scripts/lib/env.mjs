@@ -27,7 +27,10 @@ export function databaseUrl() {
     console.error('   ex.: DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/faroai');
     process.exit(1);
   }
-  return url;
+  // Neon e outros provedores incluem channel_binding=require, que o pacote postgres não aceita.
+  const parsed = new URL(url);
+  parsed.searchParams.delete('channel_binding');
+  return parsed.toString();
 }
 
 /** URL base da API (scripts que falam HTTP com a API, ex.: e2e-test.mjs). */

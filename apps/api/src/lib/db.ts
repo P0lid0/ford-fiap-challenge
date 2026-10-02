@@ -16,8 +16,24 @@
 import postgres from 'postgres';
 import { env } from '../config.js';
 
-export const sql = postgres(env.DATABASE_URL, {
+/**
+ * Normaliza a URL para o driver: provedores gerenciados (ex.: Neon) incluem
+ * `channel_binding=require`, que o pacote `postgres` não reconhece.
+ */
+export function normalizeDatabaseUrl(raw: string): string {
+  const url = new URL(raw);
+  url.searchParams.delete('channel_binding');
+  return url.toString();
+}
+
+const databaseUrl = normalizeDatabaseUrl(env.DATABASE_URL);
+// Pooler em modo transaction (PgBouncer, ex.: host "-pooler" do Neon) não suporta
+// prepared statements nomeados — desliga quando a URL aponta para um pooler.
+const viaPooler = new URL(databaseUrl).hostname.includes('-pooler');
+
+export const sql = postgres(databaseUrl, {
   max: 10,
+  prepare: !viaPooler,
   onnotice: () => {},
   types: {
     numeric: { to: 1700, from: [1700], serialize: (v: unknown) => String(v), parse: (v: string) => Number(v) },

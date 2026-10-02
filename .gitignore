@@ -55,3 +55,6 @@ pnpm-debug.log*
 # Supabase CLI binary (baixado por dev local)
 supabase.exe
 supabase/.temp/
+
+# Vercel CLI (link local)
+.vercel
